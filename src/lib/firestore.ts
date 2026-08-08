@@ -186,6 +186,84 @@ export async function updateDeck(
 }
 
 /**
+ * Moves cards to another deck, carrying their scheduling with them. The card
+ * gets a new id in the target, so SRS keys are rewritten to match.
+ */
+export async function moveCardsToDeck(
+  uid: string,
+  fromDeckId: string,
+  toDeckId: string,
+  cardIds: string[]
+): Promise<void> {
+  if (fromDeckId === toDeckId || cardIds.length === 0) return;
+  const [cards, srs] = await Promise.all([
+    getCardsOnce(uid, fromDeckId),
+    getSrsMap(uid, fromDeckId),
+  ]);
+  const wanted = new Set(cardIds);
+  for (const card of cards) {
+    if (!wanted.has(card.id)) continue;
+    const newRef = doc(cardsCol(uid, toDeckId));
+    await setDoc(newRef, {
+      data: card.data,
+      stats: card.stats,
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+    });
+    // SRS docs are keyed cardId or cardId-cN — rewrite the prefix.
+    for (const [key, state] of srs) {
+      if (key === card.id || key.startsWith(`${card.id}-c`)) {
+        const newKey = key.replace(card.id, newRef.id);
+        await setSrsState(uid, toDeckId, newKey, state);
+        await deleteSrsState(uid, fromDeckId, key);
+      }
+    }
+    await deleteDoc(doc(db, "users", uid, "decks", fromDeckId, "cards", card.id));
+  }
+  await touchDeck(uid, toDeckId);
+  await touchDeck(uid, fromDeckId);
+}
+
+/** Moves occlusion sheets (and their mask schedules) to another deck. */
+export async function moveSheetsToDeck(
+  uid: string,
+  fromDeckId: string,
+  toDeckId: string,
+  sheetIds: string[]
+): Promise<void> {
+  if (fromDeckId === toDeckId || sheetIds.length === 0) return;
+  const [sheets, srs] = await Promise.all([
+    getOcclusionsOnce(uid, fromDeckId),
+    getSrsMap(uid, fromDeckId),
+  ]);
+  const wanted = new Set(sheetIds);
+  for (const sheet of sheets) {
+    if (!wanted.has(sheet.id)) continue;
+    const newId = await createOcclusionSheet(uid, toDeckId, {
+      title: sheet.title,
+      imagePath: sheet.imagePath,
+      imageUrl: sheet.imageUrl,
+      imageWidth: sheet.imageWidth,
+      imageHeight: sheet.imageHeight,
+      shapes: sheet.shapes,
+      linkedImage: sheet.linkedImage,
+    });
+    for (const [key, state] of srs) {
+      if (key.startsWith(`${sheet.id}-`)) {
+        await setSrsState(uid, toDeckId, key.replace(sheet.id, newId), state);
+        await deleteSrsState(uid, fromDeckId, key);
+      }
+    }
+    // Delete the old doc only — the image now belongs to the moved sheet.
+    await deleteDoc(
+      doc(db, "users", uid, "decks", fromDeckId, "occlusions", sheet.id)
+    );
+  }
+  await touchDeck(uid, toDeckId);
+  await touchDeck(uid, fromDeckId);
+}
+
+/**
  * Copies a deck's cards into a new deck. Occlusion sheets are linked to the
  * same images rather than duplicated, so a copy costs no extra storage.
  */

@@ -21,6 +21,56 @@ function canvasToBlob(canvas: HTMLCanvasElement): Promise<Blob> {
   });
 }
 
+/** Word-wraps and centers a text-box mask's prompt inside its rectangle. */
+function drawPromptText(
+  ctx: CanvasRenderingContext2D,
+  s: OcclusionShape,
+  W: number,
+  H: number
+) {
+  const text = s.label?.trim();
+  if (!text) return;
+  const boxX = s.x * W;
+  const boxY = s.y * H;
+  const boxW = s.w * W;
+  const boxH = s.h * H;
+  const pad = Math.min(boxW, boxH) * 0.08;
+
+  // Start large and shrink until the wrapped text fits the box.
+  for (let size = Math.floor(boxH * 0.45); size >= 9; size -= 2) {
+    ctx.font = `600 ${size}px "Helvetica Neue", Helvetica, Arial, sans-serif`;
+    const words = text.split(/\s+/);
+    const lines: string[] = [];
+    let line = "";
+    for (const word of words) {
+      const attempt = line ? `${line} ${word}` : word;
+      if (ctx.measureText(attempt).width <= boxW - pad * 2 || !line) {
+        line = attempt;
+      } else {
+        lines.push(line);
+        line = word;
+      }
+    }
+    lines.push(line);
+    const lineHeight = size * 1.2;
+    if (lines.length * lineHeight <= boxH - pad * 2 || size === 9) {
+      ctx.fillStyle = "#ffffff";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.shadowColor = "rgba(0,0,0,0.6)";
+      ctx.shadowBlur = 3;
+      const startY = boxY + boxH / 2 - ((lines.length - 1) * lineHeight) / 2;
+      lines.forEach((l, i) =>
+        ctx.fillText(l, boxX + boxW / 2, startY + i * lineHeight, boxW - pad * 2)
+      );
+      ctx.shadowBlur = 0;
+      ctx.textAlign = "start";
+      ctx.textBaseline = "alphabetic";
+      return;
+    }
+  }
+}
+
 /** Draws the base image with the given normalized shapes filled solid (masked). */
 async function bakeMasked(
   img: HTMLImageElement,
@@ -33,6 +83,11 @@ async function bakeMasked(
   ctx.drawImage(img, 0, 0);
   for (const s of shapes) {
     fillShapeOnCanvas(ctx, s, canvas.width, canvas.height);
+  }
+  // Text-box prompts are part of the question, so they bake into the image
+  // and survive the trip to Anki without any special note type.
+  for (const s of shapes) {
+    if (s.textPrompt) drawPromptText(ctx, s, canvas.width, canvas.height);
   }
   return canvasToBlob(canvas);
 }

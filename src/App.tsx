@@ -7,6 +7,7 @@ import { Signup } from "./pages/Signup";
 import { Dashboard } from "./pages/Dashboard";
 import { HomePage } from "./pages/HomePage";
 import { AnkiHome } from "./pages/AnkiHome";
+import { BrowsePage } from "./pages/BrowsePage";
 import { QuizletHome } from "./pages/QuizletHome";
 import { NotesPage } from "./pages/NotesPage";
 import { NoteEditorPage } from "./pages/NoteEditorPage";
@@ -31,6 +32,14 @@ export default function App() {
             element={
               <ProtectedRoute>
                 <HomePage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/browse"
+            element={
+              <ProtectedRoute>
+                <BrowsePage />
               </ProtectedRoute>
             }
           />

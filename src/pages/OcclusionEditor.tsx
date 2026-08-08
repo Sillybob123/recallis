@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
   ArrowLeft,
+  Type,
   Circle,
   Copy,
   Group,
@@ -26,7 +27,7 @@ import { uid } from "../lib/uid";
 
 const MASK_COLORS = [DEFAULT_MASK_COLOR, "#ef4444", "#10b981", "#f59e0b", "#a855f7", "#ec4899", "#334155"];
 
-type Tool = "select" | "rect" | "ellipse" | "polygon";
+type Tool = "select" | "rect" | "ellipse" | "polygon" | "textbox";
 
 interface DragState {
   mode: "draw" | "move" | "resize" | "vertex";
@@ -257,7 +258,7 @@ export function OcclusionEditor() {
       setPolyDraft((prev) => [...prev, pos]);
       return;
     }
-    if (tool === "rect" || tool === "ellipse") {
+    if (tool === "rect" || tool === "ellipse" || tool === "textbox") {
       setSelectedIds(new Set());
       setDrag({ mode: "draw", startX: pos.x, startY: pos.y });
       setDraft({ x: pos.x, y: pos.y, w: 0, h: 0 });
@@ -385,6 +386,20 @@ export function OcclusionEditor() {
         const h = Math.abs(pos.y - drag!.startY);
         if (w > 0.01 && h > 0.01) {
           const id = uid();
+          let label = "";
+          let textPrompt: boolean | undefined;
+          if (tool === "textbox") {
+            const asked = prompt(
+              'Question to show on this box (e.g. "What is the coracoid process?"):'
+            );
+            if (asked === null) {
+              setDraft(null);
+              setDrag(null);
+              return;
+            }
+            label = asked.trim();
+            textPrompt = true;
+          }
           setShapes((prev) => [
             ...prev,
             {
@@ -396,7 +411,8 @@ export function OcclusionEditor() {
               h,
               color: defaultColor,
               opacity: defaultOpacity,
-              label: "",
+              label,
+              textPrompt,
             },
           ]);
           setSelectedIds(new Set([id]));
@@ -508,6 +524,7 @@ export function OcclusionEditor() {
                       ["rect", Square, "Rectangle"],
                       ["ellipse", Circle, "Ellipse"],
                       ["polygon", Pentagon, "Polygon (click points, click first point or press Enter to close)"],
+                      ["textbox", Type, "Text box — hides what's behind it and shows a question on the box (e.g. \"What is the coracoid process?\")"],
                     ] as const
                   ).map(([t, Icon, tip]) => (
                     <button
@@ -680,7 +697,7 @@ export function OcclusionEditor() {
                   })}
 
                   {/* drafts */}
-                  {draft && tool === "rect" && (
+                  {draft && (tool === "rect" || tool === "textbox") && (
                     <rect
                       x={draft.x * 100}
                       y={draft.y * 100}
@@ -783,6 +800,8 @@ export function OcclusionEditor() {
                   ? "Click to add points; click the first (amber) point, double-click, or press Enter to close. Esc cancels."
                   : tool === "select"
                   ? "Click to select (shift-click for multiple), drag to move, corner handle to resize."
+                  : tool === "textbox"
+                  ? "Drag a box over the answer — you'll be asked for the question to show on it."
                   : "Drag on the image to draw. Switch to the arrow tool to move/resize."}
               </p>
 

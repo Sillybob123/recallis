@@ -20,9 +20,15 @@ export function ShapeOverlay({
   targetIds: Set<string>;
   outlineIds?: Set<string>;
 }) {
+  // Text-box masks display their prompt while covered — HTML, not SVG <text>,
+  // because the stretched 0-100 viewBox would distort glyphs.
+  const prompts = shapes.filter(
+    (s) => s.textPrompt && s.label && hiddenIds.has(s.id) && !outlineIds?.has(s.id)
+  );
   return (
+    <div className="pointer-events-none absolute inset-0">
     <svg
-      className="pointer-events-none absolute inset-0 h-full w-full"
+      className="absolute inset-0 h-full w-full"
       viewBox="0 0 100 100"
       preserveAspectRatio="none"
     >
@@ -80,5 +86,22 @@ export function ShapeOverlay({
         );
       })}
     </svg>
+    {prompts.map((s) => (
+      <span
+        key={`prompt-${s.id}`}
+        className="absolute flex items-center justify-center overflow-hidden p-1 text-center font-medium leading-tight text-white"
+        style={{
+          left: `${s.x * 100}%`,
+          top: `${s.y * 100}%`,
+          width: `${s.w * 100}%`,
+          height: `${s.h * 100}%`,
+          fontSize: "clamp(9px, 1.6vw, 15px)",
+          textShadow: "0 1px 2px rgba(0,0,0,0.55)",
+        }}
+      >
+        {s.label}
+      </span>
+    ))}
+    </div>
   );
 }

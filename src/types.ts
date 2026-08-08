@@ -53,6 +53,8 @@ export interface OcclusionShape {
   /** polygon only: normalized vertices; x/y/w/h stay in sync as the bounds */
   points?: { x: number; y: number }[];
   label?: string;
+  /** show the label on the covered box as a guessing prompt */
+  textPrompt?: boolean;
   /** mask fill color, defaults to the app mask blue */
   color?: string;
   /** 0-1 fill opacity, defaults to 1 */

@@ -38,3 +38,6 @@ AnatomyExample.txt
 
 # Keep project docs local only — do not publish the README to GitHub
 README.md
+
+# Local Claude Code settings
+.claude/
