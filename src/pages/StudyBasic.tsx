@@ -1,0 +1,1273 @@
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+import {
+  ArrowLeft,
+  CalendarClock,
+  ChevronDown,
+  Eye,
+  Flag,
+  PartyPopper,
+  Pencil,
+  RotateCcw,
+  Settings,
+  Star,
+} from "lucide-react";
+import { useAuth } from "../contexts/AuthContext";
+import { useStudyMode } from "../contexts/StudyModeContext";
+import { Layout } from "../components/Layout";
+import { RichText } from "../components/RichText";
+import { ShapeOverlay } from "../components/ShapeOverlay";
+import { StudySettingsModal } from "../components/StudySettingsModal";
+import {
+  createCard,
+  deleteCard,
+  deleteOcclusionSheet,
+  deleteSrsState,
+  getSrsMap,
+  recordCardResult,
+  setSrsState,
+  updateCard,
+  watchCards,
+  watchOcclusions,
+} from "../lib/firestore";
+import { CardEditorModal } from "../components/CardEditorModal";
+import { findClozeNumbers } from "../lib/cloze";
+import { buildUnits } from "../lib/shapes";
+import type { Card, OcclusionSheet } from "../types";
+import {
+  buildOcclusionItems,
+  buildTextItems,
+  itemAnswer,
+  type StudyItem,
+} from "../lib/studyItems";
+import {
+  getTodayAnkiStats,
+  loadAnkiSettings,
+  loadQuizletSettings,
+  recordAnkiReview,
+  startOfStudyDay,
+  type AnkiSettings,
+  type QuizletSettings,
+} from "../lib/settings";
+import {
+  formatDelay,
+  isDue,
+  isExcluded,
+  isNew,
+  nextDayStart,
+  previewIntervals,
+  rate,
+  newSrsState,
+  type FlagColor,
+  type Rating,
+  type SrsConfig,
+  type SrsState,
+} from "../lib/srs";
+import { gradeAnswer, shuffle } from "../lib/text";
+
+const FAST_ANSWER_MS = 7000;
+
+type LearnFormat = "mc" | "written" | "flashcard";
+
+/** Anki-style occlusion rendering (QMask front, OMask outline on back). */
+function OcclusionCard({
+  item,
+  occMode,
+  revealed,
+}: {
+  item: Extract<StudyItem, { kind: "occlusion" }>;
+  occMode: "hideOne" | "hideAll";
+  revealed: boolean;
+}) {
+  const targetIds = new Set(item.unit.shapeIds);
+  let hiddenIds: Set<string>;
+  let outlineIds: Set<string> | undefined;
+  if (!revealed) {
+    hiddenIds =
+      occMode === "hideOne"
+        ? targetIds
+        : new Set(item.sheet.shapes.map((s) => s.id));
+  } else {
+    outlineIds = targetIds;
+    hiddenIds =
+      occMode === "hideAll"
+        ? new Set(
+            item.sheet.shapes.map((s) => s.id).filter((id) => !targetIds.has(id))
+          )
+        : new Set();
+  }
+  return (
+    <div>
+      <div className="relative mx-auto w-full max-w-2xl overflow-hidden rounded-xl border border-slate-200 bg-white">
+        <img
+          src={item.sheet.imageUrl}
+          alt=""
+          className="block h-auto w-full select-none"
+          draggable={false}
+        />
+        <ShapeOverlay
+          shapes={item.sheet.shapes}
+          hiddenIds={hiddenIds}
+          targetIds={targetIds}
+          outlineIds={outlineIds}
+        />
+      </div>
+      {item.unit.label && revealed && (
+        <p className="mt-3 text-center text-lg font-semibold text-slate-900">
+          {item.unit.label}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** The four Anki grade buttons with interval previews. */
+function GradeButtons({
+  srs,
+  cfg,
+  onGrade,
+}: {
+  srs: SrsState | null;
+  cfg: SrsConfig;
+  onGrade: (r: Rating) => void;
+}) {
+  const previews = previewIntervals(srs, Date.now(), cfg);
+  const defs: { rating: Rating; label: string; hint: string; cls: string }[] = [
+    { rating: "again", label: "Again", hint: "X", cls: "border-red-200 bg-red-50 text-red-600 hover:bg-red-100" },
+    { rating: "hard", label: "Hard", hint: "", cls: "border-orange-200 bg-orange-50 text-orange-600 hover:bg-orange-100" },
+    { rating: "good", label: "Good", hint: "Space", cls: "border-emerald-200 bg-emerald-50 text-emerald-600 hover:bg-emerald-100" },
+    { rating: "easy", label: "Easy", hint: "", cls: "border-sky-200 bg-sky-50 text-sky-600 hover:bg-sky-100" },
+  ];
+  return (
+    <div className="mx-auto mt-6 flex max-w-xl justify-center gap-2">
+      {defs.map((d) => (
+        <button
+          key={d.rating}
+          onClick={() => onGrade(d.rating)}
+          className={`flex-1 rounded-xl border py-2.5 transition ${d.cls}`}
+        >
+          <span className="block text-sm font-semibold">
+            {d.label}
+            {d.hint && <span className="ml-1 text-[10px] opacity-50">({d.hint})</span>}
+          </span>
+          <span className="block text-[11px] opacity-70">{previews[d.rating]}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+export function StudyBasic() {
+  const { deckId } = useParams();
+  const [searchParams] = useSearchParams();
+  const cardsOnly = searchParams.get("only") === "cards";
+  const { user } = useAuth();
+  const { studyMode, setStudyMode } = useStudyMode();
+  const navigate = useNavigate();
+
+  const [cards, setCards] = useState<Card[] | null>(null);
+  const [sheets, setSheets] = useState<OcclusionSheet[] | null>(null);
+  const [srsMap, setSrsMap] = useState<Map<string, SrsState> | null>(null);
+  const [ankiSettings, setAnkiSettings] = useState<AnkiSettings>(loadAnkiSettings);
+  const [quizletSettings, setQuizletSettings] =
+    useState<QuizletSettings>(loadQuizletSettings);
+  const [showSettings, setShowSettings] = useState(false);
+  const [queue, setQueue] = useState<StudyItem[]>([]);
+  const [total, setTotal] = useState(0);
+  const [nextDueMs, setNextDueMs] = useState<number | null>(null);
+  const [flipped, setFlipped] = useState(false);
+  const [mode, setMode] = useState<"flip" | "type" | "learn">("flip");
+  const [occMode, setOccMode] = useState<"hideOne" | "hideAll">("hideOne");
+  const [typed, setTyped] = useState("");
+  const [checked, setChecked] = useState<null | boolean>(null);
+  const [mcPicked, setMcPicked] = useState<number | null>(null);
+  const [retyped, setRetyped] = useState("");
+  const [sessionNonce, setSessionNonce] = useState(0);
+
+  // Session-local memory for the smart Quizlet scheduler.
+  const strengthRef = useRef<Map<string, number>>(new Map());
+  const shownAtRef = useRef<number>(Date.now());
+  const guessMsRef = useRef<number>(0);
+
+  const srsConfig: SrsConfig = {
+    learnStepsMin: ankiSettings.learnStepsMin,
+    relearnStepsMin: ankiSettings.relearnStepsMin,
+    maxIntervalDays: ankiSettings.maxIntervalDays,
+    desiredRetention: (ankiSettings.desiredRetentionPct || 90) / 100,
+  };
+
+  useEffect(() => {
+    if (!user || !deckId) return;
+    const u1 = watchCards(user.uid, deckId, setCards);
+    const u2 = watchOcclusions(user.uid, deckId, setSheets);
+    getSrsMap(user.uid, deckId).then(setSrsMap);
+    return () => {
+      u1();
+      u2();
+    };
+  }, [user, deckId]);
+
+  // Build the session queue once everything is loaded (and rebuild when the
+  // study mode toggles — the queues are fundamentally different).
+  useEffect(() => {
+    if (!cards || !sheets || !srsMap) return;
+    const all = [
+      ...buildTextItems(cards, {
+        answerWithTerm:
+          studyMode === "quizlet" && quizletSettings.answerWith === "term",
+      }),
+      ...(cardsOnly ? [] : buildOcclusionItems(sheets)),
+    ];
+    strengthRef.current = new Map();
+
+    if (studyMode === "quizlet") {
+      const items = shuffle(all);
+      setQueue(items);
+      setTotal(items.length);
+      setNextDueMs(null);
+    } else {
+      const now = Date.now();
+      const dayStart = startOfStudyDay(now);
+      let newToday = 0;
+      let reviewsToday = 0;
+      for (const s of srsMap.values()) {
+        if ((s.firstSeen ?? 0) >= dayStart) newToday++;
+        if ((s.lastReviewed ?? 0) >= dayStart && s.phase === "review") reviewsToday++;
+      }
+
+      const available = all.filter((it) => !isExcluded(srsMap.get(it.key), now));
+      const learning = available.filter((it) => {
+        const s = srsMap.get(it.key);
+        return s && !isNew(s) && s.phase !== "review" && isDue(s, now);
+      });
+      const reviews = available.filter((it) => {
+        const s = srsMap.get(it.key);
+        return s && !isNew(s) && s.phase === "review" && isDue(s, now);
+      });
+      const fresh = available.filter((it) => isNew(srsMap.get(it.key)));
+
+      reviews.sort(
+        (a, b) => (srsMap.get(a.key)?.due ?? 0) - (srsMap.get(b.key)?.due ?? 0)
+      );
+      const reviewAllowance = Math.max(
+        0,
+        ankiSettings.maxReviewsPerDay - reviewsToday
+      );
+      const cappedReviews = reviews.slice(0, reviewAllowance);
+
+      let newAllowance = Math.max(0, ankiSettings.newPerDay - newToday);
+      if (!ankiSettings.newIgnoreReviewLimit) {
+        newAllowance = Math.min(
+          newAllowance,
+          Math.max(0, reviewAllowance - cappedReviews.length)
+        );
+      }
+      const cappedNew = shuffle(fresh).slice(0, newAllowance);
+
+      const items = [...learning, ...cappedReviews, ...cappedNew];
+      setQueue(items);
+      setTotal(items.length);
+      const future = all
+        .map((it) => srsMap.get(it.key)?.due)
+        .filter((d): d is number => typeof d === "number" && d > now);
+      setNextDueMs(future.length ? Math.min(...future) - now : null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    cards === null,
+    sheets === null,
+    srsMap === null,
+    studyMode,
+    cardsOnly,
+    sessionNonce,
+    quizletSettings.answerWith,
+  ]);
+
+  const current = queue[0];
+  const hasOcclusion = !cardsOnly && (sheets?.length ?? 0) > 0;
+
+  // Restart the answer timer whenever a new card is shown.
+  useEffect(() => {
+    shownAtRef.current = Date.now();
+    guessMsRef.current = 0;
+  }, [current?.key]);
+
+  // Learn-mode: which format this card gets right now.
+  const learnFormat: LearnFormat = useMemo(() => {
+    if (!current) return "flashcard";
+    if (current.kind === "occlusion" && !current.unit.label) return "flashcard";
+    const st = strengthRef.current.get(current.key) ?? 0;
+    const { enableMultipleChoice, enableWritten } = quizletSettings;
+    if (st === 0 && enableMultipleChoice) return "mc";
+    if (enableWritten) return "written";
+    if (enableMultipleChoice) return "mc";
+    return "flashcard";
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [current?.key, quizletSettings]);
+
+  // Multiple-choice options for the current card.
+  const mcOptions = useMemo(() => {
+    if (!current || mode !== "learn" || learnFormat !== "mc") return [];
+    const answer = itemAnswer(current);
+    const pool = Array.from(
+      new Set(
+        queue
+          .slice(1)
+          .map(itemAnswer)
+          .filter((a) => a && a !== answer)
+      )
+    );
+    const distractors = shuffle(pool).slice(0, 3);
+    return shuffle([answer, ...distractors]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [current?.key, mode, learnFormat]);
+
+  function resetCardUI() {
+    setFlipped(false);
+    setTyped("");
+    setChecked(null);
+    setMcPicked(null);
+    setRetyped("");
+  }
+
+  function captureGuessTime() {
+    if (!guessMsRef.current) {
+      guessMsRef.current = Date.now() - shownAtRef.current;
+    }
+  }
+
+  function reinsert(prev: StudyItem[], item: StudyItem, at: number): StudyItem[] {
+    const rest = prev.slice(1);
+    const pos = Math.min(at, rest.length);
+    return [...rest.slice(0, pos), item, ...rest.slice(pos)];
+  }
+
+  function recordStats(item: StudyItem, correct: boolean) {
+    if (item.kind !== "text" || !user || !deckId) return;
+    const stats = cards!.find((c) => c.id === item.cardId)?.stats ?? {
+      correct: 0,
+      incorrect: 0,
+    };
+    recordCardResult(user.uid, deckId, item.cardId, correct, stats).catch(() => {});
+  }
+
+  /** Quizlet flashcards mode: adaptive by speed + accuracy. */
+  function markCram(correct: boolean) {
+    if (!current) return;
+    pushHistory();
+    recordStats(current, correct);
+    const st = strengthRef.current.get(current.key) ?? 0;
+    if (!correct) {
+      strengthRef.current.set(current.key, 0);
+      setQueue((prev) => reinsert(prev, current, 3));
+    } else {
+      const fast = guessMsRef.current > 0 && guessMsRef.current < FAST_ANSWER_MS;
+      const next = st + (fast ? 2 : 1);
+      strengthRef.current.set(current.key, next);
+      if (next >= 2) {
+        setQueue((prev) => prev.slice(1));
+      } else {
+        setQueue((prev) => reinsert(prev, current, Math.max(8, prev.length - 2)));
+      }
+    }
+    resetCardUI();
+  }
+
+  /** Quizlet Learn mode: not-learned → familiar (1 correct) → mastered (2). */
+  function markLearn(correct: boolean) {
+    if (!current) return;
+    pushHistory();
+    recordStats(current, correct);
+    const st = strengthRef.current.get(current.key) ?? 0;
+    if (!correct) {
+      strengthRef.current.set(current.key, 0);
+      setQueue((prev) => reinsert(prev, current, 3));
+    } else {
+      const next = st + 1;
+      strengthRef.current.set(current.key, next);
+      if (next >= 2) {
+        setQueue((prev) => prev.slice(1));
+      } else {
+        setQueue((prev) => reinsert(prev, current, Math.min(6, prev.length)));
+      }
+    }
+    resetCardUI();
+  }
+
+  /** Anki mode: grade → SM-2 schedule persisted; learning steps stay in session. */
+  function gradeSrs(rating: Rating) {
+    if (!current || !user || !deckId) return;
+    const prev = srsMap?.get(current.key) ?? null;
+    pushHistory(current.key, prev);
+    recordAnkiReview(Date.now() - shownAtRef.current);
+    const next = rate(prev, rating, Date.now(), srsConfig);
+    setSrsState(user.uid, deckId, current.key, next).catch(() => {});
+    setSrsMap((m) => {
+      const copy = new Map(m);
+      copy.set(current.key, next);
+      return copy;
+    });
+    recordStats(current, rating !== "again");
+    if (next.due - Date.now() < 20 * 60 * 1000) {
+      setQueue((prevQ) => reinsert(prevQ, current, 3));
+    } else {
+      setQueue((prevQ) => prevQ.slice(1));
+    }
+    resetCardUI();
+  }
+
+  function handleCheck() {
+    if (!current) return;
+    captureGuessTime();
+    setChecked(gradeAnswer(typed, itemAnswer(current), quizletSettings.grading));
+  }
+
+  function restart() {
+    setSessionNonce((n) => n + 1);
+    resetCardUI();
+  }
+
+  // ---------- Anki card actions (Edit / More menu) ----------
+  const [moreOpen, setMoreOpen] = useState(false);
+  const [showEdit, setShowEdit] = useState(false);
+  const historyRef = useRef<
+    { queue: StudyItem[]; key?: string; prevSrs?: SrsState | null }[]
+  >([]);
+
+  function pushHistory(key?: string, prevSrs?: SrsState | null) {
+    historyRef.current.push({ queue, key, prevSrs });
+    if (historyRef.current.length > 25) historyRef.current.shift();
+  }
+
+  function siblingKeys(item: StudyItem): string[] {
+    if (item.kind === "occlusion") {
+      return buildUnits(item.sheet.shapes).map((u) => `${item.sheet.id}-${u.key}`);
+    }
+    const card = cards?.find((c) => c.id === item.cardId);
+    if (!card) return [item.key];
+    if (card.data.type === "basic") return [card.id];
+    return findClozeNumbers(card.data.text).map((n) => `${card.id}-c${n}`);
+  }
+
+  function updateMeta(keys: string[], patch: Partial<SrsState>) {
+    if (!user || !deckId) return;
+    setSrsMap((m) => {
+      const copy = new Map(m);
+      for (const key of keys) {
+        const next = { ...(copy.get(key) ?? newSrsState()), ...patch };
+        copy.set(key, next);
+        setSrsState(user.uid, deckId, key, next).catch(() => {});
+      }
+      return copy;
+    });
+  }
+
+  function dropFromQueue(keys: string[]) {
+    const set = new Set(keys);
+    setQueue((prev) => prev.filter((it) => !set.has(it.key)));
+    resetCardUI();
+  }
+
+  const actions = {
+    flag(color: FlagColor | null) {
+      if (!current) return;
+      updateMeta([current.key], { flag: color });
+    },
+    buryCard() {
+      if (!current) return;
+      pushHistory();
+      updateMeta([current.key], { buriedUntil: nextDayStart() });
+      dropFromQueue([current.key]);
+    },
+    buryNote() {
+      if (!current) return;
+      pushHistory();
+      const keys = siblingKeys(current);
+      updateMeta(keys, { buriedUntil: nextDayStart() });
+      dropFromQueue(keys);
+    },
+    suspendCard() {
+      if (!current) return;
+      pushHistory();
+      updateMeta([current.key], { suspended: true });
+      dropFromQueue([current.key]);
+    },
+    suspendNote() {
+      if (!current) return;
+      pushHistory();
+      const keys = siblingKeys(current);
+      updateMeta(keys, { suspended: true });
+      dropFromQueue(keys);
+    },
+    resetCard() {
+      if (!current || !user || !deckId) return;
+      if (!confirm("Reset this card? Its schedule is erased and it becomes a new card.")) return;
+      deleteSrsState(user.uid, deckId, current.key).catch(() => {});
+      setSrsMap((m) => {
+        const copy = new Map(m);
+        copy.delete(current.key);
+        return copy;
+      });
+    },
+    setDueDate() {
+      if (!current) return;
+      const raw = prompt("Show this card again in how many days? (0 = today)", "1");
+      if (raw === null) return;
+      const days = Math.max(0, parseInt(raw, 10) || 0);
+      const now = Date.now();
+      pushHistory();
+      updateMeta([current.key], {
+        phase: "review",
+        due: now + days * 86400000,
+        ivl: Math.max(days, 1),
+        stab: Math.max(days, 1),
+        reps: Math.max(srsMap?.get(current.key)?.reps ?? 0, 1),
+      });
+      if (days > 0) dropFromQueue([current.key]);
+    },
+    cardInfo() {
+      if (!current) return;
+      const s = srsMap?.get(current.key);
+      if (!s || isNew(s)) {
+        alert("Card info\n\nState: New (never studied in Anki mode)");
+        return;
+      }
+      alert(
+        [
+          "Card info",
+          "",
+          `State: ${s.phase}`,
+          `Due: ${new Date(s.due).toLocaleString()}`,
+          `Interval: ${s.ivl}d`,
+          `Stability: ${s.stab?.toFixed(2) ?? "—"}`,
+          `Difficulty: ${s.diff?.toFixed(2) ?? "—"}`,
+          `Reviews: ${s.reps} · Lapses: ${s.lapses}`,
+          `Flag: ${s.flag ?? "none"} · ${s.suspended ? "SUSPENDED" : "active"}${s.marked ? " · MARKED" : ""}`,
+        ].join("\n")
+      );
+    },
+    previousCard() {
+      const last = historyRef.current.pop();
+      if (!last || !user || !deckId) return;
+      setQueue(last.queue);
+      if (last.key !== undefined) {
+        setSrsMap((m) => {
+          const copy = new Map(m);
+          if (last.prevSrs) {
+            copy.set(last.key!, last.prevSrs);
+            setSrsState(user.uid, deckId, last.key!, last.prevSrs).catch(() => {});
+          } else {
+            copy.delete(last.key!);
+            deleteSrsState(user.uid, deckId, last.key!).catch(() => {});
+          }
+          return copy;
+        });
+      }
+      resetCardUI();
+    },
+    markNote() {
+      if (!current) return;
+      const marked = !srsMap?.get(current.key)?.marked;
+      updateMeta(siblingKeys(current), { marked });
+    },
+    async createCopy() {
+      if (!current || !user || !deckId) return;
+      if (current.kind === "occlusion") {
+        alert("Copying an occlusion card isn't supported yet — duplicate the sheet from the deck page instead.");
+        return;
+      }
+      const card = cards?.find((c) => c.id === current.cardId);
+      if (card) {
+        await createCard(user.uid, deckId, card.data);
+        alert("Copy created — find it on the deck page to edit.");
+      }
+    },
+    async deleteNote() {
+      if (!current || !user || !deckId) return;
+      const keys = siblingKeys(current);
+      if (current.kind === "text") {
+        if (!confirm("Delete this note and all its cards? This can't be undone.")) return;
+        await deleteCard(user.uid, deckId, current.cardId);
+      } else {
+        if (!confirm(`Delete the occlusion sheet "${current.sheet.title}" and all its masks?`)) return;
+        await deleteOcclusionSheet(user.uid, deckId, current.sheet.id, current.sheet.imagePath);
+      }
+      dropFromQueue(keys);
+    },
+  };
+
+  // ---------- keyboard: Space = flip / correct, X = wrong ----------
+  const isFlashcardContext =
+    current &&
+    ((mode === "flip") ||
+      (mode === "type" && current.kind === "occlusion" && !current.unit.label) ||
+      (mode === "learn" && learnFormat === "flashcard"));
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      const target = e.target as HTMLElement;
+      if (target.tagName === "INPUT" || target.tagName === "TEXTAREA") return;
+      if (!current || !isFlashcardContext) return;
+      if (e.key === " " || e.code === "Space") {
+        e.preventDefault();
+        if (!flipped) {
+          captureGuessTime();
+          setFlipped(true);
+        } else if (studyMode === "anki") {
+          gradeSrs("good");
+        } else if (mode === "learn") {
+          markLearn(true);
+        } else {
+          markCram(true);
+        }
+      } else if (e.key === "x" || e.key === "X") {
+        e.preventDefault();
+        if (!flipped) {
+          captureGuessTime();
+          setFlipped(true);
+        } else if (studyMode === "anki") {
+          gradeSrs("again");
+        } else if (mode === "learn") {
+          markLearn(false);
+        } else {
+          markCram(false);
+        }
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
+
+  const progress = total > 0 ? Math.round(((total - queue.length) / total) * 100) : 0;
+
+  if (!cards || !sheets || !srsMap) {
+    return (
+      <Layout>
+        <div className="py-24 text-center text-slate-400">Loading…</div>
+      </Layout>
+    );
+  }
+
+  const settingsButton = (
+    <button
+      onClick={() => setShowSettings(true)}
+      title="Study settings"
+      className="rounded-full border border-slate-200 bg-white p-1.5 text-slate-500 hover:bg-slate-50"
+    >
+      <Settings size={14} />
+    </button>
+  );
+
+  if (total === 0) {
+    return (
+      <Layout>
+        <div className="mb-4 flex items-center justify-between">
+          <BackLink deckId={deckId!} navigate={navigate} inline />
+          {settingsButton}
+        </div>
+        {studyMode === "anki" ? (
+          <div className="rounded-2xl border border-indigo-200 bg-indigo-50 py-20 text-center">
+            <CalendarClock className="mx-auto mb-3 text-indigo-400" size={40} />
+            <p className="mb-1 text-lg font-bold text-indigo-900">
+              Nothing due right now
+            </p>
+            <p className="mb-5 text-sm text-indigo-700">
+              {nextDueMs !== null
+                ? `Next card comes due in ${formatDelay(nextDueMs)}.`
+                : "This deck has no cards yet."}{" "}
+              Want to practice anyway without touching the schedule?
+            </p>
+            <button
+              onClick={() => setStudyMode("quizlet")}
+              className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white hover:bg-red-700"
+            >
+              Switch to Quizlet mode & cram
+            </button>
+          </div>
+        ) : (
+          <div className="rounded-2xl border border-dashed border-slate-300 bg-white py-20 text-center">
+            <p className="font-medium text-slate-700">Nothing to study yet</p>
+            <p className="mt-1 text-sm text-slate-500">
+              Add cards or an image occlusion sheet from the deck page first.
+            </p>
+          </div>
+        )}
+        {showSettings && (
+          <StudySettingsModal
+            studyMode={studyMode}
+            anki={ankiSettings}
+            quizlet={quizletSettings}
+            onChange={(a, q) => {
+              setAnkiSettings(a);
+              setQuizletSettings(q);
+              restart();
+            }}
+            onClose={() => setShowSettings(false)}
+          />
+        )}
+      </Layout>
+    );
+  }
+
+  const currentSrs = current ? srsMap.get(current.key) ?? null : null;
+  const answer = current ? itemAnswer(current) : "";
+  const retypeSatisfied =
+    !quizletSettings.retypeCorrect || gradeAnswer(retyped, answer, "moderate");
+
+  function CramButtons({ onMark }: { onMark: (c: boolean) => void }) {
+    return (
+      <div className="mx-auto mt-6 flex max-w-xl justify-center gap-3">
+        <button
+          onClick={() => onMark(false)}
+          className="flex-1 rounded-xl border border-red-200 bg-red-50 py-3 text-sm font-semibold text-red-600 transition hover:bg-red-100"
+        >
+          Still learning <span className="text-[10px] opacity-50">(X)</span>
+        </button>
+        <button
+          onClick={() => onMark(true)}
+          className="flex-1 rounded-xl border border-emerald-200 bg-emerald-50 py-3 text-sm font-semibold text-emerald-600 transition hover:bg-emerald-100"
+        >
+          Got it <span className="text-[10px] opacity-50">(Space)</span>
+        </button>
+      </div>
+    );
+  }
+
+  function AnswerButtons() {
+    if (studyMode === "anki") {
+      return <GradeButtons srs={currentSrs} cfg={srsConfig} onGrade={gradeSrs} />;
+    }
+    return <CramButtons onMark={mode === "learn" ? markLearn : markCram} />;
+  }
+
+  return (
+    <Layout>
+      <div className="mb-2 flex items-center justify-between">
+        <BackLink deckId={deckId!} navigate={navigate} inline />
+        {settingsButton}
+      </div>
+
+      <div className="mb-4 flex items-center justify-between">
+        <div className="h-2 flex-1 overflow-hidden rounded-full bg-slate-200">
+          <div
+            className={`h-full rounded-full transition-all ${
+              studyMode === "anki" ? "bg-emerald-600" : "bg-red-600"
+            }`}
+            style={{ width: `${progress}%` }}
+          />
+        </div>
+        <span className="ml-3 text-sm font-medium text-slate-500">
+          {total - queue.length}/{total}
+        </span>
+      </div>
+
+      <div className="mb-4 flex flex-wrap justify-center gap-2 text-sm">
+        <ModePill active={mode === "flip"} onClick={() => { setMode("flip"); resetCardUI(); }}>
+          Flashcards
+        </ModePill>
+        {studyMode === "quizlet" && (
+          <ModePill active={mode === "learn"} onClick={() => { setMode("learn"); resetCardUI(); }}>
+            Learn
+          </ModePill>
+        )}
+        <ModePill active={mode === "type"} onClick={() => { setMode("type"); resetCardUI(); }}>
+          Type the answer
+        </ModePill>
+        {hasOcclusion && (
+          <>
+            <span className="mx-1 self-center text-slate-300">|</span>
+            <ModePill dark active={occMode === "hideOne"} onClick={() => setOccMode("hideOne")}>
+              Hide one
+            </ModePill>
+            <ModePill dark active={occMode === "hideAll"} onClick={() => setOccMode("hideAll")}>
+              Hide all
+            </ModePill>
+          </>
+        )}
+      </div>
+
+
+      {studyMode === "anki" && current && (
+        <div className="mb-4 flex flex-wrap items-center justify-center gap-2 text-sm">
+          {srsMap.get(current.key)?.flag && (
+            <Flag
+              size={14}
+              fill="currentColor"
+              className={
+                {
+                  red: "text-red-500",
+                  orange: "text-orange-500",
+                  green: "text-emerald-500",
+                  blue: "text-sky-500",
+                }[srsMap.get(current.key)!.flag!]
+              }
+            />
+          )}
+          {srsMap.get(current.key)?.marked && (
+            <Star size={14} fill="currentColor" className="text-amber-400" />
+          )}
+          <button
+            onClick={() => {
+              if (current.kind === "text") setShowEdit(true);
+              else navigate(`/deck/${deckId}/occlusion/${current.sheet.id}/edit`);
+            }}
+            className="flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 font-medium text-slate-700 hover:bg-slate-50"
+          >
+            <Pencil size={13} /> Edit
+          </button>
+          {isFlashcardContext && !flipped && (
+            <button
+              onClick={() => {
+                captureGuessTime();
+                setFlipped(true);
+              }}
+              className="flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 font-medium text-slate-700 hover:bg-slate-50"
+            >
+              <Eye size={13} /> Show answer <span className="text-[10px] text-slate-400">(Space)</span>
+            </button>
+          )}
+          <div className="relative">
+            <button
+              onClick={() => setMoreOpen((o) => !o)}
+              className="flex items-center gap-1 rounded-lg border border-slate-300 bg-white px-3 py-1.5 font-medium text-slate-700 hover:bg-slate-50"
+            >
+              More <ChevronDown size={13} />
+            </button>
+            {moreOpen && (
+              <div
+                className="absolute left-1/2 z-30 mt-1 w-52 -translate-x-1/2 overflow-hidden rounded-xl border border-slate-200 bg-white py-1 text-left shadow-lg"
+                onClick={() => setMoreOpen(false)}
+              >
+                <div className="flex items-center gap-2 px-3 py-2">
+                  <span className="text-xs text-slate-400">Flag:</span>
+                  {(["red", "orange", "green", "blue"] as FlagColor[]).map((c) => (
+                    <button
+                      key={c}
+                      onClick={() => actions.flag(c)}
+                      className={`h-4 w-4 rounded-full ${
+                        { red: "bg-red-500", orange: "bg-orange-500", green: "bg-emerald-500", blue: "bg-sky-500" }[c]
+                      } ${srsMap.get(current.key)?.flag === c ? "ring-2 ring-slate-700 ring-offset-1" : ""}`}
+                    />
+                  ))}
+                  <button
+                    onClick={() => actions.flag(null)}
+                    className="text-[10px] text-slate-400 hover:text-slate-600"
+                  >
+                    clear
+                  </button>
+                </div>
+                <MoreItem onClick={actions.buryCard}>Bury Card</MoreItem>
+                <MoreItem onClick={actions.resetCard}>Reset Card…</MoreItem>
+                <MoreItem onClick={actions.setDueDate}>Set Due Date…</MoreItem>
+                <MoreItem onClick={actions.suspendCard}>Suspend Card</MoreItem>
+                <MoreItem onClick={actions.cardInfo}>Card Info</MoreItem>
+                <MoreItem onClick={actions.previousCard}>Previous Card</MoreItem>
+                <div className="my-1 border-t border-slate-100" />
+                <MoreItem onClick={actions.markNote}>
+                  {srsMap.get(current.key)?.marked ? "Unmark Note" : "Mark Note"}
+                </MoreItem>
+                <MoreItem onClick={actions.buryNote}>Bury Note</MoreItem>
+                <MoreItem onClick={actions.suspendNote}>Suspend Note</MoreItem>
+                <MoreItem onClick={actions.createCopy}>Create Copy…</MoreItem>
+                <MoreItem danger onClick={actions.deleteNote}>Delete Note</MoreItem>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {!current ? (
+        <div className="rounded-2xl border border-emerald-200 bg-emerald-50 py-20 text-center">
+          <PartyPopper className="mx-auto mb-3 text-emerald-500" size={40} />
+          <p className="mb-1 text-lg font-bold text-emerald-800">
+            {studyMode === "anki"
+              ? "All caught up for today!"
+              : "You got through the whole deck!"}
+          </p>
+          <p className="mb-5 text-sm text-emerald-700">
+            {total} card{total === 1 ? "" : "s"} {studyMode === "anki" ? "reviewed" : "mastered"} this
+            session.
+          </p>
+          <div className="flex justify-center gap-3">
+            {studyMode === "quizlet" && (
+              <button
+                onClick={restart}
+                className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700"
+              >
+                <RotateCcw size={14} /> Study again
+              </button>
+            )}
+            <button
+              onClick={() => navigate(`/deck/${deckId}`)}
+              className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-white"
+            >
+              Back to deck
+            </button>
+          </div>
+        </div>
+      ) : mode === "learn" && studyMode === "quizlet" && learnFormat === "mc" ? (
+        /* ---------- Learn: multiple choice ---------- */
+        <div className="mx-auto max-w-xl">
+          {current.kind === "text" ? (
+            <div className="max-h-[20rem] overflow-y-auto rounded-2xl border border-slate-200 bg-white p-6 text-center shadow-sm">
+              <RichText html={current.frontHtml} className="text-lg text-slate-900" />
+            </div>
+          ) : (
+            <OcclusionCard item={current} occMode={occMode} revealed={mcPicked !== null} />
+          )}
+          <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-2">
+            {mcOptions.map((opt, i) => {
+              const isAnswer = opt === answer;
+              const picked = mcPicked === i;
+              let cls = "border-slate-200 bg-white hover:border-indigo-300 hover:bg-indigo-50";
+              if (mcPicked !== null) {
+                if (isAnswer) cls = "border-emerald-400 bg-emerald-50 text-emerald-800";
+                else if (picked) cls = "border-red-400 bg-red-50 text-red-700";
+                else cls = "border-slate-200 bg-white opacity-60";
+              }
+              return (
+                <button
+                  key={i}
+                  disabled={mcPicked !== null}
+                  onClick={() => {
+                    captureGuessTime();
+                    setMcPicked(i);
+                    setChecked(isAnswer);
+                  }}
+                  className={`rounded-xl border p-3 text-left text-sm transition ${cls}`}
+                >
+                  {opt}
+                </button>
+              );
+            })}
+          </div>
+          {mcPicked !== null && (
+            <div className="mt-4 text-center">
+              <button
+                onClick={() => markLearn(checked === true)}
+                className="rounded-lg bg-indigo-600 px-6 py-2.5 text-sm font-semibold text-white hover:bg-indigo-700"
+              >
+                Continue
+              </button>
+            </div>
+          )}
+        </div>
+      ) : mode === "learn" && studyMode === "quizlet" && learnFormat === "written" ? (
+        /* ---------- Learn: written ---------- */
+        <div className="mx-auto max-w-xl">
+          {current.kind === "text" ? (
+            <div className="max-h-[20rem] overflow-y-auto rounded-2xl border border-slate-200 bg-white p-6 text-center shadow-sm">
+              <RichText html={current.frontHtml} className="text-lg text-slate-900" />
+            </div>
+          ) : (
+            <OcclusionCard item={current} occMode={occMode} revealed={checked !== null} />
+          )}
+          <div className="mt-4 flex gap-2">
+            <input
+              autoFocus
+              value={typed}
+              onChange={(e) => setTyped(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && checked === null && handleCheck()}
+              disabled={checked !== null}
+              placeholder="Type your answer…"
+              className="flex-1 rounded-lg border border-slate-300 px-3 py-2.5 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 disabled:bg-slate-50"
+            />
+            {checked === null && (
+              <button
+                onClick={handleCheck}
+                className="rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-indigo-700"
+              >
+                Check
+              </button>
+            )}
+          </div>
+          {checked !== null && (
+            <div
+              className={`mt-4 rounded-xl border p-4 text-sm ${
+                checked ? "border-emerald-200 bg-emerald-50" : "border-red-200 bg-red-50"
+              }`}
+            >
+              <p className={`mb-1 font-semibold ${checked ? "text-emerald-700" : "text-red-700"}`}>
+                {checked ? "Correct!" : "Not quite"}
+              </p>
+              <p className="text-slate-700">
+                Answer: <b>{answer}</b>
+              </p>
+              {!checked && quizletSettings.retypeCorrect && (
+                <input
+                  autoFocus
+                  value={retyped}
+                  onChange={(e) => setRetyped(e.target.value)}
+                  placeholder="Retype the correct answer to continue…"
+                  className="mt-3 w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-indigo-500"
+                />
+              )}
+              <div className="mt-3 flex justify-end gap-2">
+                {!checked && (
+                  <button
+                    onClick={() => markLearn(true)}
+                    className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
+                  >
+                    I actually had it right
+                  </button>
+                )}
+                <button
+                  onClick={() => markLearn(checked === true)}
+                  disabled={!checked && !retypeSatisfied}
+                  className="rounded-lg bg-indigo-600 px-4 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700 disabled:opacity-50"
+                >
+                  Continue
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      ) : current.kind === "occlusion" && (mode === "flip" || mode === "learn" || !current.unit.label) ? (
+        /* ---------- occlusion flashcard ---------- */
+        <div>
+          <OcclusionCard item={current} occMode={occMode} revealed={flipped} />
+          {!flipped ? (
+            <div className="mx-auto mt-5 flex max-w-2xl justify-center">
+              <button
+                onClick={() => {
+                  captureGuessTime();
+                  setFlipped(true);
+                }}
+                className="rounded-xl bg-indigo-600 px-6 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-700"
+              >
+                Reveal <span className="text-[10px] opacity-60">(Space)</span>
+              </button>
+            </div>
+          ) : (
+            <AnswerButtons />
+          )}
+        </div>
+      ) : mode === "flip" || mode === "learn" ? (
+        /* ---------- text flashcard ---------- */
+        <div>
+          <div className="flip-card mx-auto h-[26rem] max-w-xl">
+            <div
+              className={`flip-card-inner h-full w-full cursor-pointer ${flipped ? "flipped" : ""}`}
+              onClick={() => {
+                captureGuessTime();
+                setFlipped((f) => !f);
+              }}
+            >
+              <div className="flip-card-face overflow-y-auto rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+                <div className="flex min-h-full">
+                  <RichText
+                    html={current.kind === "text" ? current.frontHtml : ""}
+                    className="m-auto max-w-full text-center text-lg text-slate-900"
+                  />
+                </div>
+              </div>
+              <div className="flip-card-face flip-card-back overflow-y-auto rounded-2xl border border-indigo-200 bg-indigo-50 p-6 shadow-sm">
+                <div className="flex min-h-full">
+                  <RichText
+                    html={current.kind === "text" ? current.backHtml : ""}
+                    className="m-auto max-w-full text-center text-lg text-slate-900"
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+          <p className="mt-3 text-center text-xs text-slate-400">
+            Space to flip · Space again = got it · X = still learning
+          </p>
+          {flipped && <AnswerButtons />}
+        </div>
+      ) : (
+        /* ---------- type the answer ---------- */
+        <div className="mx-auto max-w-xl">
+          {current.kind === "text" ? (
+            <div className="max-h-[24rem] overflow-y-auto rounded-2xl border border-slate-200 bg-white p-6 text-center shadow-sm">
+              <RichText html={current.frontHtml} className="text-lg text-slate-900" />
+            </div>
+          ) : (
+            <OcclusionCard item={current} occMode={occMode} revealed={checked !== null} />
+          )}
+          <div className="mt-4 flex gap-2">
+            <input
+              autoFocus
+              value={typed}
+              onChange={(e) => setTyped(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && checked === null && handleCheck()}
+              disabled={checked !== null}
+              placeholder={
+                current.kind === "occlusion"
+                  ? "Type what's under the amber mask…"
+                  : "Type your answer…"
+              }
+              className="flex-1 rounded-lg border border-slate-300 px-3 py-2.5 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 disabled:bg-slate-50"
+            />
+            {checked === null && (
+              <button
+                onClick={handleCheck}
+                className="rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-indigo-700"
+              >
+                Check
+              </button>
+            )}
+          </div>
+
+          {checked !== null && (
+            <div
+              className={`mt-4 rounded-xl border p-4 text-sm ${
+                checked ? "border-emerald-200 bg-emerald-50" : "border-red-200 bg-red-50"
+              }`}
+            >
+              <p className={`mb-1 font-semibold ${checked ? "text-emerald-700" : "text-red-700"}`}>
+                {checked ? "Correct!" : "Not quite"}
+              </p>
+              {current.kind === "text" ? (
+                <RichText
+                  html={current.backHtml}
+                  className="max-h-72 overflow-y-auto text-slate-700"
+                />
+              ) : (
+                <p className="text-slate-700">
+                  Answer: <b>{current.unit.label}</b>
+                </p>
+              )}
+              {studyMode === "quizlet" && !checked && (
+                <button
+                  onClick={() => markCram(true)}
+                  className="mt-3 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
+                >
+                  I actually had it right
+                </button>
+              )}
+              <AnswerButtons />
+            </div>
+          )}
+        </div>
+      )}
+
+      {studyMode === "quizlet" && current && mode !== "learn" && (
+        <p className="mt-6 text-center text-xs text-slate-400">
+          Smart shuffle: misses come back within a few cards, slow answers
+          return near the end, fast answers leave the session. Your Anki-mode
+          schedule is untouched.
+        </p>
+      )}
+      {studyMode === "quizlet" && current && mode === "learn" && (
+        <p className="mt-6 text-center text-xs text-slate-400">
+          Learn: multiple choice until you get a card right, then written.
+          Two correct answers = mastered. Misses reset a card to not-learned.
+        </p>
+      )}
+
+      {showSettings && (
+        <StudySettingsModal
+          studyMode={studyMode}
+          anki={ankiSettings}
+          quizlet={quizletSettings}
+          ankiStats={computeAnkiStats(srsMap)}
+          onChange={(a, q) => {
+            setAnkiSettings(a);
+            setQuizletSettings(q);
+            restart();
+          }}
+          onClose={() => setShowSettings(false)}
+        />
+      )}
+      {showEdit && current?.kind === "text" && (
+        <CardEditorModal
+          initial={cards.find((c) => c.id === current.cardId)}
+          uid={user?.uid}
+          deckId={deckId}
+          onSave={async (data) => {
+            if (user && deckId) await updateCard(user.uid, deckId, current.cardId, data);
+            restart();
+          }}
+          onClose={() => setShowEdit(false)}
+        />
+      )}
+    </Layout>
+  );
+}
+
+function ModePill({
+  active,
+  dark,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  dark?: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`rounded-full px-3 py-1 font-medium transition ${
+        active
+          ? dark
+            ? "bg-slate-800 text-white"
+            : "bg-indigo-600 text-white"
+          : "bg-white text-slate-500 border border-slate-200"
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
+function BackLink({
+  deckId,
+  navigate,
+  inline,
+}: {
+  deckId: string;
+  navigate: ReturnType<typeof useNavigate>;
+  inline?: boolean;
+}) {
+  return (
+    <button
+      onClick={() => navigate(`/deck/${deckId}`)}
+      className={`flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-800 ${
+        inline ? "" : "mb-4"
+      }`}
+    >
+      <ArrowLeft size={15} /> Back to deck
+    </button>
+  );
+}
+
+function MoreItem({
+  danger,
+  onClick,
+  children,
+}: {
+  danger?: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`block w-full px-3 py-1.5 text-left text-sm transition ${
+        danger ? "text-red-600 hover:bg-red-50" : "text-slate-700 hover:bg-slate-50"
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
+function computeAnkiStats(srsMap: Map<string, import("../lib/srs").SrsState> | null) {
+  const today = getTodayAnkiStats();
+  let dueTomorrow = 0;
+  if (srsMap) {
+    const tomorrowStart = nextDayStart();
+    const tomorrowEnd = tomorrowStart + 86400000;
+    for (const s of srsMap.values()) {
+      if (s.suspended) continue;
+      if (s.reps > 0 && s.due > Date.now() && s.due <= tomorrowEnd && s.due >= tomorrowStart) {
+        dueTomorrow++;
+      }
+    }
+  }
+  return { studiedToday: today.count, msToday: today.ms, dueTomorrow };
+}

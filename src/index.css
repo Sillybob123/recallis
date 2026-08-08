@@ -1,0 +1,105 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, sans-serif;
+}
+
+html {
+  color-scheme: light dark;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: #f6f7fb;
+  color: #1a1d29;
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+.flip-card {
+  perspective: 1600px;
+}
+.flip-card-inner {
+  position: relative;
+  transform-style: preserve-3d;
+  transition: transform 0.5s cubic-bezier(0.4, 0.2, 0.2, 1);
+}
+.flip-card-inner.flipped {
+  transform: rotateY(180deg);
+}
+.flip-card-face {
+  position: absolute;
+  inset: 0;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+}
+.flip-card-back {
+  transform: rotateY(180deg);
+}
+
+.prose-card :where(img) {
+  max-width: 100%;
+  max-height: 16rem;
+  width: auto;
+  object-fit: contain;
+  border-radius: 0.5rem;
+  margin: 0.5rem auto;
+  display: block;
+}
+.prose-card :where(ul, ol) {
+  padding-left: 1.25rem;
+}
+.prose-card :where(b, strong) {
+  font-weight: 700;
+}
+
+/* Mode themes: Anki = calm green (long-term memory), Quizlet = locked-in red (cram). */
+.theme-anki {
+  --accent: #059669;
+  --accent-hover: #047857;
+  --accent-soft: #d1fae5;
+  --page-bg: linear-gradient(to bottom, #ecfdf5, #f8fafc 320px);
+}
+.theme-quizlet {
+  --accent: #dc2626;
+  --accent-hover: #b91c1c;
+  --accent-soft: #fee2e2;
+  --page-bg: linear-gradient(to bottom, #fef2f2, #f8fafc 320px);
+}
+
+.cloze-blank {
+  display: inline-block;
+  padding: 0 0.4em;
+  border-radius: 0.35rem;
+  background: #e0e7ff;
+  color: #4338ca;
+  font-weight: 700;
+}
+.cloze-answer {
+  border-radius: 0.35rem;
+  background: #d1fae5;
+  color: #047857;
+  font-weight: 700;
+  padding: 0 0.25em;
+}
+
+::selection {
+  background: #c7d2fe;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: #d1d5db;
+  border-radius: 999px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}

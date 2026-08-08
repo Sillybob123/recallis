@@ -1,0 +1,623 @@
+// Parses Anki .apkg / .colpkg packages (both the modern zstd-compressed
+// format and the legacy format) entirely client-side: JSZip for the
+// container, fzstd for zstd, sql.js (wasm SQLite) for the collection DB.
+
+import JSZip from "jszip";
+import { decompress as zstdDecompress } from "fzstd";
+import type { Database, SqlJsStatic } from "sql.js";
+import type { CardData, OcclusionShape } from "../types";
+
+export interface ParsedSheet {
+  title: string;
+  imageName: string;
+  imageWidth: number;
+  imageHeight: number;
+  shapes: OcclusionShape[];
+  /** true when shape coords are in pixels and must be divided by image dims */
+  needsPixelNormalize?: boolean;
+}
+
+export interface ParsedApkgDeck {
+  /** "Anatomy::Lab00::Positions" style */
+  name: string;
+  cards: CardData[];
+  sheets: ParsedSheet[];
+}
+
+export interface ParsedApkg {
+  decks: ParsedApkgDeck[];
+  /** media filename -> zip entry name ("0", "1", ...) */
+  mediaIndex: Map<string, string>;
+  /** modern format = media files are individually zstd-compressed */
+  zstdMedia: boolean;
+  zip: JSZip;
+  stats: {
+    cloze: number;
+    basic: number;
+    sheets: number;
+    masks: number;
+    skippedNotes: number;
+    warnings: string[];
+  };
+}
+
+const ZSTD_MAGIC = 0xfd2fb528;
+
+function isZstd(data: Uint8Array): boolean {
+  if (data.length < 4) return false;
+  const view = new DataView(data.buffer, data.byteOffset, 4);
+  return view.getUint32(0, true) === ZSTD_MAGIC;
+}
+
+function maybeDecompress(data: Uint8Array): Uint8Array {
+  return isZstd(data) ? zstdDecompress(data) : data;
+}
+
+// ---------- media map ----------
+
+function readVarint(buf: Uint8Array, pos: number): [number, number] {
+  let result = 0;
+  let shift = 0;
+  for (;;) {
+    const b = buf[pos++];
+    result |= (b & 0x7f) << shift;
+    if (!(b & 0x80)) return [result, pos];
+    shift += 7;
+  }
+}
+
+/** Modern media map: zstd-compressed protobuf, repeated MediaEntry{name=1,...} in file order. */
+function parseMediaProtobuf(raw: Uint8Array): string[] {
+  const names: string[] = [];
+  const decoder = new TextDecoder();
+  let pos = 0;
+  while (pos < raw.length) {
+    let tag: number;
+    [tag, pos] = readVarint(raw, pos);
+    const wireType = tag & 7;
+    if (wireType === 2) {
+      let len: number;
+      [len, pos] = readVarint(raw, pos);
+      const payload = raw.subarray(pos, pos + len);
+      pos += len;
+      if (tag >> 3 === 1) {
+        // nested MediaEntry
+        let npos = 0;
+        while (npos < payload.length) {
+          let ntag: number;
+          [ntag, npos] = readVarint(payload, npos);
+          const nwt = ntag & 7;
+          if (nwt === 2) {
+            let nlen: number;
+            [nlen, npos] = readVarint(payload, npos);
+            if (ntag >> 3 === 1) {
+              names.push(decoder.decode(payload.subarray(npos, npos + nlen)));
+            }
+            npos += nlen;
+          } else if (nwt === 0) {
+            [, npos] = readVarint(payload, npos);
+          } else {
+            return names; // unknown wire type; stop safely
+          }
+        }
+      }
+    } else if (wireType === 0) {
+      [, pos] = readVarint(raw, pos);
+    } else {
+      break;
+    }
+  }
+  return names;
+}
+
+async function buildMediaIndex(
+  zip: JSZip
+): Promise<{ index: Map<string, string>; zstdMedia: boolean }> {
+  const index = new Map<string, string>();
+  const mediaFile = zip.file("media");
+  if (!mediaFile) return { index, zstdMedia: false };
+  const raw = new Uint8Array(await mediaFile.async("arraybuffer"));
+  if (isZstd(raw)) {
+    const names = parseMediaProtobuf(zstdDecompress(raw));
+    names.forEach((name, i) => index.set(name, String(i)));
+    return { index, zstdMedia: true };
+  }
+  // Legacy: JSON map { "0": "filename" }
+  const map = JSON.parse(new TextDecoder().decode(raw)) as Record<string, string>;
+  for (const [entry, name] of Object.entries(map)) {
+    index.set(name, entry);
+  }
+  return { index, zstdMedia: false };
+}
+
+export async function readMediaBytes(
+  parsed: Pick<ParsedApkg, "zip" | "mediaIndex" | "zstdMedia">,
+  name: string
+): Promise<Uint8Array | null> {
+  const entry = parsed.mediaIndex.get(name);
+  if (entry === undefined) return null;
+  const file = parsed.zip.file(entry);
+  if (!file) return null;
+  const raw = new Uint8Array(await file.async("arraybuffer"));
+  return parsed.zstdMedia ? maybeDecompress(raw) : raw;
+}
+
+// ---------- SVG mask parsing (Image Occlusion Enhanced) ----------
+
+function parseAttrs(tag: string): Record<string, string> {
+  const attrs: Record<string, string> = {};
+  for (const m of tag.matchAll(/([\w:-]+)\s*=\s*"([^"]*)"/g)) {
+    attrs[m[1]] = m[2];
+  }
+  return attrs;
+}
+
+function shapeFromSvgTag(
+  tagName: string,
+  attrs: Record<string, string>,
+  W: number,
+  H: number,
+  groupId?: string
+): OcclusionShape | null {
+  const id = crypto.randomUUID();
+  if (tagName === "rect") {
+    const x = parseFloat(attrs.x ?? "0") / W;
+    const y = parseFloat(attrs.y ?? "0") / H;
+    const w = parseFloat(attrs.width ?? "0") / W;
+    const h = parseFloat(attrs.height ?? "0") / H;
+    if (w <= 0 || h <= 0) return null;
+    return { id, kind: "rect", x, y, w, h, groupId };
+  }
+  if (tagName === "ellipse") {
+    const cx = parseFloat(attrs.cx ?? "0") / W;
+    const cy = parseFloat(attrs.cy ?? "0") / H;
+    const rx = parseFloat(attrs.rx ?? "0") / W;
+    const ry = parseFloat(attrs.ry ?? "0") / H;
+    if (rx <= 0 || ry <= 0) return null;
+    return { id, kind: "ellipse", x: cx - rx, y: cy - ry, w: rx * 2, h: ry * 2, groupId };
+  }
+  if (tagName === "polygon") {
+    const points = (attrs.points ?? "")
+      .trim()
+      .split(/\s+/)
+      .map((pair) => {
+        const [px, py] = pair.split(",").map(Number);
+        return { x: px / W, y: py / H };
+      })
+      .filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y));
+    if (points.length < 3) return null;
+    let minX = 1, minY = 1, maxX = 0, maxY = 0;
+    for (const p of points) {
+      minX = Math.min(minX, p.x);
+      minY = Math.min(minY, p.y);
+      maxX = Math.max(maxX, p.x);
+      maxY = Math.max(maxY, p.y);
+    }
+    return {
+      id,
+      kind: "polygon",
+      x: minX,
+      y: minY,
+      w: maxX - minX,
+      h: maxY - minY,
+      points,
+      groupId,
+    };
+  }
+  return null;
+}
+
+/**
+ * Parses an IOE "-O.svg" original-mask file. Masks appear either grouped
+ * (<g id="...-oa-N"> with several shapes → they reveal together) or as
+ * standalone shape elements with their own -oa-N id.
+ */
+export function parseIoeOriginalSvg(svgText: string): {
+  width: number;
+  height: number;
+  shapes: OcclusionShape[];
+} | null {
+  const svgTag = svgText.match(/<svg\b[^>]*>/);
+  if (!svgTag) return null;
+  const svgAttrs = parseAttrs(svgTag[0]);
+  const W = parseFloat(svgAttrs.width ?? "0");
+  const H = parseFloat(svgAttrs.height ?? "0");
+  if (!W || !H) return null;
+
+  // Strip the Labels group so its decorations don't get mistaken for masks.
+  const labelsMatch = svgText.match(/<g>\s*<title>Labels<\/title>[\s\S]*?<\/g>/);
+  const body = labelsMatch ? svgText.replace(labelsMatch[0], "") : svgText;
+
+  const shapes: OcclusionShape[] = [];
+  const consumedRanges: [number, number][] = [];
+
+  // Grouped masks: <g id="...-oa-N"> ... shapes ... </g>.
+  // Also matches self-closing empty groups (<g id="..."/>) — stray notes whose
+  // masks were deleted — so they can't swallow the following group's shapes.
+  for (const gm of body.matchAll(
+    /<g\b[^>]*\bid="[^"]*-(?:oa|ao)-\d+"[^>]*?(?:\/>|>([\s\S]*?)<\/g>)/g
+  )) {
+    consumedRanges.push([gm.index!, gm.index! + gm[0].length]);
+    const inner = gm[1];
+    if (inner === undefined) continue; // self-closing empty group
+    const groupShapes: OcclusionShape[] = [];
+    for (const sm of inner.matchAll(/<(rect|ellipse|polygon)\b[^>]*\/?>/g)) {
+      const shape = shapeFromSvgTag(sm[1], parseAttrs(sm[0]), W, H);
+      if (shape) groupShapes.push(shape);
+    }
+    if (groupShapes.length === 1) {
+      shapes.push(groupShapes[0]);
+    } else if (groupShapes.length > 1) {
+      const gid = crypto.randomUUID();
+      for (const s of groupShapes) shapes.push({ ...s, groupId: gid });
+    }
+  }
+
+  // Standalone masks: shape elements with their own -oa-N id, outside groups.
+  for (const sm of body.matchAll(
+    /<(rect|ellipse|polygon)\b[^>]*\bid="[^"]*-(?:oa|ao)-\d+"[^>]*\/?>/g
+  )) {
+    const inConsumed = consumedRanges.some(
+      ([a, b]) => sm.index! >= a && sm.index! < b
+    );
+    if (inConsumed) continue;
+    const shape = shapeFromSvgTag(sm[1], parseAttrs(sm[0]), W, H);
+    if (shape) shapes.push(shape);
+  }
+
+  return { width: W, height: H, shapes };
+}
+
+// ---------- native Image Occlusion (Anki 2.1.54+) occlusion field ----------
+
+export function parseNativeOcclusionField(field: string): {
+  shapes: OcclusionShape[];
+  needsPixelNormalize: boolean;
+} {
+  const shapes: OcclusionShape[] = [];
+  const clozeGroups = new Map<string, OcclusionShape[]>();
+  let sawPixels = false;
+
+  for (const m of field.matchAll(
+    /\{\{c(\d+)::image-occlusion:(rect|ellipse|polygon):([^}]*)\}\}/g
+  )) {
+    const clozeNum = m[1];
+    const kind = m[2] as "rect" | "ellipse" | "polygon";
+    const props: Record<string, string> = {};
+    for (const part of m[3].split(":")) {
+      const eq = part.indexOf("=");
+      if (eq > 0) props[part.slice(0, eq)] = part.slice(eq + 1);
+    }
+
+    let shape: OcclusionShape | null = null;
+    const id = crypto.randomUUID();
+    if (kind === "rect" || kind === "ellipse") {
+      let x: number, y: number, w: number, h: number;
+      if (props.rx !== undefined) {
+        const rx = parseFloat(props.rx);
+        const ry = parseFloat(props.ry ?? props.rx);
+        const cx = parseFloat(props.left ?? props.cx ?? "0");
+        const cy = parseFloat(props.top ?? props.cy ?? "0");
+        x = cx - rx; y = cy - ry; w = rx * 2; h = ry * 2;
+      } else {
+        x = parseFloat(props.left ?? "0");
+        y = parseFloat(props.top ?? "0");
+        w = parseFloat(props.width ?? "0");
+        h = parseFloat(props.height ?? "0");
+      }
+      if (w > 0 && h > 0) {
+        if (x > 1.5 || y > 1.5 || w > 1.5 || h > 1.5) sawPixels = true;
+        shape = { id, kind, x, y, w, h };
+      }
+    } else {
+      const points = (props.points ?? "")
+        .trim()
+        .split(/\s+/)
+        .map((pair) => {
+          const [px, py] = pair.split(",").map(Number);
+          return { x: px, y: py };
+        })
+        .filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y));
+      if (points.length >= 3) {
+        if (points.some((p) => p.x > 1.5 || p.y > 1.5)) sawPixels = true;
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        for (const p of points) {
+          minX = Math.min(minX, p.x);
+          minY = Math.min(minY, p.y);
+          maxX = Math.max(maxX, p.x);
+          maxY = Math.max(maxY, p.y);
+        }
+        shape = {
+          id,
+          kind: "polygon",
+          x: minX,
+          y: minY,
+          w: maxX - minX,
+          h: maxY - minY,
+          points,
+        };
+      }
+    }
+    if (shape) {
+      const list = clozeGroups.get(clozeNum) ?? [];
+      list.push(shape);
+      clozeGroups.set(clozeNum, list);
+    }
+  }
+
+  for (const members of clozeGroups.values()) {
+    if (members.length > 1) {
+      const gid = crypto.randomUUID();
+      for (const s of members) shapes.push({ ...s, groupId: gid });
+    } else if (members.length === 1) {
+      shapes.push(members[0]);
+    }
+  }
+
+  return { shapes, needsPixelNormalize: sawPixels };
+}
+
+// ---------- collection database ----------
+
+function firstImgSrc(html: string): string | null {
+  const m = html.match(/<img\b[^>]*\bsrc="([^"]+)"/i);
+  if (!m) return null;
+  return m[1].replace(/&amp;/g, "&").replace(/&quot;/g, '"');
+}
+
+interface NoteTypeInfo {
+  kind: "cloze" | "basic" | "ioe" | "native-io";
+  fieldNames: string[];
+}
+
+function classifyNotetype(name: string): NoteTypeInfo["kind"] {
+  if (/image\s*occlusion\s*enhanced/i.test(name)) return "ioe";
+  if (/image\s*occlusion/i.test(name)) return "native-io";
+  if (/cloze/i.test(name)) return "cloze";
+  return "basic";
+}
+
+export async function parseApkg(
+  data: ArrayBuffer,
+  loadSql: () => Promise<SqlJsStatic>
+): Promise<ParsedApkg> {
+  const zip = await JSZip.loadAsync(data);
+  const warnings: string[] = [];
+
+  // Prefer the modern DB when present (legacy collection.anki2 in modern
+  // packages is a stub that just says "please upgrade").
+  let dbBytes: Uint8Array | null = null;
+  const modern = zip.file("collection.anki21b");
+  const legacy21 = zip.file("collection.anki21");
+  const legacy2 = zip.file("collection.anki2");
+  if (modern) {
+    dbBytes = maybeDecompress(new Uint8Array(await modern.async("arraybuffer")));
+  } else if (legacy21) {
+    dbBytes = new Uint8Array(await legacy21.async("arraybuffer"));
+  } else if (legacy2) {
+    dbBytes = new Uint8Array(await legacy2.async("arraybuffer"));
+  }
+  if (!dbBytes) {
+    throw new Error(
+      "No Anki database found in this file — is it a .apkg/.colpkg export?"
+    );
+  }
+
+  const { index: mediaIndex, zstdMedia } = await buildMediaIndex(zip);
+
+  const SQL = await loadSql();
+  const db: Database = new SQL.Database(dbBytes);
+
+  try {
+    const tableNames = new Set<string>();
+    {
+      const res = db.exec("SELECT name FROM sqlite_master WHERE type='table'");
+      for (const row of res[0]?.values ?? []) tableNames.add(String(row[0]));
+    }
+
+    // --- note types + field names + deck names (modern vs legacy schema) ---
+    const notetypes = new Map<number, NoteTypeInfo>();
+    const deckNames = new Map<number, string>();
+
+    if (tableNames.has("notetypes")) {
+      const nt = db.exec("SELECT id, name FROM notetypes");
+      for (const [id, name] of nt[0]?.values ?? []) {
+        notetypes.set(Number(id), {
+          kind: classifyNotetype(String(name)),
+          fieldNames: [],
+        });
+      }
+      const fl = db.exec("SELECT ntid, ord, name FROM fields ORDER BY ntid, ord");
+      for (const [ntid, , name] of fl[0]?.values ?? []) {
+        notetypes.get(Number(ntid))?.fieldNames.push(String(name));
+      }
+      const dk = db.exec("SELECT id, name FROM decks");
+      for (const [id, name] of dk[0]?.values ?? []) {
+        deckNames.set(Number(id), String(name).split("\x1f").join("::"));
+      }
+    } else {
+      // Legacy schema 11: models/decks live as JSON blobs in the col table.
+      const col = db.exec("SELECT models, decks FROM col");
+      const [modelsJson, decksJson] = col[0].values[0];
+      const models = JSON.parse(String(modelsJson)) as Record<
+        string,
+        { name: string; flds: { name: string; ord: number }[] }
+      >;
+      for (const [id, m] of Object.entries(models)) {
+        notetypes.set(Number(id), {
+          kind: classifyNotetype(m.name),
+          fieldNames: [...m.flds].sort((a, b) => a.ord - b.ord).map((f) => f.name),
+        });
+      }
+      const decks = JSON.parse(String(decksJson)) as Record<string, { name: string }>;
+      for (const [id, d] of Object.entries(decks)) {
+        deckNames.set(Number(id), d.name);
+      }
+    }
+
+    // --- note -> deck via its first card ---
+    const noteDeck = new Map<number, number>();
+    {
+      const res = db.exec("SELECT nid, did FROM cards");
+      for (const [nid, did] of res[0]?.values ?? []) {
+        if (!noteDeck.has(Number(nid))) noteDeck.set(Number(nid), Number(did));
+      }
+    }
+
+    // --- read notes ---
+    interface RawNote {
+      id: number;
+      ntInfo: NoteTypeInfo;
+      fields: string[];
+      deckName: string;
+    }
+    const rawNotes: RawNote[] = [];
+    {
+      const res = db.exec("SELECT id, mid, flds FROM notes");
+      for (const [id, mid, flds] of res[0]?.values ?? []) {
+        const ntInfo = notetypes.get(Number(mid));
+        if (!ntInfo) continue;
+        const did = noteDeck.get(Number(id));
+        rawNotes.push({
+          id: Number(id),
+          ntInfo,
+          fields: String(flds).split("\x1f"),
+          deckName: (did !== undefined && deckNames.get(did)) || "Imported",
+        });
+      }
+    }
+
+    // --- convert ---
+    const deckMap = new Map<string, ParsedApkgDeck>();
+    function deckFor(name: string): ParsedApkgDeck {
+      let d = deckMap.get(name);
+      if (!d) {
+        d = { name, cards: [], sheets: [] };
+        deckMap.set(name, d);
+      }
+      return d;
+    }
+
+    const stats = {
+      cloze: 0,
+      basic: 0,
+      sheets: 0,
+      masks: 0,
+      skippedNotes: 0,
+      warnings,
+    };
+
+    function fieldByName(note: RawNote, name: string, fallback: number): string {
+      const idx = note.ntInfo.fieldNames.findIndex(
+        (f) => f.toLowerCase() === name.toLowerCase()
+      );
+      return note.fields[idx >= 0 ? idx : fallback] ?? "";
+    }
+
+    // IOE notes are one-note-per-mask sharing an ID prefix; group them into
+    // one sheet per original image.
+    const ioeGroups = new Map<string, RawNote[]>();
+
+    for (const note of rawNotes) {
+      const kind = note.ntInfo.kind;
+      if (kind === "ioe") {
+        const noteId = fieldByName(note, "ID (hidden)", 0);
+        const prefix = noteId.replace(/-(?:oa|ao)-\d+$/, "") || `note-${note.id}`;
+        const list = ioeGroups.get(prefix) ?? [];
+        list.push(note);
+        ioeGroups.set(prefix, list);
+        continue;
+      }
+      if (kind === "native-io") {
+        const occlusion = fieldByName(note, "Occlusion", 0);
+        const imageHtml = fieldByName(note, "Image", 1);
+        const header = fieldByName(note, "Header", 2);
+        const imageName = firstImgSrc(imageHtml);
+        const { shapes, needsPixelNormalize } = parseNativeOcclusionField(occlusion);
+        if (!imageName || shapes.length === 0) {
+          stats.skippedNotes++;
+          continue;
+        }
+        deckFor(note.deckName).sheets.push({
+          title: header.trim() || imageName,
+          imageName,
+          imageWidth: 0, // resolved when the image is loaded at import time
+          imageHeight: 0,
+          shapes,
+          needsPixelNormalize,
+        });
+        stats.sheets++;
+        stats.masks += shapes.length;
+        continue;
+      }
+      // cloze / basic
+      const first = (note.fields[0] ?? "").trim();
+      const second = (note.fields[1] ?? "").trim();
+      if (!first) {
+        stats.skippedNotes++;
+        continue;
+      }
+      if (kind === "cloze" && /\{\{c\d+::/.test(first)) {
+        deckFor(note.deckName).cards.push({
+          type: "cloze",
+          text: first,
+          extra: second || undefined,
+        });
+        stats.cloze++;
+      } else if (second) {
+        deckFor(note.deckName).cards.push({ type: "basic", front: first, back: second });
+        stats.basic++;
+      } else {
+        stats.skippedNotes++;
+      }
+    }
+
+    // Resolve IOE groups into sheets by parsing their -O.svg mask files.
+    for (const [prefix, notes] of ioeGroups) {
+      const sample = notes[0];
+      const imageName = firstImgSrc(fieldByName(sample, "Image", 2));
+      const maskSvgName = firstImgSrc(fieldByName(sample, "Original Mask", 10));
+      if (!imageName || !maskSvgName) {
+        stats.skippedNotes += notes.length;
+        warnings.push(`Occlusion group ${prefix}: missing image or mask reference.`);
+        continue;
+      }
+      const svgBytes = await readMediaBytes({ zip, mediaIndex, zstdMedia }, maskSvgName);
+      if (!svgBytes) {
+        stats.skippedNotes += notes.length;
+        warnings.push(
+          `Occlusion group ${prefix}: mask file ${maskSvgName} not found in package media.`
+        );
+        continue;
+      }
+      const parsed = parseIoeOriginalSvg(new TextDecoder().decode(svgBytes));
+      if (!parsed || parsed.shapes.length === 0) {
+        stats.skippedNotes += notes.length;
+        warnings.push(`Occlusion group ${prefix}: could not read any masks from ${maskSvgName}.`);
+        continue;
+      }
+      const header = fieldByName(sample, "Header", 1).trim();
+      deckFor(sample.deckName).sheets.push({
+        title: header || imageName.replace(/\.[^.]+$/, ""),
+        imageName,
+        imageWidth: parsed.width,
+        imageHeight: parsed.height,
+        shapes: parsed.shapes,
+      });
+      stats.sheets++;
+      stats.masks += parsed.shapes.length;
+    }
+
+    return {
+      decks: Array.from(deckMap.values()).filter(
+        (d) => d.cards.length > 0 || d.sheets.length > 0
+      ),
+      mediaIndex,
+      zstdMedia,
+      zip,
+      stats,
+    };
+  } finally {
+    db.close();
+  }
+}
