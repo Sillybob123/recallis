@@ -1,10 +1,15 @@
 import { useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { BrainCircuit } from "lucide-react";
 import { useAuth } from "../contexts/AuthContext";
 import { FirebaseNotConfigured } from "../components/ProtectedRoute";
 import { isFirebaseConfigured } from "../firebase";
 import { friendlyAuthError } from "./Login";
+import {
+  AuthLayout,
+  AuthField,
+  AUTH_BUTTON_CLASS,
+  AUTH_BUTTON_STYLE,
+} from "../components/AuthLayout";
 
 export function Signup() {
   const { signUp } = useAuth();
@@ -32,58 +37,65 @@ export function Signup() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-indigo-50 via-white to-slate-50 p-4">
-      <div className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-8 shadow-lg shadow-slate-200/50">
-        <div className="mb-6 flex flex-col items-center gap-2 text-center">
-          <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-indigo-600 text-white">
-            <BrainCircuit size={22} />
-          </span>
-          <h1 className="text-xl font-bold text-slate-900">Create your account</h1>
-          <p className="text-sm text-slate-500">
-            Your decks are private and saved securely.
-          </p>
-        </div>
-        <form onSubmit={handleSubmit} className="space-y-3">
-          <input
-            type="text"
-            placeholder="Name"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
-          />
-          <input
-            type="email"
-            required
-            placeholder="Email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
-          />
-          <input
-            type="password"
-            required
-            minLength={6}
-            placeholder="Password (min. 6 characters)"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
-          />
-          {error && <p className="text-sm text-red-600">{error}</p>}
-          <button
-            type="submit"
-            disabled={busy}
-            className="w-full rounded-lg bg-indigo-600 py-2.5 text-sm font-semibold text-white transition hover:bg-indigo-700 disabled:opacity-60"
-          >
-            {busy ? "Creating account…" : "Create account"}
-          </button>
-        </form>
-        <p className="mt-6 text-center text-sm text-slate-500">
+    <AuthLayout
+      title="Create your account"
+      subtitle="Free, private, and ready in a few seconds."
+      footer={
+        <>
           Already have an account?{" "}
-          <Link to="/login" className="font-medium text-indigo-600 hover:underline">
+          <Link to="/login" className="font-semibold text-[#0b3f9e] hover:underline">
             Log in
           </Link>
-        </p>
-      </div>
-    </div>
+        </>
+      }
+    >
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <AuthField
+          label="Name"
+          hint="optional"
+          type="text"
+          autoFocus
+          autoComplete="name"
+          placeholder="Your name"
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+        />
+        <AuthField
+          label="Email"
+          type="email"
+          required
+          autoComplete="email"
+          placeholder="you@example.com"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+        />
+        <AuthField
+          label="Password"
+          hint="min. 6 characters"
+          type="password"
+          required
+          minLength={6}
+          autoComplete="new-password"
+          placeholder="••••••••"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+        />
+
+        {error && (
+          <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+            {error}
+          </p>
+        )}
+
+        <button
+          type="submit"
+          disabled={busy}
+          className={AUTH_BUTTON_CLASS}
+          style={AUTH_BUTTON_STYLE}
+        >
+          {busy ? "Creating account…" : "Create account"}
+        </button>
+      </form>
+    </AuthLayout>
   );
 }

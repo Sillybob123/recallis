@@ -3,7 +3,12 @@ import { useNavigate, useParams } from "react-router-dom";
 import { ref, getBlob } from "firebase/storage";
 import {
   ArrowLeft,
+  Check,
+  CloudOff,
   FilePlus2,
+  Loader2,
+  PanelLeftClose,
+  PanelLeftOpen,
   Scissors,
   ScanEye,
   Trash2,
@@ -25,6 +30,8 @@ import {
 } from "../lib/firestore";
 import type { CardData, Deck, Note, NoteSlide } from "../types";
 
+type SaveState = "saved" | "saving" | "dirty" | "offline";
+
 export function NoteEditorPage() {
   const { noteId } = useParams();
   const { user } = useAuth();
@@ -32,11 +39,16 @@ export function NoteEditorPage() {
 
   const [note, setNote] = useState<Note | null>(null);
   const [decks, setDecks] = useState<Deck[]>([]);
-  const [saveState, setSaveState] = useState<"saved" | "saving" | "dirty">("saved");
+  const [saveState, setSaveState] = useState<SaveState>("saved");
+  const [savedAt, setSavedAt] = useState<Date | null>(null);
   const [slideProgress, setSlideProgress] = useState<string | null>(null);
   const [cardPrefill, setCardPrefill] = useState<string | null>(null);
+  const [showNav, setShowNav] = useState(true);
+  const [online, setOnline] = useState(navigator.onLine);
+
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const latest = useRef<Note | null>(null);
+  const slideRefs = useRef<Map<string, HTMLDivElement>>(new Map());
 
   useEffect(() => {
     if (!user || !noteId) return;
@@ -51,7 +63,33 @@ export function NoteEditorPage() {
     return watchDecks(user.uid, setDecks);
   }, [user, noteId, navigate]);
 
-  // Debounced autosave: any change persists ~1.5s after you stop typing.
+  useEffect(() => {
+    const on = () => setOnline(true);
+    const off = () => setOnline(false);
+    window.addEventListener("online", on);
+    window.addEventListener("offline", off);
+    return () => {
+      window.removeEventListener("online", on);
+      window.removeEventListener("offline", off);
+    };
+  }, []);
+
+  const persist = useCallback(
+    async (n: Note) => {
+      if (!user || !noteId) return;
+      // Firestore's offline cache queues this write and syncs on reconnect,
+      // so an offline save still resolves — nothing typed is ever lost.
+      await updateNote(user.uid, noteId, {
+        title: n.title,
+        className: n.className,
+        content: n.content,
+        slides: n.slides,
+      });
+    },
+    [user, noteId]
+  );
+
+  /** Debounced autosave: persists ~1.2s after you stop typing. */
   const scheduleSave = useCallback(
     (updated: Note) => {
       latest.current = updated;
@@ -59,61 +97,84 @@ export function NoteEditorPage() {
       setSaveState("dirty");
       if (saveTimer.current) clearTimeout(saveTimer.current);
       saveTimer.current = setTimeout(async () => {
-        if (!user || !noteId || !latest.current) return;
+        if (!latest.current) return;
         setSaveState("saving");
         try {
-          const n = latest.current;
-          await updateNote(user.uid, noteId, {
-            title: n.title,
-            className: n.className,
-            content: n.content,
-            slides: n.slides,
-          });
-          setSaveState("saved");
+          await persist(latest.current);
+          setSavedAt(new Date());
+          setSaveState(navigator.onLine ? "saved" : "offline");
         } catch {
-          setSaveState("dirty"); // retried on next edit
+          setSaveState("dirty"); // retried on the next edit
         }
-      }, 1500);
+      }, 1200);
     },
-    [user, noteId]
+    [persist]
   );
 
-  // Flush pending save when leaving the page.
+  // Flush any pending save when leaving the page or closing the tab.
   useEffect(() => {
-    return () => {
-      if (saveTimer.current && user && noteId && latest.current) {
+    function flush() {
+      if (saveTimer.current && latest.current) {
         clearTimeout(saveTimer.current);
-        const n = latest.current;
-        updateNote(user.uid, noteId, {
-          title: n.title,
-          className: n.className,
-          content: n.content,
-          slides: n.slides,
-        }).catch(() => {});
+        persist(latest.current).catch(() => {});
       }
+    }
+    window.addEventListener("beforeunload", flush);
+    return () => {
+      window.removeEventListener("beforeunload", flush);
+      flush();
     };
-  }, [user, noteId]);
+  }, [persist]);
 
-  async function handlePdfUpload(file: File) {
-    if (!user || !noteId || !note) return;
-    setSlideProgress("Reading PDF…");
+  async function handleSlideFile(file: File) {
+    if (!user || !noteId || !latest.current) return;
+    const isPptx = /\.pptx$/i.test(file.name);
+    setSlideProgress(isPptx ? "Reading PowerPoint…" : "Reading PDF…");
     try {
-      const { renderPdfToSlides } = await import("../lib/pdfSlides");
-      const blobs = await renderPdfToSlides(file, (done, total) =>
-        setSlideProgress(`Rendering slides ${done}/${total}…`)
-      );
+      let blobs: Blob[];
+      let notice = "";
+      if (isPptx) {
+        const { renderPptxToSlides } = await import("../lib/pptxSlides");
+        const result = await renderPptxToSlides(file, (done, total) =>
+          setSlideProgress(`Rendering slides ${done}/${total}…`)
+        );
+        blobs = result.slides;
+        if (result.degradedCount > 0) {
+          notice =
+            `${result.degradedCount} slide(s) contain charts, SmartArt, or vector art that ` +
+            `can't be drawn in the browser, so those parts are missing.\n\n` +
+            `For a pixel-perfect copy, open the deck in PowerPoint and use ` +
+            `File → Save As → PDF, then upload that PDF instead.`;
+        }
+      } else {
+        const { renderPdfToSlides } = await import("../lib/pdfSlides");
+        blobs = await renderPdfToSlides(file, (done, total) =>
+          setSlideProgress(`Rendering slides ${done}/${total}…`)
+        );
+      }
+
       const newSlides: NoteSlide[] = [];
       for (let i = 0; i < blobs.length; i++) {
         setSlideProgress(`Uploading slide ${i + 1}/${blobs.length}…`);
         const { path, url } = await uploadNoteSlide(user.uid, noteId, blobs[i]);
-        newSlides.push({ id: crypto.randomUUID(), imagePath: path, imageUrl: url, note: "" });
+        newSlides.push({
+          id: crypto.randomUUID(),
+          imagePath: path,
+          imageUrl: url,
+          note: "",
+        });
       }
-      scheduleSave({ ...latest.current!, slides: [...latest.current!.slides, ...newSlides] });
+      scheduleSave({
+        ...latest.current,
+        slides: [...latest.current.slides, ...newSlides],
+      });
+      if (notice) alert(notice);
     } catch (err) {
       alert(
         "Couldn't read that file: " +
           (err as Error).message +
-          "\n\nTip: if it's a PowerPoint, export it as PDF first (File → Save As → PDF)."
+          "\n\nIf it's a PowerPoint that won't open, export it as PDF " +
+          "(File → Save As → PDF) and upload that instead."
       );
     } finally {
       setSlideProgress(null);
@@ -121,47 +182,58 @@ export function NoteEditorPage() {
   }
 
   function updateSlide(id: string, patch: Partial<NoteSlide>) {
-    const n = latest.current!;
+    if (!latest.current) return;
     scheduleSave({
-      ...n,
-      slides: n.slides.map((s) => (s.id === id ? { ...s, ...patch } : s)),
+      ...latest.current,
+      slides: latest.current.slides.map((s) =>
+        s.id === id ? { ...s, ...patch } : s
+      ),
     });
   }
 
   function removeSlide(id: string) {
-    const n = latest.current!;
+    if (!latest.current) return;
     if (!confirm("Remove this slide (and its slide notes) from the note?")) return;
-    scheduleSave({ ...n, slides: n.slides.filter((s) => s.id !== id) });
+    scheduleSave({
+      ...latest.current,
+      slides: latest.current.slides.filter((s) => s.id !== id),
+    });
   }
 
-  /** Turn a slide into an image-occlusion sheet in a chosen deck. */
-  async function slideToOcclusion(slide: NoteSlide, deckId: string) {
-    if (!user || !note) return;
+  /** Copy one specific slide into a deck and open the mask editor on it. */
+  async function slideToOcclusion(slide: NoteSlide, index: number, deckId: string) {
+    if (!user || !latest.current) return;
+    setSlideProgress(`Preparing slide ${index + 1} for occlusion…`);
     try {
       const blob = await getBlob(ref(storage, slide.imagePath));
-      const file = new File([blob], "slide.png", { type: "image/png" });
+      const file = new File([blob], `slide-${index + 1}.png`, { type: "image/png" });
       const { path, url } = await uploadOcclusionImage(user.uid, deckId, file);
-      const img = await createImageBitmap(blob);
+      const bitmap = await createImageBitmap(blob);
       const sheetId = await createOcclusionSheet(user.uid, deckId, {
-        title: note.title,
+        title: `${latest.current.title} — slide ${index + 1}`,
         imagePath: path,
         imageUrl: url,
-        imageWidth: img.width,
-        imageHeight: img.height,
+        imageWidth: bitmap.width,
+        imageHeight: bitmap.height,
         shapes: [],
       });
-      img.close();
+      bitmap.close();
+      // Make sure nothing typed is lost before we navigate away.
+      if (saveTimer.current) clearTimeout(saveTimer.current);
+      await persist(latest.current).catch(() => {});
       navigate(`/deck/${deckId}/occlusion/${sheetId}/edit`);
     } catch (err) {
       alert(
-        "Couldn't copy the slide image: " +
+        "Couldn't copy that slide: " +
           (err as Error).message +
-          "\n\nIf this mentions CORS, your Storage bucket needs the one-time CORS setup from the README (section 4)."
+          "\n\nIf this mentions CORS, your Storage bucket needs the one-time " +
+          "CORS setup from the README (section 4)."
       );
+    } finally {
+      setSlideProgress(null);
     }
   }
 
-  /** Grab the current text selection as HTML for a new card. */
   function captureSelection(): string {
     const sel = window.getSelection();
     if (!sel || sel.isCollapsed || sel.rangeCount === 0) return "";
@@ -169,6 +241,18 @@ export function NoteEditorPage() {
     div.appendChild(sel.getRangeAt(0).cloneContents());
     return div.innerHTML;
   }
+
+  function jumpToSlide(id: string) {
+    slideRefs.current.get(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  const uploadInlineImage = useCallback(
+    async (file: File) => {
+      const { url } = await uploadNoteSlide(user!.uid, noteId!, file);
+      return url;
+    },
+    [user, noteId]
+  );
 
   if (!note) {
     return (
@@ -178,25 +262,31 @@ export function NoteEditorPage() {
     );
   }
 
+  const effectiveSave: SaveState =
+    !online && saveState !== "saving" ? "offline" : saveState;
+
   return (
     <Layout>
-      <div className="mb-4 flex items-center justify-between">
+      <div className="mb-3 flex items-center justify-between gap-3">
         <button
           onClick={() => navigate("/notes")}
           className="flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-800"
         >
           <ArrowLeft size={15} /> All notes
         </button>
-        <span
-          className={`text-xs font-medium ${
-            saveState === "saved" ? "text-emerald-600" : "text-slate-400"
-          }`}
-        >
-          {saveState === "saved" ? "Saved" : saveState === "saving" ? "Saving…" : "Editing…"}
-        </span>
+        <SaveIndicator state={effectiveSave} savedAt={savedAt} />
       </div>
 
       <div className="mb-4 flex flex-wrap items-center gap-2">
+        {note.slides.length > 0 && (
+          <button
+            onClick={() => setShowNav((v) => !v)}
+            title={showNav ? "Hide slide list" : "Show slide list"}
+            className="rounded-lg border border-slate-300 bg-white p-2 text-slate-500 hover:bg-slate-50"
+          >
+            {showNav ? <PanelLeftClose size={15} /> : <PanelLeftOpen size={15} />}
+          </button>
+        )}
         <input
           value={note.title}
           onChange={(e) => scheduleSave({ ...latest.current!, title: e.target.value })}
@@ -205,7 +295,9 @@ export function NoteEditorPage() {
         />
         <input
           value={note.className}
-          onChange={(e) => scheduleSave({ ...latest.current!, className: e.target.value })}
+          onChange={(e) =>
+            scheduleSave({ ...latest.current!, className: e.target.value })
+          }
           placeholder="Class"
           className="w-36 rounded-lg border border-slate-300 px-2 py-1.5 text-sm outline-none focus:border-indigo-500"
         />
@@ -217,7 +309,9 @@ export function NoteEditorPage() {
           onClick={() => {
             const html = captureSelection();
             if (!html) {
-              alert("Select some text in your notes first, then click this to turn it into a card.");
+              alert(
+                "Select some text in your notes first, then click this to turn it into a card."
+              );
               return;
             }
             setCardPrefill(html);
@@ -228,82 +322,125 @@ export function NoteEditorPage() {
           <Scissors size={14} /> Make card from selection
         </button>
         <label className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50">
-          <FilePlus2 size={14} />
-          {slideProgress ?? "Add lecture slides (PDF)"}
+          {slideProgress ? (
+            <Loader2 size={14} className="animate-spin" />
+          ) : (
+            <FilePlus2 size={14} />
+          )}
+          {slideProgress ?? "Add lecture slides (PDF or PPTX)"}
           <input
             type="file"
-            accept="application/pdf"
+            accept=".pdf,.pptx,application/pdf,application/vnd.openxmlformats-officedocument.presentationml.presentation"
             className="hidden"
             disabled={Boolean(slideProgress)}
-            onChange={(e) => e.target.files?.[0] && handlePdfUpload(e.target.files[0])}
+            onChange={(e) => e.target.files?.[0] && handleSlideFile(e.target.files[0])}
           />
         </label>
       </div>
 
-      <div className="mb-8 rounded-2xl border border-slate-200 bg-white p-1 shadow-sm">
-        <RichTextEditor
-          value={note.content}
-          onChange={(html) => scheduleSave({ ...latest.current!, content: html })}
-          placeholder="Type your lecture notes here… Use the toolbar for headings, highlights, lists, and images."
-          headings
-          minHeightClass="min-h-[40vh]"
-          maxHeightClass="max-h-none"
-          onUploadImage={async (file) => {
-            const bytes = new Uint8Array(await file.arrayBuffer());
-            const { url } = await uploadNoteSlide(user!.uid, noteId!, new Blob([bytes], { type: file.type }));
-            return url;
-          }}
-        />
-      </div>
-
-      {note.slides.length > 0 && (
-        <section>
-          <h2 className="mb-3 text-sm font-bold uppercase tracking-wide text-slate-400">
-            Lecture slides ({note.slides.length}) — take notes under each one
-          </h2>
-          <div className="space-y-6">
-            {note.slides.map((slide, i) => (
-              <div
-                key={slide.id}
-                className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm"
-              >
-                <div className="flex items-center justify-between border-b border-slate-100 px-4 py-2">
-                  <span className="text-xs font-semibold text-slate-400">
-                    Slide {i + 1}
-                  </span>
-                  <div className="flex gap-1">
-                    <SlideToOcclusionButton
-                      decks={decks}
-                      onPick={(deckId) => slideToOcclusion(slide, deckId)}
-                    />
-                    <button
-                      onClick={() => removeSlide(slide.id)}
-                      className="rounded-lg p-1.5 text-slate-300 hover:bg-red-50 hover:text-red-500"
-                      title="Remove slide"
-                    >
-                      <Trash2 size={14} />
-                    </button>
-                  </div>
-                </div>
-                <img
-                  src={slide.imageUrl}
-                  alt={`Slide ${i + 1}`}
-                  loading="lazy"
-                  className="block w-full"
-                />
-                <div className="border-t border-slate-100 p-2">
-                  <RichTextEditor
-                    value={slide.note}
-                    onChange={(html) => updateSlide(slide.id, { note: html })}
-                    placeholder="Notes for this slide…"
-                    minHeightClass="min-h-12"
+      <div className="flex gap-5">
+        {/* Slide jump navigation */}
+        {showNav && note.slides.length > 0 && (
+          <aside className="sticky top-[70px] hidden h-[calc(100vh-100px)] w-36 shrink-0 overflow-y-auto rounded-xl border border-slate-200 bg-white p-2 lg:block">
+            <p className="mb-2 px-1 text-[11px] font-bold uppercase tracking-wide text-slate-400">
+              Slides
+            </p>
+            <div className="space-y-1.5">
+              {note.slides.map((slide, i) => (
+                <button
+                  key={slide.id}
+                  onClick={() => jumpToSlide(slide.id)}
+                  className="group block w-full overflow-hidden rounded-lg border border-slate-200 transition hover:border-indigo-400"
+                  title={`Jump to slide ${i + 1}`}
+                >
+                  <img
+                    src={slide.imageUrl}
+                    alt=""
+                    loading="lazy"
+                    className="block w-full"
                   />
-                </div>
-              </div>
-            ))}
+                  <span className="block bg-slate-50 py-0.5 text-[10px] font-semibold text-slate-500 group-hover:bg-indigo-50 group-hover:text-indigo-600">
+                    {i + 1}
+                    {slide.note.replace(/<[^>]*>/g, "").trim() && " ·"}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </aside>
+        )}
+
+        <div className="min-w-0 flex-1">
+          <div className="mb-8 rounded-2xl border border-slate-200 bg-white p-1 shadow-sm">
+            <RichTextEditor
+              value={note.content}
+              onChange={(html) => scheduleSave({ ...latest.current!, content: html })}
+              placeholder="Type your lecture notes here… Select text to get a quick format bar, or press Tab to indent."
+              full
+              stickyToolbar
+              wordCount
+              minHeightClass="min-h-[45vh]"
+              maxHeightClass="max-h-none"
+              onUploadImage={uploadInlineImage}
+            />
           </div>
-        </section>
-      )}
+
+          {note.slides.length > 0 && (
+            <section>
+              <h2 className="mb-3 text-sm font-bold uppercase tracking-wide text-slate-400">
+                Lecture slides ({note.slides.length}) — take notes under each one
+              </h2>
+              <div className="space-y-6">
+                {note.slides.map((slide, i) => (
+                  <div
+                    key={slide.id}
+                    ref={(el) => {
+                      if (el) slideRefs.current.set(slide.id, el);
+                      else slideRefs.current.delete(slide.id);
+                    }}
+                    className="scroll-mt-20 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm"
+                  >
+                    <div className="flex items-center justify-between border-b border-slate-100 px-4 py-2">
+                      <span className="text-xs font-semibold text-slate-400">
+                        Slide {i + 1}
+                      </span>
+                      <div className="flex gap-1">
+                        <SlideToOcclusionButton
+                          decks={decks}
+                          slideNumber={i + 1}
+                          onPick={(deckId) => slideToOcclusion(slide, i, deckId)}
+                        />
+                        <button
+                          onClick={() => removeSlide(slide.id)}
+                          className="rounded-lg p-1.5 text-slate-300 hover:bg-red-50 hover:text-red-500"
+                          title="Remove slide"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
+                    </div>
+                    <img
+                      src={slide.imageUrl}
+                      alt={`Slide ${i + 1}`}
+                      loading="lazy"
+                      className="block w-full"
+                    />
+                    <div className="border-t border-slate-100 p-2">
+                      <RichTextEditor
+                        value={slide.note}
+                        onChange={(html) => updateSlide(slide.id, { note: html })}
+                        placeholder={`Notes for slide ${i + 1}…`}
+                        full
+                        minHeightClass="min-h-16"
+                        onUploadImage={uploadInlineImage}
+                      />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+        </div>
+      </div>
 
       {cardPrefill !== null && (
         <MakeCardModal
@@ -317,7 +454,12 @@ export function NoteEditorPage() {
             const bytes = new Uint8Array(await file.arrayBuffer());
             const target = decks[0];
             if (!target) throw new Error("Create a deck first.");
-            const { url } = await uploadDeckMedia(user!.uid, target.id, file.name, bytes);
+            const { url } = await uploadDeckMedia(
+              user!.uid,
+              target.id,
+              file.name,
+              bytes
+            );
             return url;
           }}
         />
@@ -326,11 +468,53 @@ export function NoteEditorPage() {
   );
 }
 
+function SaveIndicator({
+  state,
+  savedAt,
+}: {
+  state: SaveState;
+  savedAt: Date | null;
+}) {
+  if (state === "offline") {
+    return (
+      <span
+        className="flex items-center gap-1.5 text-xs font-medium text-amber-600"
+        title="You're offline. Your typing is saved on this device and syncs automatically when you reconnect."
+      >
+        <CloudOff size={13} /> Offline — saved locally, will sync
+      </span>
+    );
+  }
+  if (state === "saving") {
+    return (
+      <span className="flex items-center gap-1.5 text-xs font-medium text-slate-400">
+        <Loader2 size={13} className="animate-spin" /> Saving…
+      </span>
+    );
+  }
+  if (state === "dirty") {
+    return <span className="text-xs font-medium text-slate-400">Editing…</span>;
+  }
+  return (
+    <span className="flex items-center gap-1.5 text-xs font-medium text-emerald-600">
+      <Check size={13} />
+      {savedAt
+        ? `Saved ${savedAt.toLocaleTimeString([], {
+            hour: "numeric",
+            minute: "2-digit",
+          })}`
+        : "Saved"}
+    </span>
+  );
+}
+
 function SlideToOcclusionButton({
   decks,
+  slideNumber,
   onPick,
 }: {
   decks: Deck[];
+  slideNumber: number;
   onPick: (deckId: string) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -339,29 +523,37 @@ function SlideToOcclusionButton({
       <button
         onClick={() => setOpen((o) => !o)}
         className="flex items-center gap-1 rounded-lg border border-slate-200 px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50"
-        title="Open this slide in the occlusion editor — draw masks, save to a deck"
+        title={`Open slide ${slideNumber} in the occlusion editor — draw masks, save to a deck`}
       >
         <ScanEye size={13} /> Make occlusion
       </button>
       {open && (
-        <div className="absolute right-0 top-8 z-20 max-h-64 w-56 overflow-y-auto rounded-xl border border-slate-200 bg-white py-1 shadow-lg">
-          {decks.length === 0 ? (
-            <p className="px-3 py-2 text-xs text-slate-400">No decks yet — create one first.</p>
-          ) : (
-            decks.map((d) => (
-              <button
-                key={d.id}
-                onClick={() => {
-                  setOpen(false);
-                  onPick(d.id);
-                }}
-                className="block w-full truncate px-3 py-1.5 text-left text-sm text-slate-700 hover:bg-slate-50"
-              >
-                {d.name}
-              </button>
-            ))
-          )}
-        </div>
+        <>
+          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
+          <div className="absolute right-0 top-8 z-20 max-h-64 w-56 overflow-y-auto rounded-xl border border-slate-200 bg-white py-1 shadow-lg">
+            <p className="border-b border-slate-100 px-3 py-1.5 text-[11px] font-semibold text-slate-400">
+              Slide {slideNumber} → which deck?
+            </p>
+            {decks.length === 0 ? (
+              <p className="px-3 py-2 text-xs text-slate-400">
+                No decks yet — create one first.
+              </p>
+            ) : (
+              decks.map((d) => (
+                <button
+                  key={d.id}
+                  onClick={() => {
+                    setOpen(false);
+                    onPick(d.id);
+                  }}
+                  className="block w-full truncate px-3 py-1.5 text-left text-sm text-slate-700 hover:bg-slate-50"
+                >
+                  {d.name}
+                </button>
+              ))
+            )}
+          </div>
+        </>
       )}
     </div>
   );
@@ -394,7 +586,9 @@ function MakeCardModal({
       return;
     }
     if (type === "cloze" && !/\{\{c\d+::/.test(text)) {
-      alert("Select the part to hide and press the [ ]+ button (or ⌘⇧C) to add a {{c1::…}} blank.");
+      alert(
+        "Select the part to hide and press the [ ]+ button (or ⌘⇧C) to add a {{c1::…}} blank."
+      );
       return;
     }
     setBusy(true);
@@ -466,6 +660,7 @@ function MakeCardModal({
             value={text}
             onChange={setText}
             cloze
+            full
             placeholder="Your selected text — now hide the answer with [ ]+ (⌘⇧C)"
             minHeightClass="min-h-28"
             onUploadImage={uploadImage}
@@ -474,7 +669,9 @@ function MakeCardModal({
         ) : (
           <div className="space-y-3">
             <div>
-              <label className="mb-1 block text-xs font-medium text-slate-500">Front</label>
+              <label className="mb-1 block text-xs font-medium text-slate-500">
+                Front
+              </label>
               <RichTextEditor
                 value={front}
                 onChange={setFront}
@@ -484,7 +681,9 @@ function MakeCardModal({
               />
             </div>
             <div>
-              <label className="mb-1 block text-xs font-medium text-slate-500">Back</label>
+              <label className="mb-1 block text-xs font-medium text-slate-500">
+                Back
+              </label>
               <RichTextEditor
                 value={back}
                 onChange={setBack}

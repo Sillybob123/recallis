@@ -1,9 +1,14 @@
 import { useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { BrainCircuit } from "lucide-react";
 import { useAuth } from "../contexts/AuthContext";
 import { FirebaseNotConfigured } from "../components/ProtectedRoute";
 import { isFirebaseConfigured } from "../firebase";
+import {
+  AuthLayout,
+  AuthField,
+  AUTH_BUTTON_CLASS,
+  AUTH_BUTTON_STYLE,
+} from "../components/AuthLayout";
 
 export function Login() {
   const { logIn, resetPassword } = useAuth();
@@ -19,6 +24,7 @@ export function Login() {
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     setError("");
+    setInfo("");
     setBusy(true);
     try {
       await logIn(email, password);
@@ -32,7 +38,7 @@ export function Login() {
 
   async function handleReset() {
     if (!email) {
-      setError("Enter your email above first, then click 'Forgot password'.");
+      setError("Enter your email above first, then click “Forgot password”.");
       return;
     }
     setError("");
@@ -45,56 +51,72 @@ export function Login() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-indigo-50 via-white to-slate-50 p-4">
-      <div className="w-full max-w-sm rounded-2xl border border-slate-200 bg-white p-8 shadow-lg shadow-slate-200/50">
-        <div className="mb-6 flex flex-col items-center gap-2 text-center">
-          <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-indigo-600 text-white">
-            <BrainCircuit size={22} />
-          </span>
-          <h1 className="text-xl font-bold text-slate-900">Welcome back</h1>
-          <p className="text-sm text-slate-500">Log in to keep studying.</p>
-        </div>
-        <form onSubmit={handleSubmit} className="space-y-3">
-          <input
-            type="email"
-            required
-            placeholder="Email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
-          />
-          <input
-            type="password"
-            required
-            placeholder="Password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
-          />
-          {error && <p className="text-sm text-red-600">{error}</p>}
-          {info && <p className="text-sm text-emerald-600">{info}</p>}
-          <button
-            type="submit"
-            disabled={busy}
-            className="w-full rounded-lg bg-indigo-600 py-2.5 text-sm font-semibold text-white transition hover:bg-indigo-700 disabled:opacity-60"
+    <AuthLayout
+      title="Welcome back"
+      subtitle="Log in to pick up where you left off."
+      footer={
+        <>
+          New to Recallis?{" "}
+          <Link
+            to="/signup"
+            className="font-semibold text-[#0b3f9e] hover:underline"
           >
-            {busy ? "Logging in…" : "Log in"}
-          </button>
-        </form>
-        <button
-          onClick={handleReset}
-          className="mt-3 w-full text-center text-xs text-slate-500 hover:text-indigo-600"
-        >
-          Forgot password?
-        </button>
-        <p className="mt-6 text-center text-sm text-slate-500">
-          New here?{" "}
-          <Link to="/signup" className="font-medium text-indigo-600 hover:underline">
             Create an account
           </Link>
-        </p>
-      </div>
-    </div>
+        </>
+      }
+    >
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <AuthField
+          label="Email"
+          type="email"
+          required
+          autoFocus
+          autoComplete="email"
+          placeholder="you@example.com"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+        />
+        <div>
+          <AuthField
+            label="Password"
+            type="password"
+            required
+            autoComplete="current-password"
+            placeholder="••••••••"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+          />
+          <button
+            type="button"
+            onClick={handleReset}
+            className="mt-1.5 text-xs text-slate-500 transition hover:text-[#0b3f9e]"
+          >
+            Forgot password?
+          </button>
+        </div>
+
+        {error && (
+          <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+            {error}
+          </p>
+        )}
+        {info && (
+          <p className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">
+            {info}
+          </p>
+        )}
+
+        <button
+          type="submit"
+          disabled={busy}
+          className={AUTH_BUTTON_CLASS}
+          style={AUTH_BUTTON_STYLE}
+        >
+          {busy ? "Logging in…" : "Log in"}
+        </button>
+      </form>
+    </AuthLayout>
   );
 }
 
@@ -108,6 +130,9 @@ export function friendlyAuthError(err: unknown): string {
     "auth/email-already-in-use": "An account already exists with that email.",
     "auth/weak-password": "Password should be at least 6 characters.",
     "auth/too-many-requests": "Too many attempts — please wait and try again.",
+    "auth/network-request-failed": "Network problem — check your connection.",
+    "auth/unauthorized-domain":
+      "This web address isn't authorized in Firebase yet (Authentication → Settings → Authorized domains).",
   };
   return map[code] || "Something went wrong. Please try again.";
 }

@@ -33,6 +33,12 @@ export function RichText({
           "h1",
           "h2",
           "h3",
+          "h4",
+          "s",
+          "strike",
+          "del",
+          "input",
+          "hr",
           "mark",
           "font",
           "table",
@@ -43,7 +49,7 @@ export function RichText({
           "th",
           "blockquote",
         ],
-        ALLOWED_ATTR: ["src", "alt", "href", "width", "height", "class", "target", "rel", "style", "color"],
+        ALLOWED_ATTR: ["src", "alt", "href", "width", "height", "class", "target", "rel", "style", "color", "face", "size", "type", "checked", "align"],
       }),
     [html]
   );

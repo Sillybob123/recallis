@@ -52,6 +52,34 @@ body {
   font-weight: 600;
   margin: 0.5em 0 0.25em;
 }
+.prose-card :where(h3) {
+  font-size: 1.08em;
+  font-weight: 600;
+  margin: 0.45em 0 0.2em;
+}
+.prose-card :where(blockquote) {
+  border-left: 3px solid #cbd5e1;
+  padding-left: 0.75em;
+  margin: 0.5em 0;
+  color: #475569;
+}
+.prose-card :where(a) {
+  color: #2563eb;
+  text-decoration: underline;
+}
+.prose-card :where(ul.checklist) {
+  list-style: none;
+  padding-left: 0.25em;
+}
+.prose-card :where(ul.checklist li) {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5em;
+}
+.prose-card :where(ul.checklist input[type="checkbox"]) {
+  margin-top: 0.3em;
+  accent-color: #4f46e5;
+}
 .prose-card :where(mark) {
   background: #fef08a;
   border-radius: 2px;

@@ -1,53 +1,113 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  AlignCenter,
+  AlignLeft,
+  AlignRight,
   Bold,
   Brackets,
-  Heading1,
-  Heading2,
+  CheckSquare,
   Eraser,
   Highlighter,
   Image as ImageIcon,
+  Indent,
   Italic,
+  Link2,
   List,
   ListOrdered,
+  Outdent,
+  Redo2,
+  Strikethrough,
   Subscript,
   Superscript,
   Underline,
+  Undo2,
 } from "lucide-react";
 
-const TEXT_COLORS = ["#dc2626", "#2563eb", "#059669", "#d97706", "#7c3aed", "#0f172a"];
-const HILITE_COLORS = ["#fef08a", "#bbf7d0", "#bfdbfe", "#fbcfe8", "#fed7aa"];
+const TEXT_COLORS = [
+  "#0f172a",
+  "#dc2626",
+  "#ea580c",
+  "#ca8a04",
+  "#059669",
+  "#2563eb",
+  "#7c3aed",
+  "#db2777",
+];
+const HILITE_COLORS = [
+  "#fef08a",
+  "#bbf7d0",
+  "#bfdbfe",
+  "#fbcfe8",
+  "#fed7aa",
+  "#e9d5ff",
+];
+const FONTS = [
+  { label: "Sans", css: "'Inter', system-ui, sans-serif" },
+  { label: "Serif", css: "Georgia, 'Times New Roman', serif" },
+  { label: "Mono", css: "'SF Mono', Menlo, Consolas, monospace" },
+];
+const SIZES = [12, 14, 16, 18, 20, 24, 30];
+/** execCommand fontSize only accepts 1–7, so map our px list onto that. */
+const SIZE_TO_LEGACY: Record<number, string> = {
+  12: "1",
+  14: "2",
+  16: "3",
+  18: "4",
+  20: "5",
+  24: "6",
+  30: "7",
+};
+
+const BLOCK_STYLES = [
+  { label: "Normal text", tag: "div" },
+  { label: "Heading 1", tag: "h1" },
+  { label: "Heading 2", tag: "h2" },
+  { label: "Heading 3", tag: "h3" },
+  { label: "Quote", tag: "blockquote" },
+];
+
+export interface RichTextEditorProps {
+  value: string;
+  onChange: (html: string) => void;
+  placeholder?: string;
+  /** show the cloze insert buttons (card editors) */
+  cloze?: boolean;
+  /** show block-style, font, alignment, indent, checklist, link controls */
+  full?: boolean;
+  /** keep the toolbar pinned while scrolling long documents */
+  stickyToolbar?: boolean;
+  /** show a live word/character count under the field */
+  wordCount?: boolean;
+  minHeightClass?: string;
+  maxHeightClass?: string;
+  onUploadImage?: (file: File) => Promise<string>;
+  autoFocus?: boolean;
+}
 
 /**
- * Anki-style rich text field: contenteditable with a formatting toolbar.
- * Shortcuts: ⌘/Ctrl+B/I/U (native), ⌘/Ctrl+Shift+C new cloze,
- * ⌘/Ctrl+Shift+Alt+C same-number cloze.
+ * Contenteditable rich-text field.
+ * Shortcuts: ⌘/Ctrl+B/I/U and ⌘/Ctrl+Z/⇧Z are native; ⌘/Ctrl+K inserts a link,
+ * ⌘/Ctrl+⇧+C a new cloze, ⌘/Ctrl+⇧+⌥+C a same-number cloze.
  */
 export function RichTextEditor({
   value,
   onChange,
   placeholder,
   cloze = false,
-  headings = false,
+  full = false,
+  stickyToolbar = false,
+  wordCount = false,
   minHeightClass = "min-h-20",
   maxHeightClass = "max-h-64",
   onUploadImage,
   autoFocus,
-}: {
-  value: string;
-  onChange: (html: string) => void;
-  placeholder?: string;
-  cloze?: boolean;
-  headings?: boolean;
-  minHeightClass?: string;
-  maxHeightClass?: string;
-  onUploadImage?: (file: File) => Promise<string>;
-  autoFocus?: boolean;
-}) {
+}: RichTextEditorProps) {
   const ref = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
   const [colorOpen, setColorOpen] = useState<null | "fore" | "hilite">(null);
+  const [counts, setCounts] = useState({ words: 0, chars: 0 });
+  const [bubble, setBubble] = useState<{ top: number; left: number } | null>(null);
 
   // Set initial content once; afterwards the div owns its own DOM.
   useEffect(() => {
@@ -58,8 +118,22 @@ export function RichTextEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  const recount = useCallback(() => {
+    if (!wordCount || !ref.current) return;
+    const text = ref.current.innerText.replace(/​/g, "").trim();
+    setCounts({
+      words: text ? text.split(/\s+/).length : 0,
+      chars: text.length,
+    });
+  }, [wordCount]);
+
+  useEffect(() => {
+    recount();
+  }, [recount]);
+
   function emit() {
     if (ref.current) onChange(ref.current.innerHTML);
+    recount();
   }
 
   function exec(cmd: string, val?: string) {
@@ -89,6 +163,35 @@ export function RichTextEditor({
     emit();
   }
 
+  /** Checklist item — execCommand has no equivalent, so insert markup. */
+  function insertChecklist() {
+    ref.current?.focus();
+    document.execCommand(
+      "insertHTML",
+      false,
+      '<ul class="checklist"><li><input type="checkbox"> </li></ul>'
+    );
+    emit();
+  }
+
+  function insertLink() {
+    const sel = window.getSelection();
+    const hasSelection = sel && !sel.isCollapsed;
+    const url = prompt("Link URL:", "https://");
+    if (!url) return;
+    ref.current?.focus();
+    if (hasSelection) {
+      document.execCommand("createLink", false, url);
+    } else {
+      document.execCommand(
+        "insertHTML",
+        false,
+        `<a href="${url}" target="_blank" rel="noreferrer">${url}</a>`
+      );
+    }
+    emit();
+  }
+
   async function handleImageFile(f: File) {
     if (!onUploadImage) return;
     setUploading(true);
@@ -105,52 +208,163 @@ export function RichTextEditor({
     }
   }
 
-  function handleKeyDown(e: React.KeyboardEvent) {
-    if (cloze && (e.metaKey || e.ctrlKey) && e.shiftKey && e.key.toLowerCase() === "c") {
+  // Paste an image straight from the clipboard (screenshot of a slide, etc.).
+  function handlePaste(e: React.ClipboardEvent) {
+    const item = Array.from(e.clipboardData?.items ?? []).find((i) =>
+      i.type.startsWith("image/")
+    );
+    const f = item?.getAsFile();
+    if (f && onUploadImage) {
       e.preventDefault();
-      insertCloze(e.altKey);
+      handleImageFile(f);
     }
   }
+
+  function handleKeyDown(e: React.KeyboardEvent) {
+    const mod = e.metaKey || e.ctrlKey;
+    if (cloze && mod && e.shiftKey && e.key.toLowerCase() === "c") {
+      e.preventDefault();
+      insertCloze(e.altKey);
+    } else if (full && mod && e.key.toLowerCase() === "k") {
+      e.preventDefault();
+      insertLink();
+    } else if (e.key === "Tab" && full) {
+      e.preventDefault();
+      exec(e.shiftKey ? "outdent" : "indent");
+    }
+  }
+
+  // Floating format bar above the current selection.
+  const updateBubble = useCallback(() => {
+    const el = ref.current;
+    const sel = window.getSelection();
+    if (
+      !el ||
+      !sel ||
+      sel.isCollapsed ||
+      sel.rangeCount === 0 ||
+      !el.contains(sel.anchorNode)
+    ) {
+      setBubble(null);
+      return;
+    }
+    const rect = sel.getRangeAt(0).getBoundingClientRect();
+    if (!rect.width && !rect.height) {
+      setBubble(null);
+      return;
+    }
+    const host = el.getBoundingClientRect();
+    setBubble({
+      top: rect.top - host.top - 44,
+      left: Math.max(rect.left - host.left + rect.width / 2, 90),
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!full) return;
+    function onSelectionChange() {
+      updateBubble();
+    }
+    document.addEventListener("selectionchange", onSelectionChange);
+    return () => document.removeEventListener("selectionchange", onSelectionChange);
+  }, [full, updateBubble]);
 
   function ToolButton({
     title,
     onClick,
     children,
+    active,
   }: {
     title: string;
     onClick: () => void;
     children: React.ReactNode;
+    active?: boolean;
   }) {
     return (
       <button
         type="button"
         title={title}
-        onMouseDown={(e) => e.preventDefault()} // keep selection in the editor
+        onMouseDown={(e) => e.preventDefault()} // keep the selection alive
         onClick={onClick}
-        className="flex h-7 w-7 items-center justify-center rounded text-slate-500 hover:bg-slate-100 hover:text-slate-800"
+        className={`flex h-7 w-7 items-center justify-center rounded transition ${
+          active
+            ? "bg-slate-200 text-slate-900"
+            : "text-slate-500 hover:bg-slate-100 hover:text-slate-800"
+        }`}
       >
         {children}
       </button>
     );
   }
 
+  const Divider = () => <span className="mx-1 h-4 w-px shrink-0 bg-slate-200" />;
+
   return (
     <div className="rounded-lg border border-slate-300 focus-within:border-indigo-500 focus-within:ring-2 focus-within:ring-indigo-100">
-      <div className="relative flex flex-wrap items-center gap-0.5 border-b border-slate-200 px-1.5 py-1">
-        {headings && (
+      <div
+        className={`relative flex flex-wrap items-center gap-0.5 border-b border-slate-200 bg-white px-1.5 py-1 ${
+          stickyToolbar ? "sticky top-[57px] z-10 rounded-t-lg" : ""
+        }`}
+      >
+        {full && (
           <>
-            <ToolButton title="Heading 1" onClick={() => exec("formatBlock", "<h1>")}>
-              <Heading1 size={14} />
+            <ToolButton title="Undo (⌘Z)" onClick={() => exec("undo")}>
+              <Undo2 size={14} />
             </ToolButton>
-            <ToolButton title="Heading 2" onClick={() => exec("formatBlock", "<h2>")}>
-              <Heading2 size={14} />
+            <ToolButton title="Redo (⌘⇧Z)" onClick={() => exec("redo")}>
+              <Redo2 size={14} />
             </ToolButton>
-            <ToolButton title="Normal text" onClick={() => exec("formatBlock", "<div>")}>
-              <span className="text-[10px] font-bold">¶</span>
-            </ToolButton>
-            <span className="mx-1 h-4 w-px bg-slate-200" />
+            <Divider />
+            <select
+              title="Paragraph style"
+              onMouseDown={(e) => e.stopPropagation()}
+              onChange={(e) => {
+                exec("formatBlock", `<${e.target.value}>`);
+                e.target.selectedIndex = 0;
+              }}
+              className="h-7 rounded border border-slate-200 bg-white px-1 text-xs text-slate-600 outline-none hover:bg-slate-50"
+            >
+              <option value="">Style</option>
+              {BLOCK_STYLES.map((b) => (
+                <option key={b.tag} value={b.tag}>
+                  {b.label}
+                </option>
+              ))}
+            </select>
+            <select
+              title="Font"
+              onChange={(e) => {
+                exec("fontName", e.target.value);
+                e.target.selectedIndex = 0;
+              }}
+              className="h-7 rounded border border-slate-200 bg-white px-1 text-xs text-slate-600 outline-none hover:bg-slate-50"
+            >
+              <option value="">Font</option>
+              {FONTS.map((f) => (
+                <option key={f.label} value={f.css}>
+                  {f.label}
+                </option>
+              ))}
+            </select>
+            <select
+              title="Font size"
+              onChange={(e) => {
+                exec("fontSize", SIZE_TO_LEGACY[Number(e.target.value)]);
+                e.target.selectedIndex = 0;
+              }}
+              className="h-7 rounded border border-slate-200 bg-white px-1 text-xs text-slate-600 outline-none hover:bg-slate-50"
+            >
+              <option value="">Size</option>
+              {SIZES.map((s) => (
+                <option key={s} value={s}>
+                  {s}
+                </option>
+              ))}
+            </select>
+            <Divider />
           </>
         )}
+
         <ToolButton title="Bold (⌘B)" onClick={() => exec("bold")}>
           <Bold size={14} />
         </ToolButton>
@@ -159,6 +373,9 @@ export function RichTextEditor({
         </ToolButton>
         <ToolButton title="Underline (⌘U)" onClick={() => exec("underline")}>
           <Underline size={14} />
+        </ToolButton>
+        <ToolButton title="Strikethrough" onClick={() => exec("strikeThrough")}>
+          <Strikethrough size={14} />
         </ToolButton>
         <ToolButton title="Superscript" onClick={() => exec("superscript")}>
           <Superscript size={14} />
@@ -180,7 +397,7 @@ export function RichTextEditor({
           <Highlighter size={14} />
         </ToolButton>
         {colorOpen && (
-          <div className="absolute left-24 top-8 z-20 flex gap-1 rounded-lg border border-slate-200 bg-white p-1.5 shadow-lg">
+          <div className="absolute left-1/4 top-9 z-30 flex max-w-[220px] flex-wrap gap-1 rounded-lg border border-slate-200 bg-white p-1.5 shadow-lg">
             {(colorOpen === "fore" ? TEXT_COLORS : HILITE_COLORS).map((c) => (
               <button
                 key={c}
@@ -196,16 +413,43 @@ export function RichTextEditor({
             ))}
           </div>
         )}
-
         <ToolButton title="Remove formatting" onClick={() => exec("removeFormat")}>
           <Eraser size={14} />
         </ToolButton>
+
+        <Divider />
         <ToolButton title="Bulleted list" onClick={() => exec("insertUnorderedList")}>
           <List size={14} />
         </ToolButton>
         <ToolButton title="Numbered list" onClick={() => exec("insertOrderedList")}>
           <ListOrdered size={14} />
         </ToolButton>
+        {full && (
+          <>
+            <ToolButton title="Checklist" onClick={insertChecklist}>
+              <CheckSquare size={14} />
+            </ToolButton>
+            <ToolButton title="Decrease indent (⇧Tab)" onClick={() => exec("outdent")}>
+              <Outdent size={14} />
+            </ToolButton>
+            <ToolButton title="Increase indent (Tab)" onClick={() => exec("indent")}>
+              <Indent size={14} />
+            </ToolButton>
+            <Divider />
+            <ToolButton title="Align left" onClick={() => exec("justifyLeft")}>
+              <AlignLeft size={14} />
+            </ToolButton>
+            <ToolButton title="Align center" onClick={() => exec("justifyCenter")}>
+              <AlignCenter size={14} />
+            </ToolButton>
+            <ToolButton title="Align right" onClick={() => exec("justifyRight")}>
+              <AlignRight size={14} />
+            </ToolButton>
+            <ToolButton title="Insert link (⌘K)" onClick={insertLink}>
+              <Link2 size={14} />
+            </ToolButton>
+          </>
+        )}
 
         {onUploadImage && (
           <>
@@ -227,7 +471,7 @@ export function RichTextEditor({
 
         {cloze && (
           <>
-            <span className="mx-1 h-4 w-px bg-slate-200" />
+            <Divider />
             <ToolButton title="New cloze (⌘⇧C)" onClick={() => insertCloze(false)}>
               <span className="flex items-center text-[10px] font-bold">
                 <Brackets size={13} />+
@@ -244,14 +488,83 @@ export function RichTextEditor({
           </>
         )}
       </div>
-      <div
-        ref={ref}
-        contentEditable
-        onInput={emit}
-        onKeyDown={handleKeyDown}
-        data-placeholder={placeholder}
-        className={`prose-card ${minHeightClass} ${maxHeightClass} overflow-y-auto px-3 py-2 text-sm outline-none empty:before:text-slate-400 empty:before:content-[attr(data-placeholder)]`}
-      />
+
+      <div className="relative">
+        {/* Floating selection toolbar */}
+        {full && bubble && (
+          <div
+            className="absolute z-20 flex -translate-x-1/2 items-center gap-0.5 rounded-lg border border-slate-700 bg-slate-800 px-1 py-1 shadow-xl"
+            style={{ top: bubble.top, left: bubble.left }}
+          >
+            {(
+              [
+                ["bold", Bold, "Bold"],
+                ["italic", Italic, "Italic"],
+                ["underline", Underline, "Underline"],
+                ["strikeThrough", Strikethrough, "Strikethrough"],
+              ] as const
+            ).map(([cmd, Icon, title]) => (
+              <button
+                key={cmd}
+                type="button"
+                title={title}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => exec(cmd)}
+                className="flex h-6 w-6 items-center justify-center rounded text-slate-200 hover:bg-slate-700 hover:text-white"
+              >
+                <Icon size={13} />
+              </button>
+            ))}
+            <button
+              type="button"
+              title="Highlight"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => exec("hiliteColor", "#fef08a")}
+              className="flex h-6 w-6 items-center justify-center rounded text-slate-200 hover:bg-slate-700 hover:text-white"
+            >
+              <Highlighter size={13} />
+            </button>
+            <button
+              type="button"
+              title="Insert link (⌘K)"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={insertLink}
+              className="flex h-6 w-6 items-center justify-center rounded text-slate-200 hover:bg-slate-700 hover:text-white"
+            >
+              <Link2 size={13} />
+            </button>
+            {cloze && (
+              <button
+                type="button"
+                title="Make cloze (⌘⇧C)"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => insertCloze(false)}
+                className="flex h-6 items-center gap-0.5 rounded px-1 text-[10px] font-bold text-slate-200 hover:bg-slate-700 hover:text-white"
+              >
+                <Brackets size={12} />+
+              </button>
+            )}
+          </div>
+        )}
+
+        <div
+          ref={ref}
+          contentEditable
+          onInput={emit}
+          onKeyDown={handleKeyDown}
+          onPaste={handlePaste}
+          onBlur={() => setColorOpen(null)}
+          data-placeholder={placeholder}
+          className={`prose-card ${minHeightClass} ${maxHeightClass} overflow-y-auto px-3 py-2 text-sm outline-none empty:before:text-slate-400 empty:before:content-[attr(data-placeholder)]`}
+        />
+      </div>
+
+      {wordCount && (
+        <div className="flex justify-end border-t border-slate-100 px-3 py-1 text-[11px] text-slate-400">
+          {counts.words} word{counts.words === 1 ? "" : "s"} · {counts.chars}{" "}
+          character{counts.chars === 1 ? "" : "s"}
+        </div>
+      )}
     </div>
   );
 }

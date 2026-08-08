@@ -381,15 +381,19 @@ export async function deleteNote(uid: string, noteId: string, slides: NoteSlide[
   await deleteDoc(doc(db, "users", uid, "notes", noteId));
 }
 
-/** Uploads one rendered slide image for a note. */
+/** Uploads a rendered slide, or any image pasted/inserted into a note. */
 export async function uploadNoteSlide(
   uid: string,
   noteId: string,
   blob: Blob
 ): Promise<{ path: string; url: string }> {
-  const path = `users/${uid}/notes/${noteId}/slides/${crypto.randomUUID()}.png`;
+  const contentType = blob.type && blob.type.startsWith("image/")
+    ? blob.type
+    : "image/png";
+  const ext = contentType.split("/")[1]?.split("+")[0] || "png";
+  const path = `users/${uid}/notes/${noteId}/slides/${crypto.randomUUID()}.${ext}`;
   const storageRef = ref(storage, path);
-  await uploadBytes(storageRef, blob, { contentType: "image/png" });
+  await uploadBytes(storageRef, blob, { contentType });
   const url = await getDownloadURL(storageRef);
   return { path, url };
 }
