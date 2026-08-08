@@ -74,12 +74,20 @@ export function HomePage() {
     let newCount = 0;
     let learnCount = 0;
     let dueCount = 0;
+    let dueTomorrow = 0;
     for (const c of counts.values()) {
       newCount += c.newCount;
       learnCount += c.learnCount;
       dueCount += c.dueCount;
+      dueTomorrow += c.dueTomorrow;
     }
-    return { newCount, learnCount, dueCount, total: newCount + learnCount + dueCount };
+    return {
+      newCount,
+      learnCount,
+      dueCount,
+      dueTomorrow,
+      total: newCount + learnCount + dueCount,
+    };
   }, [counts]);
 
   /** Decks with the most waiting, so you know where to start. */
@@ -171,9 +179,22 @@ export function HomePage() {
             <div className="flex flex-wrap items-center gap-x-5 gap-y-1 border-t border-slate-100 bg-slate-50 px-5 py-2.5 text-xs text-slate-500">
               <span className="flex items-center gap-1.5">
                 <CalendarClock size={13} />
-                {today.count > 0
-                  ? `${today.count} reviewed today in ${Math.round(today.ms / 1000)}s`
-                  : "No reviews yet today"}
+                {today.count > 0 ? (
+                  <>
+                    Studied <b className="text-slate-700">{today.count}</b> card
+                    {today.count === 1 ? "" : "s"} in{" "}
+                    <b className="text-slate-700">{Math.round(today.ms / 1000)}s</b> today
+                    <span className="text-slate-400">
+                      {" "}
+                      ({(today.ms / 1000 / today.count).toFixed(1)}s/card)
+                    </span>
+                  </>
+                ) : (
+                  "No reviews yet today"
+                )}
+              </span>
+              <span>
+                <b className="text-slate-700">{totals.dueTomorrow}</b> due tomorrow
               </span>
               <span>
                 {decks!.length} deck{decks!.length === 1 ? "" : "s"} ·{" "}

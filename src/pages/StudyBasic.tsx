@@ -43,7 +43,6 @@ import {
   loadStudyData,
 } from "../lib/studyLoad";
 import {
-  getTodayAnkiStats,
   loadAnkiSettings,
   loadQuizletSettings,
   recordAnkiReview,
@@ -717,8 +716,9 @@ export function StudyBasic() {
   if (total === 0) {
     return (
       <Layout>
-        <div className="mb-4 flex items-center justify-between">
+        <div className="mb-4 flex items-center gap-3">
           <BackLink deckId={deckId} navigate={navigate} inline />
+          <span className="flex-1" />
           {settingsButton}
         </div>
         {studyMode === "anki" ? (
@@ -798,19 +798,19 @@ export function StudyBasic() {
 
   return (
     <Layout>
-      <div className="mb-2 flex items-center justify-between">
+      {/* One compact line: back · what you're studying · progress · settings */}
+      <div className="mb-4 flex items-center gap-3">
         <BackLink deckId={deckId} navigate={navigate} inline />
-        {settingsButton}
-      </div>
-
-      {groupName && (
-        <p className="mb-2 text-center text-sm font-semibold text-slate-500">
-          Studying {groupName} — {deckIds.length} decks pooled
-        </p>
-      )}
-
-      <div className="mb-4 flex items-center justify-between">
-        <div className="h-2 flex-1 overflow-hidden rounded-full bg-slate-200">
+        {groupName && (
+          <span
+            className="hidden max-w-[16rem] truncate text-sm font-semibold text-slate-500 sm:inline"
+            title={`${groupName} — ${deckIds.length} decks pooled`}
+          >
+            {groupName}
+            <span className="font-normal text-slate-400"> · {deckIds.length} decks</span>
+          </span>
+        )}
+        <div className="h-2 min-w-[6rem] flex-1 overflow-hidden rounded-full bg-slate-200">
           <div
             className={`h-full rounded-full transition-all ${
               studyMode === "anki" ? "bg-emerald-600" : "bg-red-600"
@@ -818,9 +818,10 @@ export function StudyBasic() {
             style={{ width: `${progress}%` }}
           />
         </div>
-        <span className="ml-3 text-sm font-medium text-slate-500">
+        <span className="shrink-0 text-sm font-medium text-slate-500">
           {total - queue.length}/{total}
         </span>
+        {settingsButton}
       </div>
 
 
@@ -1255,7 +1256,6 @@ export function StudyBasic() {
           studyMode={studyMode}
           anki={ankiSettings}
           quizlet={quizletSettings}
-          ankiStats={computeAnkiStats(srsMap)}
           onChange={(a, q) => {
             setAnkiSettings(a);
             setQuizletSettings(q);
@@ -1323,18 +1323,3 @@ function MoreItem({
   );
 }
 
-function computeAnkiStats(srsMap: Map<string, import("../lib/srs").SrsState> | null) {
-  const today = getTodayAnkiStats();
-  let dueTomorrow = 0;
-  if (srsMap) {
-    const tomorrowStart = nextDayStart();
-    const tomorrowEnd = tomorrowStart + 86400000;
-    for (const s of srsMap.values()) {
-      if (s.suspended) continue;
-      if (s.reps > 0 && s.due > Date.now() && s.due <= tomorrowEnd && s.due >= tomorrowStart) {
-        dueTomorrow++;
-      }
-    }
-  }
-  return { studiedToday: today.count, msToday: today.ms, dueTomorrow };
-}

@@ -110,7 +110,7 @@ export async function exportDeckToAnki(
         rows.push([
           "Basic",
           deckName,
-          `${sheet.title}: <img src="${qName}">`,
+          `<img src="${qName}">`,
           `${unit.label ? `<b>${unit.label}</b><br>` : ""}<img src="${answerName}">`,
         ]);
       }

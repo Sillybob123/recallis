@@ -345,6 +345,7 @@ function DeckRows({
         newCount: Math.min(n, limits.newPerDay),
         learnCount: l,
         dueCount: Math.min(d, limits.maxReviewsPerDay),
+        dueTomorrow: 0,
       };
     }
   }
