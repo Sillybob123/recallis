@@ -15,7 +15,7 @@ import { useAuth } from "../contexts/AuthContext";
 import { useStudyMode } from "../contexts/StudyModeContext";
 import { Layout } from "../components/Layout";
 import { watchDecks, watchNotes } from "../lib/firestore";
-import { computeDeckCounts, type DeckCounts } from "../lib/deckCounts";
+import { computeAllDeckCounts, type DeckCounts } from "../lib/deckCounts";
 import { getTodayAnkiStats } from "../lib/settings";
 import { normalizeDeckPath } from "../lib/deckPath";
 import type { Deck, Note } from "../types";
@@ -69,15 +69,14 @@ export function HomePage() {
     if (!user || !decks || decks.length === 0) return;
     let cancelled = false;
     (async () => {
-      const next = new Map<string, DeckCounts>();
-      for (const deck of decks) {
-        try {
-          next.set(deck.id, await computeDeckCounts(user.uid, deck.id));
-        } catch {
-          /* deck may have vanished */
-        }
-        if (cancelled) return;
-        setCounts(new Map(next));
+      try {
+        const next = await computeAllDeckCounts(
+          user.uid,
+          decks.map((d) => d.id)
+        );
+        if (!cancelled) setCounts(next);
+      } catch {
+        /* decks may have changed underneath us */
       }
     })();
     return () => {

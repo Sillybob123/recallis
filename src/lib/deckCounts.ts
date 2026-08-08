@@ -23,7 +23,7 @@ export interface DeckCounts {
    */
   newRaw: number;
   dueRaw: number;
-  /** today's remaining budget; identical for every deck (one shared preset) */
+  /** today's remaining budget; shared by every deck (one preset) */
   newAllowance: number;
   reviewAllowance: number;
   /** review cards that come due during tomorrow */
@@ -32,83 +32,121 @@ export interface DeckCounts {
 }
 
 /**
- * Anki-main-screen style counts for one deck:
- * New — never-graded items, capped by today's remaining new-card allowance.
- * Learn — learning/relearning items due now.
- * Due — review items due now, capped by today's remaining review allowance.
+ * Anki's deck-list counters.
+ *
+ * New   — never answered, capped by what's left of today's new-card limit.
+ * Learn — in a learning or relearning step and scheduled within today. Cards
+ *         waiting out a 10-minute step count here too; Learn isn't "cards you
+ *         failed", it's "cards that haven't graduated yet".
+ * Due   — graduated review cards whose date has arrived, capped by what's
+ *         left of today's review limit.
+ *
+ * The daily limits belong to one shared preset, so the day's usage is counted
+ * across every deck rather than per deck.
  */
+export async function computeAllDeckCounts(
+  uid: string,
+  deckIds: string[]
+): Promise<Map<string, DeckCounts>> {
+  const settings = loadAnkiSettings();
+  const now = Date.now();
+  const dayStart = startOfStudyDay(now);
+  const nextDayStart = dayStart + 86400000;
+  const tomorrowEnd = nextDayStart + 86400000;
+
+  const perDeck = await Promise.all(
+    deckIds.map(async (deckId) => {
+      const [cards, sheets, srs] = await Promise.all([
+        getCardsOnce(uid, deckId),
+        getOcclusionsOnce(uid, deckId),
+        getSrsMap(uid, deckId),
+      ]);
+      return { deckId, cards, sheets, srs };
+    })
+  );
+
+  // How much of today's budget is already spent, across all decks.
+  let newToday = 0;
+  let reviewsToday = 0;
+  for (const { srs } of perDeck) {
+    for (const s of srs.values()) {
+      if ((s.firstSeen ?? 0) >= dayStart) newToday++;
+      if ((s.lastReviewed ?? 0) >= dayStart && s.phase === "review") reviewsToday++;
+    }
+  }
+  const newAllowance = Math.max(0, settings.newPerDay - newToday);
+  const reviewAllowance = Math.max(0, settings.maxReviewsPerDay - reviewsToday);
+
+  const result = new Map<string, DeckCounts>();
+  for (const { deckId, cards, sheets, srs } of perDeck) {
+    const items = [
+      ...buildTextItems(cards.map((c) => ({ ...c, deckId }))),
+      ...buildOcclusionItems(sheets.map((sh) => ({ ...sh, deckId }))),
+    ];
+
+    let newRaw = 0;
+    let learnCount = 0;
+    let dueRaw = 0;
+    let dueTomorrow = 0;
+
+    for (const item of items) {
+      const s = srs.get(item.key);
+      if (isExcluded(s, now)) continue;
+
+      if (isNew(s)) {
+        newRaw++;
+        continue;
+      }
+      if (s!.phase === "review") {
+        if (s!.due <= now) {
+          dueRaw++;
+        } else if (s!.due >= nextDayStart && s!.due < tomorrowEnd) {
+          dueTomorrow++;
+        }
+      } else if (s!.due < nextDayStart) {
+        // Learning/relearning scheduled for any time today, including a step
+        // that's still counting down.
+        learnCount++;
+      }
+    }
+
+    // Practice signal comes from plain right/wrong tallies, so it reflects
+    // Quizlet cramming too — not just the Anki schedule.
+    let right = 0;
+    let wrong = 0;
+    let shaky = 0;
+    for (const card of cards) {
+      const st = card.stats ?? { correct: 0, incorrect: 0 };
+      right += st.correct;
+      wrong += st.incorrect;
+      if (st.incorrect > st.correct) shaky++;
+    }
+    const answered = right + wrong;
+
+    result.set(deckId, {
+      newRaw,
+      dueRaw,
+      newAllowance,
+      reviewAllowance,
+      newCount: Math.min(newRaw, newAllowance),
+      learnCount,
+      dueCount: Math.min(dueRaw, reviewAllowance),
+      dueTomorrow,
+      practice: {
+        total: items.length,
+        shaky,
+        accuracy: answered > 0 ? right / answered : null,
+      },
+    });
+  }
+
+  return result;
+}
+
 export async function computeDeckCounts(
   uid: string,
   deckId: string
 ): Promise<DeckCounts> {
-  const [cards, sheets, srs] = await Promise.all([
-    getCardsOnce(uid, deckId),
-    getOcclusionsOnce(uid, deckId),
-    getSrsMap(uid, deckId),
-  ]);
-  const settings = loadAnkiSettings();
-  const now = Date.now();
-  const dayStart = startOfStudyDay(now);
-
-  const items = [
-    ...buildTextItems(cards.map((c) => ({ ...c, deckId }))),
-    ...buildOcclusionItems(sheets.map((sh) => ({ ...sh, deckId }))),
-  ];
-
-  // Practice signal comes from plain right/wrong tallies, so it reflects
-  // Quizlet cramming too — not just the Anki schedule.
-  let right = 0;
-  let wrong = 0;
-  let shaky = 0;
-  for (const card of cards) {
-    const st = card.stats ?? { correct: 0, incorrect: 0 };
-    right += st.correct;
-    wrong += st.incorrect;
-    if (st.incorrect > st.correct) shaky++;
-  }
-  const answered = right + wrong;
-  const practice = {
-    total: items.length,
-    shaky,
-    accuracy: answered > 0 ? right / answered : null,
-  };
-
-  let newRaw = 0;
-  let learnCount = 0;
-  let dueRaw = 0;
-  let dueTomorrow = 0;
-  const tomorrowStart = dayStart + 86400000;
-  const tomorrowEnd = tomorrowStart + 86400000;
-  let newToday = 0;
-  let reviewsToday = 0;
-
-  for (const item of items) {
-    const s = srs.get(item.key);
-    if (s) {
-      if ((s.firstSeen ?? 0) >= dayStart) newToday++;
-      if ((s.lastReviewed ?? 0) >= dayStart && s.phase === "review") reviewsToday++;
-    }
-    if (isExcluded(s, now)) continue;
-    if (s && !isNew(s) && s.due > now && s.due < tomorrowEnd) dueTomorrow++;
-    if (isNew(s)) {
-      newRaw++;
-    } else if (s!.due <= now) {
-      if (s!.phase === "review") dueRaw++;
-      else learnCount++;
-    }
-  }
-
-  const newAllowance = Math.max(0, settings.newPerDay - newToday);
-  const reviewAllowance = Math.max(0, settings.maxReviewsPerDay - reviewsToday);
-  return {
-    practice,
-    dueTomorrow,
-    newRaw,
-    dueRaw,
-    newAllowance,
-    reviewAllowance,
-    newCount: Math.min(newRaw, newAllowance),
-    learnCount,
-    dueCount: Math.min(dueRaw, reviewAllowance),
-  };
+  const all = await computeAllDeckCounts(uid, [deckId]);
+  return all.get(deckId)!;
 }

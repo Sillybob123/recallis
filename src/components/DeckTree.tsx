@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Link } from "react-router-dom";
 import {
   ChevronDown,
@@ -198,7 +199,34 @@ function DeckRowMenu({
 }) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
   const deck = node.deck;
+
+  // The deck list clips its children, so the menu lives on <body> and is
+  // positioned against the button, flipping upward near the bottom edge.
+  useLayoutEffect(() => {
+    if (!open || !buttonRef.current) return;
+    const rect = buttonRef.current.getBoundingClientRect();
+    const MENU_W = 176;
+    const MENU_H = 210;
+    const below = window.innerHeight - rect.bottom;
+    setPos({
+      top: below < MENU_H ? rect.top - Math.min(MENU_H, rect.top - 8) : rect.bottom + 4,
+      left: Math.max(8, Math.min(rect.right - MENU_W, window.innerWidth - MENU_W - 8)),
+    });
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const close = () => setOpen(false);
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("resize", close);
+    return () => {
+      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("resize", close);
+    };
+  }, [open]);
 
   async function handleRename() {
     setOpen(false);
@@ -259,16 +287,22 @@ function DeckRowMenu({
   return (
     <div className="relative w-7">
       <button
+        ref={buttonRef}
         onClick={() => setOpen((o) => !o)}
         className="rounded-md p-1 text-slate-300 transition hover:bg-slate-200 hover:text-slate-600 group-hover:text-slate-400"
         title="Deck menu"
       >
         <MoreVertical size={16} />
       </button>
-      {open && (
+      {open &&
+        pos &&
+        createPortal(
         <>
-          <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 top-8 z-20 w-44 overflow-hidden rounded-xl border border-slate-200 bg-white py-1 shadow-lg">
+          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+          <div
+            className="fixed z-50 w-44 overflow-hidden rounded-xl border border-slate-200 bg-white py-1 shadow-xl"
+            style={{ top: pos.top, left: pos.left }}
+          >
             <MenuItem
               icon={<Plus size={14} />}
               onClick={() => {
@@ -301,7 +335,8 @@ function DeckRowMenu({
               Delete
             </MenuItem>
           </div>
-        </>
+        </>,
+        document.body
       )}
     </div>
   );

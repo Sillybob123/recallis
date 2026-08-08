@@ -27,7 +27,7 @@ import {
 } from "../lib/firestore";
 import { createFullBackup, restoreFullBackup } from "../lib/backup";
 import { downloadBlob } from "../lib/ankiExport";
-import { computeDeckCounts, type DeckCounts } from "../lib/deckCounts";
+import { computeAllDeckCounts, type DeckCounts } from "../lib/deckCounts";
 import { loadAnkiSettings, loadQuizletSettings } from "../lib/settings";
 import {
   buildDeckTree,
@@ -83,15 +83,14 @@ export function Dashboard() {
     if (!user || studyMode !== "anki" || decks.length === 0) return;
     let cancelled = false;
     (async () => {
-      const next = new Map<string, DeckCounts>();
-      for (const deck of decks) {
-        try {
-          next.set(deck.id, await computeDeckCounts(user.uid, deck.id));
-        } catch {
-          /* deck may have been deleted mid-fetch */
-        }
-        if (cancelled) return;
-        setCounts(new Map(next));
+      try {
+        const next = await computeAllDeckCounts(
+          user.uid,
+          decks.map((d) => d.id)
+        );
+        if (!cancelled) setCounts(next);
+      } catch {
+        /* decks may have changed underneath us */
       }
     })();
     return () => {
