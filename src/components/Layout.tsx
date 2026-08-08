@@ -55,7 +55,7 @@ export function Layout({ children }: { children: ReactNode }) {
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-3 sm:px-6">
           <Link
             to="/"
-            className="flex shrink-0 items-center"
+            className="flex min-w-0 shrink items-center"
             style={{ gap: "11px" }}
             title="Home"
           >
@@ -101,12 +101,12 @@ export function Layout({ children }: { children: ReactNode }) {
           </Link>
 
           {user && (
-            <div className="flex items-center gap-2 text-sm">
+            <div className="scrollbar-none flex min-w-0 items-center gap-2 overflow-x-auto text-sm">
               <NavPill to="/decks" active={inDecks} activeClass="bg-slate-800">
-                <Layers size={12} /> Decks
+                <Layers size={12} /> <span className="hidden sm:inline">Decks</span>
               </NavPill>
               <NavPill to="/notes" active={inNotes} activeClass="bg-blue-700">
-                <NotebookPen size={12} /> Notes
+                <NotebookPen size={12} /> <span className="hidden sm:inline">Notes</span>
               </NavPill>
 
               <div className="flex overflow-hidden rounded-full border border-slate-200 text-xs font-semibold">
@@ -119,7 +119,7 @@ export function Layout({ children }: { children: ReactNode }) {
                   }`}
                   title="Spaced repetition — cards come back over days"
                 >
-                  <Repeat size={12} /> Anki
+                  <Repeat size={12} /> <span className="hidden sm:inline">Anki</span>
                 </Link>
                 <Link
                   to="/quizlet"
@@ -130,7 +130,7 @@ export function Layout({ children }: { children: ReactNode }) {
                   }`}
                   title="Cram freely without touching your schedule"
                 >
-                  <Zap size={12} /> Quizlet
+                  <Zap size={12} /> <span className="hidden sm:inline">Quizlet</span>
                 </Link>
               </div>
 
@@ -142,7 +142,7 @@ export function Layout({ children }: { children: ReactNode }) {
                   await logOut();
                   navigate("/login");
                 }}
-                className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-slate-600 transition hover:border-slate-300 hover:bg-slate-50"
+                className="flex shrink-0 items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-slate-600 transition hover:border-slate-300 hover:bg-slate-50"
               >
                 <LogOut size={14} />
                 <span className="hidden sm:inline">Log out</span>
@@ -170,7 +170,7 @@ function NavPill({
   return (
     <Link
       to={to}
-      className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
+      className={`flex shrink-0 items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
         active
           ? `border-transparent text-white ${activeClass}`
           : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"

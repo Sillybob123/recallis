@@ -100,6 +100,8 @@ export interface Note {
   slides: NoteSlide[];
   /** how many flashcards have been made from this note */
   cardsMade?: number;
+  /** last subdeck cards from this lecture were filed into, e.g. "Thorax" */
+  lastSubdeck?: string;
   createdAt: number;
   updatedAt: number;
 }

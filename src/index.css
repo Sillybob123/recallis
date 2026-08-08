@@ -146,6 +146,13 @@ body {
   --page-bg: linear-gradient(to bottom, #eff6ff, #f8fafc 320px);
 }
 
+.scrollbar-none {
+  scrollbar-width: none;
+}
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
+
 .cloze-blank {
   display: inline-block;
   padding: 0 0.4em;

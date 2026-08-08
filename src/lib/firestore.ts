@@ -503,6 +503,7 @@ function noteFromDoc(d: { id: string; data: () => Record<string, unknown> }): No
     content: (data.content as string) ?? "",
     slides: (data.slides as NoteSlide[]) ?? [],
     cardsMade: (data.cardsMade as number) ?? 0,
+    lastSubdeck: (data.lastSubdeck as string) ?? "",
     createdAt: toMillis(data.createdAt),
     updatedAt: toMillis(data.updatedAt),
   };
@@ -539,7 +540,10 @@ export async function updateNote(
   uid: string,
   noteId: string,
   updates: Partial<
-    Pick<Note, "title" | "className" | "content" | "slides" | "cardsMade">
+    Pick<
+      Note,
+      "title" | "className" | "content" | "slides" | "cardsMade" | "lastSubdeck"
+    >
   >
 ) {
   await updateDoc(doc(db, "users", uid, "notes", noteId), {
@@ -570,6 +574,25 @@ export async function uploadNoteSlide(
   await uploadBytes(storageRef, blob, { contentType });
   const url = await getDownloadURL(storageRef);
   return { path, url };
+}
+
+// ---------- User settings (cross-device) ----------
+
+export async function fetchUserSettings(
+  uid: string
+): Promise<{ anki?: unknown; quizlet?: unknown } | null> {
+  const snap = await getDoc(doc(db, "users", uid, "meta", "settings"));
+  return snap.exists() ? (snap.data() as { anki?: unknown; quizlet?: unknown }) : null;
+}
+
+export async function saveUserSettings(
+  uid: string,
+  settings: { anki: unknown; quizlet: unknown }
+) {
+  await setDoc(doc(db, "users", uid, "meta", "settings"), {
+    ...settings,
+    updatedAt: serverTimestamp(),
+  });
 }
 
 // ---------- Review log ----------

@@ -231,7 +231,8 @@ export function Dashboard() {
           </button>
         </div>
       ) : (
-        <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+        <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <div className="min-w-[560px]">
           <div className="flex items-center gap-3 border-b border-slate-100 bg-slate-50 px-4 py-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
             <span className="flex-1">Deck</span>
             {studyMode === "anki" && (
@@ -260,6 +261,7 @@ export function Dashboard() {
               />
             ))}
           </ul>
+          </div>
         </div>
       )}
 

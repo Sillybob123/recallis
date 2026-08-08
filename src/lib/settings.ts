@@ -76,6 +76,7 @@ export function loadAnkiSettings(): AnkiSettings {
 
 export function saveAnkiSettings(s: AnkiSettings) {
   localStorage.setItem("ankiSettings", JSON.stringify(s));
+  pushSettingsRemote();
 }
 
 export function loadQuizletSettings(): QuizletSettings {
@@ -84,6 +85,55 @@ export function loadQuizletSettings(): QuizletSettings {
 
 export function saveQuizletSettings(s: QuizletSettings) {
   localStorage.setItem("quizletSettings", JSON.stringify(s));
+  pushSettingsRemote();
+}
+
+// ---------- cross-device sync ----------
+// Cards and schedules already live in Firestore, but preferences were
+// device-local — set your daily limit on the laptop and the phone wouldn't
+// know. A single settings doc per user keeps every device on the same page;
+// localStorage stays as the synchronous cache the rest of the app reads.
+
+let syncUid: string | null = null;
+
+function pushSettingsRemote() {
+  if (!syncUid) return;
+  import("./firestore")
+    .then(({ saveUserSettings }) =>
+      saveUserSettings(syncUid!, {
+        anki: loadAnkiSettings(),
+        quizlet: loadQuizletSettings(),
+      })
+    )
+    .catch(() => {});
+}
+
+/** Call once after login: pulls remote settings, then mirrors future saves. */
+export async function initSettingsSync(uid: string) {
+  syncUid = uid;
+  try {
+    const { fetchUserSettings } = await import("./firestore");
+    const remote = await fetchUserSettings(uid);
+    if (remote) {
+      if (remote.anki) {
+        localStorage.setItem(
+          "ankiSettings",
+          JSON.stringify({ ...DEFAULT_ANKI_SETTINGS, ...remote.anki })
+        );
+      }
+      if (remote.quizlet) {
+        localStorage.setItem(
+          "quizletSettings",
+          JSON.stringify({ ...DEFAULT_QUIZLET_SETTINGS, ...remote.quizlet })
+        );
+      }
+    } else {
+      // First device to sync seeds the doc with what it has locally.
+      pushSettingsRemote();
+    }
+  } catch {
+    /* offline — the local cache keeps working */
+  }
 }
 
 /** Parses "10m 1d 3d" style step lists into minutes. */

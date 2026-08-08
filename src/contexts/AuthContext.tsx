@@ -37,6 +37,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return;
     }
     const unsub = onAuthStateChanged(auth, (u) => {
+      if (u) {
+        import("../lib/settings")
+          .then(({ initSettingsSync }) => initSettingsSync(u.uid))
+          .catch(() => {});
+      }
       setUser(u);
       setLoading(false);
     });

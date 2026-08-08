@@ -172,7 +172,9 @@ function GradeButtons({
         >
           <span className="block text-sm font-semibold">
             {d.label}
-            {d.hint && <span className="ml-1 text-[10px] opacity-50">({d.hint})</span>}
+            {d.hint && (
+              <span className="ml-1 hidden text-[10px] opacity-50 sm:inline">({d.hint})</span>
+            )}
           </span>
           <span className="block text-[11px] opacity-70">{previews[d.rating]}</span>
         </button>
@@ -954,13 +956,13 @@ export function StudyBasic() {
           onClick={() => onMark(false)}
           className="flex-1 rounded-xl border border-red-200 bg-red-50 py-3 text-sm font-semibold text-red-600 transition hover:bg-red-100"
         >
-          Still learning <span className="text-[10px] opacity-50">(X)</span>
+          Still learning <span className="hidden text-[10px] opacity-50 sm:inline">(X)</span>
         </button>
         <button
           onClick={() => onMark(true)}
           className="flex-1 rounded-xl border border-emerald-200 bg-emerald-50 py-3 text-sm font-semibold text-emerald-600 transition hover:bg-emerald-100"
         >
-          Got it <span className="text-[10px] opacity-50">(Space)</span>
+          Got it <span className="hidden text-[10px] opacity-50 sm:inline">(Space)</span>
         </button>
       </div>
     );
@@ -1010,7 +1012,7 @@ export function StudyBasic() {
             </span>
           )}
         </span>
-        {studyMode === "anki" && <SaveBadge status={saveStatus} />}
+        <span className="shrink-0">{studyMode === "anki" && <SaveBadge status={saveStatus} />}</span>
         {settingsButton}
       </div>
 
@@ -1315,7 +1317,7 @@ export function StudyBasic() {
                         }}
                         className="rounded-xl bg-indigo-600 px-10 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-700"
                       >
-                        Show answer <span className="text-[10px] opacity-60">(Space)</span>
+                        Show answer <span className="hidden text-[10px] opacity-60 sm:inline">(Space)</span>
                       </button>
                     </div>
                   ) : (
@@ -1399,7 +1401,7 @@ export function StudyBasic() {
                 title="Edit this card (E)"
                 className="flex items-center gap-1 rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50"
               >
-                <Pencil size={12} /> Edit <span className="text-[10px] opacity-50">(E)</span>
+                <Pencil size={12} /> Edit <span className="hidden text-[10px] opacity-50 sm:inline">(E)</span>
               </button>
               <div className="relative">
                 <button

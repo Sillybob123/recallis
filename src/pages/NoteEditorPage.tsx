@@ -339,7 +339,7 @@ export function NoteEditorPage() {
           ) : (
             <FilePlus2 size={14} />
           )}
-          {slideProgress ?? "Add lecture slides (PDF or PPTX)"}
+          <span className="truncate">{slideProgress ?? "Add lecture slides (PDF or PPTX)"}</span>
           <input
             type="file"
             accept=".pdf,.pptx,application/pdf,application/vnd.openxmlformats-officedocument.presentationml.presentation"
@@ -458,11 +458,20 @@ export function NoteEditorPage() {
         <MakeCardModal
           decks={decks}
           suggestedPath={suggestedDeckPath(note)}
+          initialSubdeck={note.lastSubdeck ?? ""}
           prefillHtml={cardPrefill}
           onClose={() => setCardPrefill(null)}
-          onSave={async (deckPath, data) => {
+          onSave={async (deckPath, data, subdeck) => {
             const deckId = await ensureDeckPath(user!.uid, deckPath, decks);
             await createCard(user!.uid, deckId, data);
+            if ((subdeck ?? "") !== (latest.current?.lastSubdeck ?? "")) {
+              const updated = { ...latest.current!, lastSubdeck: subdeck ?? "" };
+              latest.current = updated;
+              setNote(updated);
+              updateNote(user!.uid, noteId!, { lastSubdeck: subdeck ?? "" }).catch(
+                () => {}
+              );
+            }
             if (latest.current) {
               const updated = {
                 ...latest.current,
@@ -592,6 +601,7 @@ function suggestedDeckPath(note: Note): string {
 function MakeCardModal({
   decks,
   suggestedPath,
+  initialSubdeck,
   prefillHtml,
   onSave,
   onClose,
@@ -599,13 +609,33 @@ function MakeCardModal({
 }: {
   decks: Deck[];
   suggestedPath: string;
+  initialSubdeck: string;
   prefillHtml: string;
-  onSave: (deckPath: string, data: CardData) => Promise<void>;
+  onSave: (deckPath: string, data: CardData, subdeck?: string) => Promise<void>;
   onClose: () => void;
   uploadImage: (file: File) => Promise<string>;
 }) {
   const [deckPath, setDeckPath] = useState(suggestedPath);
-  const [subdeck, setSubdeck] = useState("");
+  // Lecture notes usually stay on one topic for a stretch, so the last
+  // subdeck you filed into ("Thorax") is the best first guess — switch it
+  // when the lecture moves on ("Thigh").
+  const [subdeck, setSubdeck] = useState(initialSubdeck);
+
+  /** Subdecks that already exist under the lecture's deck. */
+  const knownSubdecks = (() => {
+    const base = normalizeDeckPath(deckPath).toLowerCase();
+    if (!base) return [] as string[];
+    const seen = new Set<string>();
+    for (const d of decks) {
+      const path = normalizeDeckPath(d.name);
+      if (path.toLowerCase().startsWith(base + "::")) {
+        const next = splitDeckPath(path.slice(base.length))[0];
+        if (next) seen.add(next);
+      }
+    }
+    if (initialSubdeck) seen.add(initialSubdeck);
+    return [...seen].sort();
+  })();
   const fullPath = joinDeckPath([
     ...splitDeckPath(deckPath),
     ...splitDeckPath(subdeck),
@@ -650,7 +680,8 @@ function MakeCardModal({
         fullPath,
         type === "cloze"
           ? { type: "cloze", text, extra: plain(extra) ? extra : undefined }
-          : { type: "basic", front, back }
+          : { type: "basic", front, back },
+        splitDeckPath(subdeck).join("::") || undefined
       );
       setAdded((prev) => [
         ...prev,
@@ -713,10 +744,39 @@ function MakeCardModal({
             <input
               value={subdeck}
               onChange={(e) => setSubdeck(e.target.value)}
-              placeholder="optional, e.g. Breast and Thorax"
+              placeholder="optional, e.g. Thorax"
               className="w-52 rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-sm text-slate-800 outline-none focus:border-indigo-500"
             />
           </label>
+          {(knownSubdecks.length > 0 || subdeck) && (
+            <span className="flex w-full flex-wrap items-center gap-1.5">
+              <span className="text-[11px] text-slate-400">Quick pick:</span>
+              {knownSubdecks.map((sd) => (
+                <button
+                  key={sd}
+                  type="button"
+                  onClick={() => setSubdeck(sd)}
+                  className={`rounded-full border px-2 py-0.5 text-[11px] font-medium transition ${
+                    subdeck.trim().toLowerCase() === sd.toLowerCase()
+                      ? "border-indigo-500 bg-indigo-100 text-indigo-800"
+                      : "border-slate-200 bg-white text-slate-500 hover:border-indigo-300"
+                  }`}
+                >
+                  {sd}
+                </button>
+              ))}
+              {subdeck && (
+                <button
+                  type="button"
+                  onClick={() => setSubdeck("")}
+                  className="rounded-full border border-slate-200 bg-white px-2 py-0.5 text-[11px] text-slate-400 hover:text-slate-600"
+                  title="No subdeck — file straight into the lecture deck"
+                >
+                  none
+                </button>
+              )}
+            </span>
+          )}
 
           <div className="flex gap-1 rounded-lg bg-white p-1 text-sm ring-1 ring-slate-200">
             <button
