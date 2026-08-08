@@ -123,6 +123,13 @@ body {
   --page-bg: linear-gradient(to bottom, #fef2f2, #f8fafc 320px);
 }
 
+.theme-notes {
+  --accent: #1d4ed8;
+  --accent-hover: #1e40af;
+  --accent-soft: #dbeafe;
+  --page-bg: linear-gradient(to bottom, #eff6ff, #f8fafc 320px);
+}
+
 .cloze-blank {
   display: inline-block;
   padding: 0 0.4em;

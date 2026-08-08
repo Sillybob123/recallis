@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { ref, getBlob } from "firebase/storage";
 import {
   ArrowLeft,
   Check,
@@ -17,7 +16,6 @@ import {
 import { useAuth } from "../contexts/AuthContext";
 import { Layout } from "../components/Layout";
 import { RichTextEditor } from "../components/RichTextEditor";
-import { storage } from "../firebase";
 import {
   createCard,
   createOcclusionSheet,
@@ -25,7 +23,6 @@ import {
   updateNote,
   uploadDeckMedia,
   uploadNoteSlide,
-  uploadOcclusionImage,
   watchDecks,
 } from "../lib/firestore";
 import type { CardData, Deck, Note, NoteSlide } from "../types";
@@ -200,35 +197,42 @@ export function NoteEditorPage() {
     });
   }
 
-  /** Copy one specific slide into a deck and open the mask editor on it. */
+  /**
+   * Turn one specific slide into an occlusion sheet.
+   *
+   * The slide already lives in Storage, so the sheet simply points at the same
+   * file (`linkedImage`) instead of downloading and re-uploading the bytes.
+   * That avoids the cross-origin read that made this fail with
+   * `storage/retry-limit-exceeded`, is instant, and doesn't double storage.
+   * Dimensions come from an <img>, which needs no CORS permission.
+   */
   async function slideToOcclusion(slide: NoteSlide, index: number, deckId: string) {
     if (!user || !latest.current) return;
-    setSlideProgress(`Preparing slide ${index + 1} for occlusion…`);
+    setSlideProgress(`Preparing slide ${index + 1}…`);
     try {
-      const blob = await getBlob(ref(storage, slide.imagePath));
-      const file = new File([blob], `slide-${index + 1}.png`, { type: "image/png" });
-      const { path, url } = await uploadOcclusionImage(user.uid, deckId, file);
-      const bitmap = await createImageBitmap(blob);
+      const dims = await new Promise<{ w: number; h: number }>((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => resolve({ w: img.naturalWidth, h: img.naturalHeight });
+        img.onerror = () => reject(new Error("The slide image couldn't be loaded."));
+        img.src = slide.imageUrl;
+      });
+
       const sheetId = await createOcclusionSheet(user.uid, deckId, {
         title: `${latest.current.title} — slide ${index + 1}`,
-        imagePath: path,
-        imageUrl: url,
-        imageWidth: bitmap.width,
-        imageHeight: bitmap.height,
+        imagePath: slide.imagePath,
+        imageUrl: slide.imageUrl,
+        imageWidth: dims.w,
+        imageHeight: dims.h,
         shapes: [],
+        linkedImage: true,
       });
-      bitmap.close();
+
       // Make sure nothing typed is lost before we navigate away.
       if (saveTimer.current) clearTimeout(saveTimer.current);
       await persist(latest.current).catch(() => {});
       navigate(`/deck/${deckId}/occlusion/${sheetId}/edit`);
     } catch (err) {
-      alert(
-        "Couldn't copy that slide: " +
-          (err as Error).message +
-          "\n\nIf this mentions CORS, your Storage bucket needs the one-time " +
-          "CORS setup from the README (section 4)."
-      );
+      alert("Couldn't open that slide for occlusion: " + (err as Error).message);
     } finally {
       setSlideProgress(null);
     }
@@ -572,74 +576,114 @@ function MakeCardModal({
   onClose: () => void;
   uploadImage: (file: File) => Promise<string>;
 }) {
-  const [deckId, setDeckId] = useState(decks[0]?.id ?? "");
+  const [deckId, setDeckId] = useState(
+    () => localStorage.getItem("lastCardDeck") ?? decks[0]?.id ?? ""
+  );
   const [type, setType] = useState<"cloze" | "basic">("cloze");
   const [text, setText] = useState(prefillHtml);
   const [front, setFront] = useState(prefillHtml);
   const [back, setBack] = useState("");
+  const [extra, setExtra] = useState("");
   const [busy, setBusy] = useState(false);
-  const [saved, setSaved] = useState(0);
+  const [added, setAdded] = useState<string[]>([]);
+
+  const clozeCount = new Set(
+    Array.from(text.matchAll(/\{\{c(\d+)::/g)).map((m) => m[1])
+  ).size;
+
+  function plain(html: string) {
+    const d = document.createElement("div");
+    d.innerHTML = html;
+    return (d.textContent ?? "").trim();
+  }
 
   async function handleSave(keepOpen: boolean) {
     if (!deckId) {
       alert("Pick a deck first (or create one on the dashboard).");
       return;
     }
-    if (type === "cloze" && !/\{\{c\d+::/.test(text)) {
+    if (type === "cloze" && clozeCount === 0) {
       alert(
-        "Select the part to hide and press the [ ]+ button (or ⌘⇧C) to add a {{c1::…}} blank."
+        "Select the part to hide and press the [ ]+ button (or \u2318\u21E7C) to add a {{c1::\u2026}} blank."
       );
+      return;
+    }
+    if (type === "basic" && (!plain(front) || !plain(back))) {
+      alert("A basic card needs both a front and a back.");
       return;
     }
     setBusy(true);
     try {
       await onSave(
         deckId,
-        type === "cloze" ? { type: "cloze", text } : { type: "basic", front, back }
+        type === "cloze"
+          ? { type: "cloze", text, extra: plain(extra) ? extra : undefined }
+          : { type: "basic", front, back }
       );
-      setSaved((n) => n + 1);
+      localStorage.setItem("lastCardDeck", deckId);
+      setAdded((prev) => [
+        ...prev,
+        plain(type === "cloze" ? text : front).slice(0, 70) || "card",
+      ]);
       if (keepOpen) {
         setText("");
         setFront("");
         setBack("");
+        setExtra("");
       } else {
         onClose();
       }
+    } catch (err) {
+      alert("Couldn't save that card: " + (err as Error).message);
     } finally {
       setBusy(false);
     }
   }
 
   return (
-    <div className="fixed inset-0 z-30 flex items-center justify-center bg-slate-900/40 p-4">
-      <div className="flex max-h-[90vh] w-full max-w-xl flex-col overflow-y-auto rounded-2xl bg-white p-6 shadow-xl">
-        <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-lg font-bold text-slate-900">
-            New card from your notes{saved > 0 ? ` · ${saved} added` : ""}
-          </h2>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-600">
+    <div className="fixed inset-0 z-40 flex items-center justify-center bg-slate-900/50 p-4">
+      <div className="flex h-[88vh] w-full max-w-4xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+        {/* header */}
+        <div className="flex shrink-0 items-center justify-between border-b border-slate-200 px-6 py-4">
+          <div>
+            <h2 className="text-lg font-bold text-slate-900">Make a card</h2>
+            <p className="text-xs text-slate-500">
+              Built from the text you selected in your notes.
+            </p>
+          </div>
+          <button
+            onClick={onClose}
+            className="rounded-lg p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
+          >
             <X size={20} />
           </button>
         </div>
 
-        <div className="mb-3 flex gap-2">
-          <select
-            value={deckId}
-            onChange={(e) => setDeckId(e.target.value)}
-            className="flex-1 rounded-lg border border-slate-300 px-2 py-2 text-sm outline-none focus:border-indigo-500"
-          >
-            <option value="">Choose a deck…</option>
-            {decks.map((d) => (
-              <option key={d.id} value={d.id}>
-                {d.name}
-              </option>
-            ))}
-          </select>
-          <div className="flex gap-1 rounded-lg bg-slate-100 p-1 text-sm">
+        {/* controls */}
+        <div className="flex shrink-0 flex-wrap items-center gap-3 border-b border-slate-100 bg-slate-50 px-6 py-3">
+          <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
+            Deck
+            <select
+              value={deckId}
+              onChange={(e) => setDeckId(e.target.value)}
+              className="rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-sm text-slate-800 outline-none focus:border-indigo-500"
+            >
+              <option value="">Choose a deck…</option>
+              {decks.map((d) => (
+                <option key={d.id} value={d.id}>
+                  {d.name}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <div className="flex gap-1 rounded-lg bg-white p-1 text-sm ring-1 ring-slate-200">
             <button
               onClick={() => setType("cloze")}
               className={`rounded-md px-3 py-1 font-medium transition ${
-                type === "cloze" ? "bg-white shadow-sm text-slate-900" : "text-slate-500"
+                type === "cloze"
+                  ? "bg-indigo-600 text-white"
+                  : "text-slate-500 hover:text-slate-800"
               }`}
             >
               Cloze
@@ -647,65 +691,144 @@ function MakeCardModal({
             <button
               onClick={() => setType("basic")}
               className={`rounded-md px-3 py-1 font-medium transition ${
-                type === "basic" ? "bg-white shadow-sm text-slate-900" : "text-slate-500"
+                type === "basic"
+                  ? "bg-indigo-600 text-white"
+                  : "text-slate-500 hover:text-slate-800"
               }`}
             >
               Basic
             </button>
           </div>
+
+          {type === "cloze" && (
+            <span
+              className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
+                clozeCount > 0
+                  ? "bg-emerald-100 text-emerald-700"
+                  : "bg-amber-100 text-amber-700"
+              }`}
+            >
+              {clozeCount > 0
+                ? `${clozeCount} blank${clozeCount === 1 ? "" : "s"} → ${clozeCount} card${clozeCount === 1 ? "" : "s"}`
+                : "No blanks yet — select text, then press [ ]+"}
+            </span>
+          )}
         </div>
 
-        {type === "cloze" ? (
-          <RichTextEditor
-            value={text}
-            onChange={setText}
-            cloze
-            full
-            placeholder="Your selected text — now hide the answer with [ ]+ (⌘⇧C)"
-            minHeightClass="min-h-28"
-            onUploadImage={uploadImage}
-            autoFocus
-          />
-        ) : (
-          <div className="space-y-3">
-            <div>
-              <label className="mb-1 block text-xs font-medium text-slate-500">
-                Front
-              </label>
-              <RichTextEditor
-                value={front}
-                onChange={setFront}
-                placeholder="Question"
-                onUploadImage={uploadImage}
-                autoFocus
-              />
+        {/* body */}
+        <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
+          {type === "cloze" ? (
+            <div className="space-y-4">
+              <div>
+                <label className="mb-1.5 block text-xs font-semibold text-slate-600">
+                  Text
+                  <span className="ml-2 font-normal text-slate-400">
+                    select what to hide, then [ ]+ (⌘⇧C) — [ ]= reuses the last
+                    number so blanks share one card
+                  </span>
+                </label>
+                <RichTextEditor
+                  value={text}
+                  onChange={setText}
+                  cloze
+                  full
+                  placeholder="The heart has four chambers."
+                  minHeightClass="min-h-[34vh]"
+                  maxHeightClass="max-h-none"
+                  onUploadImage={uploadImage}
+                  autoFocus
+                />
+              </div>
+              <div>
+                <label className="mb-1.5 block text-xs font-semibold text-slate-600">
+                  Extra
+                  <span className="ml-2 font-normal text-slate-400">
+                    optional — shown after you answer
+                  </span>
+                </label>
+                <RichTextEditor
+                  value={extra}
+                  onChange={setExtra}
+                  full
+                  placeholder="Mnemonic, context, or the slide it came from"
+                  minHeightClass="min-h-20"
+                  onUploadImage={uploadImage}
+                />
+              </div>
             </div>
-            <div>
-              <label className="mb-1 block text-xs font-medium text-slate-500">
-                Back
-              </label>
-              <RichTextEditor
-                value={back}
-                onChange={setBack}
-                placeholder="Answer"
-                onUploadImage={uploadImage}
-              />
+          ) : (
+            <div className="grid gap-4 md:grid-cols-2">
+              <div>
+                <label className="mb-1.5 block text-xs font-semibold text-slate-600">
+                  Front <span className="font-normal text-slate-400">(question)</span>
+                </label>
+                <RichTextEditor
+                  value={front}
+                  onChange={setFront}
+                  full
+                  placeholder="What does the Doyen retractor do?"
+                  minHeightClass="min-h-[34vh]"
+                  maxHeightClass="max-h-none"
+                  onUploadImage={uploadImage}
+                  autoFocus
+                />
+              </div>
+              <div>
+                <label className="mb-1.5 block text-xs font-semibold text-slate-600">
+                  Back <span className="font-normal text-slate-400">(answer)</span>
+                </label>
+                <RichTextEditor
+                  value={back}
+                  onChange={setBack}
+                  full
+                  placeholder="Holds soft organs out of the way with a wide contact area."
+                  minHeightClass="min-h-[34vh]"
+                  maxHeightClass="max-h-none"
+                  onUploadImage={uploadImage}
+                />
+              </div>
             </div>
-          </div>
-        )}
+          )}
 
-        <div className="mt-4 flex gap-2">
+          {added.length > 0 && (
+            <div className="mt-5 rounded-xl border border-emerald-200 bg-emerald-50 p-3">
+              <p className="mb-1.5 text-xs font-semibold text-emerald-800">
+                Added this session ({added.length})
+              </p>
+              <ul className="space-y-0.5 text-xs text-emerald-700">
+                {added.slice(-5).map((t, i) => (
+                  <li key={i} className="flex gap-1.5">
+                    <Check size={13} className="mt-0.5 shrink-0" />
+                    <span className="truncate">{t}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+
+        {/* footer */}
+        <div className="flex shrink-0 items-center gap-2 border-t border-slate-200 bg-white px-6 py-4">
+          <p className="mr-auto text-xs text-slate-400">
+            Cards go straight into the deck — your note stays as it is.
+          </p>
+          <button
+            onClick={onClose}
+            className="rounded-lg border border-slate-300 px-4 py-2.5 text-sm font-medium text-slate-600 transition hover:bg-slate-50"
+          >
+            {added.length ? "Done" : "Cancel"}
+          </button>
           <button
             onClick={() => handleSave(true)}
             disabled={busy}
-            className="flex-1 rounded-lg border border-indigo-200 bg-indigo-50 py-2.5 text-sm font-semibold text-indigo-700 transition hover:bg-indigo-100 disabled:opacity-50"
+            className="rounded-lg border border-indigo-200 bg-indigo-50 px-4 py-2.5 text-sm font-semibold text-indigo-700 transition hover:bg-indigo-100 disabled:opacity-50"
           >
             {busy ? "Saving…" : "Add & make another"}
           </button>
           <button
             onClick={() => handleSave(false)}
             disabled={busy}
-            className="flex-1 rounded-lg bg-indigo-600 py-2.5 text-sm font-semibold text-white transition hover:bg-indigo-700 disabled:opacity-50"
+            className="rounded-lg bg-indigo-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-700 disabled:opacity-50"
           >
             {busy ? "Saving…" : "Add card & close"}
           </button>

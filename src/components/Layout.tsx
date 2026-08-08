@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { LogOut, NotebookPen, Repeat, Zap } from "lucide-react";
 import { useAuth } from "../contexts/AuthContext";
 import { useStudyMode } from "../contexts/StudyModeContext";
@@ -8,10 +8,13 @@ export function Layout({ children }: { children: ReactNode }) {
   const { user, logOut } = useAuth();
   const { studyMode, setStudyMode } = useStudyMode();
   const navigate = useNavigate();
+  const { pathname } = useLocation();
+  const inNotes = pathname.startsWith("/notes");
+  const theme = inNotes ? "theme-notes" : studyMode === "anki" ? "theme-anki" : "theme-quizlet";
 
   return (
     <div
-      className={`min-h-screen ${studyMode === "anki" ? "theme-anki" : "theme-quizlet"}`}
+      className={`min-h-screen ${theme}`}
       style={{ background: "var(--page-bg)" }}
     >
       <div className="h-1.5 w-full" style={{ backgroundColor: "var(--accent)" }} />
@@ -31,6 +34,19 @@ export function Layout({ children }: { children: ReactNode }) {
             >
               Recallis
             </span>
+            {inNotes && (
+              <span
+                className="hidden text-[26px] text-slate-400 sm:inline"
+                style={{
+                  fontFamily: "'Inter', system-ui, sans-serif",
+                  fontWeight: 600,
+                  letterSpacing: "-0.02em",
+                  lineHeight: 1,
+                }}
+              >
+                Notes
+              </span>
+            )}
             <span
               className="ml-1 hidden rounded-full px-2 py-1 uppercase text-white sm:inline"
               style={{
@@ -42,14 +58,22 @@ export function Layout({ children }: { children: ReactNode }) {
                 lineHeight: 1,
               }}
             >
-              {studyMode === "anki" ? "Anki · spaced" : "Quizlet · cram"}
+              {inNotes
+                ? "Lectures"
+                : studyMode === "anki"
+                  ? "Anki · spaced"
+                  : "Quizlet · cram"}
             </span>
           </Link>
           {user && (
             <div className="flex items-center gap-3 text-sm">
               <Link
                 to="/notes"
-                className="flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 transition hover:bg-slate-50"
+                className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
+                  inNotes
+                    ? "border-transparent bg-blue-700 text-white"
+                    : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                }`}
                 title="Lecture notes — take notes, drop in slides, turn them into cards"
               >
                 <NotebookPen size={12} /> Notes

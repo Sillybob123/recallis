@@ -160,8 +160,10 @@ export async function deleteDeck(uid: string, deckId: string) {
 
   await Promise.all(
     occSnap.docs.map(async (d) => {
-      const path = d.data().imagePath as string | undefined;
-      if (path) {
+      const data = d.data();
+      const path = data.imagePath as string | undefined;
+      // Skip images owned by a lecture note (see deleteOcclusionSheet).
+      if (path && !data.linkedImage) {
         try {
           await deleteObject(ref(storage, path));
         } catch {
@@ -239,6 +241,7 @@ export async function getOcclusionsOnce(
       imageWidth: data.imageWidth,
       imageHeight: data.imageHeight,
       shapes: data.shapes ?? [],
+      linkedImage: Boolean(data.linkedImage),
       createdAt: toMillis(data.createdAt),
       updatedAt: toMillis(data.updatedAt),
     } as OcclusionSheet;
@@ -464,6 +467,7 @@ export function watchOcclusions(
           imageWidth: data.imageWidth,
           imageHeight: data.imageHeight,
           shapes: data.shapes ?? [],
+          linkedImage: Boolean(data.linkedImage),
           createdAt: toMillis(data.createdAt),
           updatedAt: toMillis(data.updatedAt),
         } as OcclusionSheet;
@@ -554,6 +558,7 @@ export async function createOcclusionSheet(
     imageWidth: number;
     imageHeight: number;
     shapes: OcclusionShape[];
+    linkedImage?: boolean;
   }
 ) {
   const ref = await addDoc(occlusionsCol(uid, deckId), {
@@ -581,9 +586,13 @@ export async function deleteOcclusionSheet(
   uid: string,
   deckId: string,
   sheetId: string,
-  imagePath: string
+  imagePath: string,
+  linkedImage = false
 ) {
   await deleteDoc(doc(db, "users", uid, "decks", deckId, "occlusions", sheetId));
+  // A linked image belongs to a lecture note — removing it here would tear a
+  // slide out of that note, so only delete files this sheet actually owns.
+  if (linkedImage) return;
   try {
     await deleteObject(ref(storage, imagePath));
   } catch {

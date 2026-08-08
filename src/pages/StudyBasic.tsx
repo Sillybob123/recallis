@@ -101,7 +101,7 @@ function OcclusionCard({
   }
   return (
     <div>
-      <div className="relative mx-auto w-full max-w-2xl overflow-hidden rounded-xl border border-slate-200 bg-white">
+      <div className="relative mx-auto w-full max-w-3xl overflow-hidden rounded-xl border border-slate-200 bg-white">
         <img
           src={item.sheet.imageUrl}
           alt=""
@@ -142,7 +142,7 @@ function GradeButtons({
     { rating: "easy", label: "Easy", hint: "", cls: "border-sky-200 bg-sky-50 text-sky-600 hover:bg-sky-100" },
   ];
   return (
-    <div className="mx-auto mt-6 flex max-w-xl justify-center gap-2">
+    <div className="mx-auto flex max-w-2xl justify-center gap-2">
       {defs.map((d) => (
         <button
           key={d.rating}
@@ -381,7 +381,7 @@ export function StudyBasic() {
   }
 
   function recordStats(item: StudyItem, correct: boolean) {
-    if (item.kind !== "text" || !user || !deckId) return;
+    if (item.kind !== "text" || !user) return;
     const stats =
       cards!.find((c) => c.deckId === item.deckId && c.id === item.cardId)?.stats ??
       { correct: 0, incorrect: 0 };
@@ -433,7 +433,7 @@ export function StudyBasic() {
 
   /** Anki mode: grade → SM-2 schedule persisted; learning steps stay in session. */
   function gradeSrs(rating: Rating) {
-    if (!current || !user || !deckId) return;
+    if (!current || !user) return;
     const prev = srsMap?.get(combinedKey(current)) ?? null;
     pushHistory(current, prev);
     recordAnkiReview(Date.now() - shownAtRef.current);
@@ -543,7 +543,7 @@ export function StudyBasic() {
       dropFromQueue(keys);
     },
     resetCard() {
-      if (!current || !user || !deckId) return;
+      if (!current || !user) return;
       if (!confirm("Reset this card? Its schedule is erased and it becomes a new card.")) return;
       deleteSrsState(user.uid, current.deckId, current.key).catch(() => {});
       setSrsMap((m) => {
@@ -591,7 +591,7 @@ export function StudyBasic() {
     },
     previousCard() {
       const last = historyRef.current.pop();
-      if (!last || !user || !deckId) return;
+      if (!last || !user) return;
       setQueue(last.queue);
       if (last.key !== undefined && last.deckId !== undefined) {
         setSrsMap((m) => {
@@ -615,7 +615,7 @@ export function StudyBasic() {
       updateMeta(current.deckId, siblingKeys(current), { marked });
     },
     async createCopy() {
-      if (!current || !user || !deckId) return;
+      if (!current || !user) return;
       if (current.kind === "occlusion") {
         alert("Copying an occlusion card isn't supported yet — duplicate the sheet from the deck page instead.");
         return;
@@ -627,14 +627,20 @@ export function StudyBasic() {
       }
     },
     async deleteNote() {
-      if (!current || !user || !deckId) return;
+      if (!current || !user) return;
       const keys = siblingKeys(current);
       if (current.kind === "text") {
         if (!confirm("Delete this note and all its cards? This can't be undone.")) return;
         await deleteCard(user.uid, current.deckId, current.cardId);
       } else {
         if (!confirm(`Delete the occlusion sheet "${current.sheet.title}" and all its masks?`)) return;
-        await deleteOcclusionSheet(user.uid, current.deckId, current.sheet.id, current.sheet.imagePath);
+        await deleteOcclusionSheet(
+          user.uid,
+          current.deckId,
+          current.sheet.id,
+          current.sheet.imagePath,
+          current.sheet.linkedImage
+        );
       }
       dropFromQueue(keys);
     },
@@ -760,7 +766,7 @@ export function StudyBasic() {
 
   function CramButtons({ onMark }: { onMark: (c: boolean) => void }) {
     return (
-      <div className="mx-auto mt-6 flex max-w-xl justify-center gap-3">
+      <div className="mx-auto flex max-w-2xl justify-center gap-3">
         <button
           onClick={() => onMark(false)}
           className="flex-1 rounded-xl border border-red-200 bg-red-50 py-3 text-sm font-semibold text-red-600 transition hover:bg-red-100"
@@ -811,120 +817,7 @@ export function StudyBasic() {
         </span>
       </div>
 
-      <div className="mb-4 flex flex-wrap justify-center gap-2 text-sm">
-        <ModePill active={mode === "flip"} onClick={() => { setMode("flip"); resetCardUI(); }}>
-          Flashcards
-        </ModePill>
-        {studyMode === "quizlet" && (
-          <ModePill active={mode === "learn"} onClick={() => { setMode("learn"); resetCardUI(); }}>
-            Learn
-          </ModePill>
-        )}
-        <ModePill active={mode === "type"} onClick={() => { setMode("type"); resetCardUI(); }}>
-          Type the answer
-        </ModePill>
-        {hasOcclusion && (
-          <>
-            <span className="mx-1 self-center text-slate-300">|</span>
-            <ModePill dark active={occMode === "hideOne"} onClick={() => setOccMode("hideOne")}>
-              Hide one
-            </ModePill>
-            <ModePill dark active={occMode === "hideAll"} onClick={() => setOccMode("hideAll")}>
-              Hide all
-            </ModePill>
-          </>
-        )}
-      </div>
 
-
-      {studyMode === "anki" && current && (
-        <div className="mb-4 flex flex-wrap items-center justify-center gap-2 text-sm">
-          {currentSrs?.flag && (
-            <Flag
-              size={14}
-              fill="currentColor"
-              className={
-                {
-                  red: "text-red-500",
-                  orange: "text-orange-500",
-                  green: "text-emerald-500",
-                  blue: "text-sky-500",
-                }[currentSrs!.flag!]
-              }
-            />
-          )}
-          {currentSrs?.marked && (
-            <Star size={14} fill="currentColor" className="text-amber-400" />
-          )}
-          <button
-            onClick={() => {
-              if (current.kind === "text") setShowEdit(true);
-              else navigate(`/deck/${current.deckId}/occlusion/${current.sheet.id}/edit`);
-            }}
-            className="flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 font-medium text-slate-700 hover:bg-slate-50"
-          >
-            <Pencil size={13} /> Edit
-          </button>
-          {isFlashcardContext && !flipped && (
-            <button
-              onClick={() => {
-                captureGuessTime();
-                setFlipped(true);
-              }}
-              className="flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 font-medium text-slate-700 hover:bg-slate-50"
-            >
-              <Eye size={13} /> Show answer <span className="text-[10px] text-slate-400">(Space)</span>
-            </button>
-          )}
-          <div className="relative">
-            <button
-              onClick={() => setMoreOpen((o) => !o)}
-              className="flex items-center gap-1 rounded-lg border border-slate-300 bg-white px-3 py-1.5 font-medium text-slate-700 hover:bg-slate-50"
-            >
-              More <ChevronDown size={13} />
-            </button>
-            {moreOpen && (
-              <div
-                className="absolute left-1/2 z-30 mt-1 w-52 -translate-x-1/2 overflow-hidden rounded-xl border border-slate-200 bg-white py-1 text-left shadow-lg"
-                onClick={() => setMoreOpen(false)}
-              >
-                <div className="flex items-center gap-2 px-3 py-2">
-                  <span className="text-xs text-slate-400">Flag:</span>
-                  {(["red", "orange", "green", "blue"] as FlagColor[]).map((c) => (
-                    <button
-                      key={c}
-                      onClick={() => actions.flag(c)}
-                      className={`h-4 w-4 rounded-full ${
-                        { red: "bg-red-500", orange: "bg-orange-500", green: "bg-emerald-500", blue: "bg-sky-500" }[c]
-                      } ${currentSrs?.flag === c ? "ring-2 ring-slate-700 ring-offset-1" : ""}`}
-                    />
-                  ))}
-                  <button
-                    onClick={() => actions.flag(null)}
-                    className="text-[10px] text-slate-400 hover:text-slate-600"
-                  >
-                    clear
-                  </button>
-                </div>
-                <MoreItem onClick={actions.buryCard}>Bury Card</MoreItem>
-                <MoreItem onClick={actions.resetCard}>Reset Card…</MoreItem>
-                <MoreItem onClick={actions.setDueDate}>Set Due Date…</MoreItem>
-                <MoreItem onClick={actions.suspendCard}>Suspend Card</MoreItem>
-                <MoreItem onClick={actions.cardInfo}>Card Info</MoreItem>
-                <MoreItem onClick={actions.previousCard}>Previous Card</MoreItem>
-                <div className="my-1 border-t border-slate-100" />
-                <MoreItem onClick={actions.markNote}>
-                  {currentSrs?.marked ? "Unmark Note" : "Mark Note"}
-                </MoreItem>
-                <MoreItem onClick={actions.buryNote}>Bury Note</MoreItem>
-                <MoreItem onClick={actions.suspendNote}>Suspend Note</MoreItem>
-                <MoreItem onClick={actions.createCopy}>Create Copy…</MoreItem>
-                <MoreItem danger onClick={actions.deleteNote}>Delete Note</MoreItem>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
 
       {!current ? (
         <div className="rounded-2xl border border-emerald-200 bg-emerald-50 py-20 text-center">
@@ -957,9 +850,9 @@ export function StudyBasic() {
         </div>
       ) : mode === "learn" && studyMode === "quizlet" && learnFormat === "mc" ? (
         /* ---------- Learn: multiple choice ---------- */
-        <div className="mx-auto max-w-xl">
+        <div className="mx-auto max-w-2xl">
           {current.kind === "text" ? (
-            <div className="max-h-[20rem] overflow-y-auto rounded-2xl border border-slate-200 bg-white p-6 text-center shadow-sm">
+            <div className="max-h-[46vh] overflow-y-auto rounded-2xl border border-slate-200 bg-white p-7 text-center shadow-sm">
               <RichText html={current.frontHtml} className="text-lg text-slate-900" />
             </div>
           ) : (
@@ -1004,9 +897,9 @@ export function StudyBasic() {
         </div>
       ) : mode === "learn" && studyMode === "quizlet" && learnFormat === "written" ? (
         /* ---------- Learn: written ---------- */
-        <div className="mx-auto max-w-xl">
+        <div className="mx-auto max-w-2xl">
           {current.kind === "text" ? (
-            <div className="max-h-[20rem] overflow-y-auto rounded-2xl border border-slate-200 bg-white p-6 text-center shadow-sm">
+            <div className="max-h-[46vh] overflow-y-auto rounded-2xl border border-slate-200 bg-white p-7 text-center shadow-sm">
               <RichText html={current.frontHtml} className="text-lg text-slate-900" />
             </div>
           ) : (
@@ -1074,28 +967,13 @@ export function StudyBasic() {
         </div>
       ) : current.kind === "occlusion" && (mode === "flip" || mode === "learn" || !current.unit.label) ? (
         /* ---------- occlusion flashcard ---------- */
-        <div>
+        <div onClick={() => !flipped && (captureGuessTime(), setFlipped(true))}>
           <OcclusionCard item={current} occMode={occMode} revealed={flipped} />
-          {!flipped ? (
-            <div className="mx-auto mt-5 flex max-w-2xl justify-center">
-              <button
-                onClick={() => {
-                  captureGuessTime();
-                  setFlipped(true);
-                }}
-                className="rounded-xl bg-indigo-600 px-6 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-700"
-              >
-                Reveal <span className="text-[10px] opacity-60">(Space)</span>
-              </button>
-            </div>
-          ) : (
-            <AnswerButtons />
-          )}
         </div>
       ) : mode === "flip" || mode === "learn" ? (
         /* ---------- text flashcard ---------- */
         <div>
-          <div className="flip-card mx-auto h-[26rem] max-w-xl">
+          <div className="flip-card mx-auto h-[min(64vh,36rem)] max-w-3xl">
             <div
               className={`flip-card-inner h-full w-full cursor-pointer ${flipped ? "flipped" : ""}`}
               onClick={() => {
@@ -1103,34 +981,31 @@ export function StudyBasic() {
                 setFlipped((f) => !f);
               }}
             >
-              <div className="flip-card-face overflow-y-auto rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+              <div className="flip-card-face overflow-y-auto rounded-2xl border border-slate-200 bg-white p-8 shadow-sm">
                 <div className="flex min-h-full">
                   <RichText
                     html={current.kind === "text" ? current.frontHtml : ""}
-                    className="m-auto max-w-full text-center text-lg text-slate-900"
+                    className="m-auto max-w-full text-center text-xl leading-relaxed text-slate-900"
                   />
                 </div>
               </div>
-              <div className="flip-card-face flip-card-back overflow-y-auto rounded-2xl border border-indigo-200 bg-indigo-50 p-6 shadow-sm">
+              <div className="flip-card-face flip-card-back overflow-y-auto rounded-2xl border border-indigo-200 bg-indigo-50 p-8 shadow-sm">
                 <div className="flex min-h-full">
                   <RichText
                     html={current.kind === "text" ? current.backHtml : ""}
-                    className="m-auto max-w-full text-center text-lg text-slate-900"
+                    className="m-auto max-w-full text-center text-xl leading-relaxed text-slate-900"
                   />
                 </div>
               </div>
             </div>
           </div>
-          <p className="mt-3 text-center text-xs text-slate-400">
-            Space to flip · Space again = got it · X = still learning
-          </p>
-          {flipped && <AnswerButtons />}
+
         </div>
       ) : (
         /* ---------- type the answer ---------- */
-        <div className="mx-auto max-w-xl">
+        <div className="mx-auto max-w-2xl">
           {current.kind === "text" ? (
-            <div className="max-h-[24rem] overflow-y-auto rounded-2xl border border-slate-200 bg-white p-6 text-center shadow-sm">
+            <div className="max-h-[52vh] overflow-y-auto rounded-2xl border border-slate-200 bg-white p-7 text-center shadow-sm">
               <RichText html={current.frontHtml} className="text-lg text-slate-900" />
             </div>
           ) : (
@@ -1205,6 +1080,158 @@ export function StudyBasic() {
           Learn: multiple choice until you get a card right, then written.
           Two correct answers = mastered. Misses reset a card to not-learned.
         </p>
+      )}
+
+
+      {/* Sticky action bar — always reachable without scrolling */}
+      {current && (
+        <>
+          {/* spacer so the card never hides behind the fixed bar */}
+          <div className="h-44" aria-hidden />
+          <div className="fixed inset-x-0 bottom-0 z-20 border-t border-slate-200 bg-white/95 shadow-[0_-2px_12px_rgba(15,23,42,0.06)] backdrop-blur">
+            <div className="mx-auto max-w-3xl px-4 py-3">
+              {isFlashcardContext && (
+                <>
+                  <p className="mb-2 text-center text-xs text-slate-400">
+                    {flipped
+                      ? studyMode === "anki"
+                        ? "Space = Good · X = Again"
+                        : "Space = got it · X = still learning"
+                      : "Space or click the card to flip"}
+                  </p>
+                  {!flipped ? (
+                    <div className="flex justify-center">
+                      <button
+                        onClick={() => {
+                          captureGuessTime();
+                          setFlipped(true);
+                        }}
+                        className="rounded-xl bg-indigo-600 px-10 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-700"
+                      >
+                        Show answer <span className="text-[10px] opacity-60">(Space)</span>
+                      </button>
+                    </div>
+                  ) : (
+                    <AnswerButtons />
+                  )}
+                </>
+              )}
+
+              <div className="mt-3 flex flex-wrap items-center justify-center gap-2 border-t border-slate-100 pt-3 text-sm">
+            <ModePill active={mode === "flip"} onClick={() => { setMode("flip"); resetCardUI(); }}>
+              Flashcards
+            </ModePill>
+            {studyMode === "quizlet" && (
+              <ModePill active={mode === "learn"} onClick={() => { setMode("learn"); resetCardUI(); }}>
+                Learn
+              </ModePill>
+            )}
+            <ModePill active={mode === "type"} onClick={() => { setMode("type"); resetCardUI(); }}>
+              Type the answer
+            </ModePill>
+            {hasOcclusion && (
+              <>
+                <span className="mx-1 self-center text-slate-300">|</span>
+                <ModePill dark active={occMode === "hideOne"} onClick={() => setOccMode("hideOne")}>
+                  Hide one
+                </ModePill>
+                <ModePill dark active={occMode === "hideAll"} onClick={() => setOccMode("hideAll")}>
+                  Hide all
+                </ModePill>
+              </>
+            )}
+          {studyMode === "anki" && current && (
+            <>
+              {currentSrs?.flag && (
+                <Flag
+                  size={14}
+                  fill="currentColor"
+                  className={
+                    {
+                      red: "text-red-500",
+                      orange: "text-orange-500",
+                      green: "text-emerald-500",
+                      blue: "text-sky-500",
+                    }[currentSrs!.flag!]
+                  }
+                />
+              )}
+              {currentSrs?.marked && (
+                <Star size={14} fill="currentColor" className="text-amber-400" />
+              )}
+              <button
+                onClick={() => {
+                  if (current.kind === "text") setShowEdit(true);
+                  else navigate(`/deck/${current.deckId}/occlusion/${current.sheet.id}/edit`);
+                }}
+                className="flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 font-medium text-slate-700 hover:bg-slate-50"
+              >
+                <Pencil size={13} /> Edit
+              </button>
+              {isFlashcardContext && !flipped && (
+                <button
+                  onClick={() => {
+                    captureGuessTime();
+                    setFlipped(true);
+                  }}
+                  className="flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 font-medium text-slate-700 hover:bg-slate-50"
+                >
+                  <Eye size={13} /> Show answer <span className="text-[10px] text-slate-400">(Space)</span>
+                </button>
+              )}
+              <div className="relative">
+                <button
+                  onClick={() => setMoreOpen((o) => !o)}
+                  className="flex items-center gap-1 rounded-lg border border-slate-300 bg-white px-3 py-1.5 font-medium text-slate-700 hover:bg-slate-50"
+                >
+                  More <ChevronDown size={13} />
+                </button>
+                {moreOpen && (
+                  <div
+                    className="absolute bottom-9 left-1/2 z-30 max-h-[60vh] w-52 -translate-x-1/2 overflow-y-auto rounded-xl border border-slate-200 bg-white py-1 text-left shadow-xl"
+                    onClick={() => setMoreOpen(false)}
+                  >
+                    <div className="flex items-center gap-2 px-3 py-2">
+                      <span className="text-xs text-slate-400">Flag:</span>
+                      {(["red", "orange", "green", "blue"] as FlagColor[]).map((c) => (
+                        <button
+                          key={c}
+                          onClick={() => actions.flag(c)}
+                          className={`h-4 w-4 rounded-full ${
+                            { red: "bg-red-500", orange: "bg-orange-500", green: "bg-emerald-500", blue: "bg-sky-500" }[c]
+                          } ${currentSrs?.flag === c ? "ring-2 ring-slate-700 ring-offset-1" : ""}`}
+                        />
+                      ))}
+                      <button
+                        onClick={() => actions.flag(null)}
+                        className="text-[10px] text-slate-400 hover:text-slate-600"
+                      >
+                        clear
+                      </button>
+                    </div>
+                    <MoreItem onClick={actions.buryCard}>Bury Card</MoreItem>
+                    <MoreItem onClick={actions.resetCard}>Reset Card…</MoreItem>
+                    <MoreItem onClick={actions.setDueDate}>Set Due Date…</MoreItem>
+                    <MoreItem onClick={actions.suspendCard}>Suspend Card</MoreItem>
+                    <MoreItem onClick={actions.cardInfo}>Card Info</MoreItem>
+                    <MoreItem onClick={actions.previousCard}>Previous Card</MoreItem>
+                    <div className="my-1 border-t border-slate-100" />
+                    <MoreItem onClick={actions.markNote}>
+                      {currentSrs?.marked ? "Unmark Note" : "Mark Note"}
+                    </MoreItem>
+                    <MoreItem onClick={actions.buryNote}>Bury Note</MoreItem>
+                    <MoreItem onClick={actions.suspendNote}>Suspend Note</MoreItem>
+                    <MoreItem onClick={actions.createCopy}>Create Copy…</MoreItem>
+                    <MoreItem danger onClick={actions.deleteNote}>Delete Note</MoreItem>
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+              </div>
+            </div>
+          </div>
+        </>
       )}
 
       {showSettings && (

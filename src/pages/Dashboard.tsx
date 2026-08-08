@@ -425,13 +425,12 @@ function DeckCard({
         className="absolute inset-x-0 top-0 h-1.5 rounded-t-2xl"
         style={{ backgroundColor: deck.color }}
       />
-      <div className="mb-3 flex items-start justify-between">
+      <div className="mb-2 flex items-start justify-between">
         <span
-          className="flex h-10 w-10 items-center justify-center rounded-xl text-white"
+          className="mt-1 h-2.5 w-2.5 shrink-0 rounded-full"
           style={{ backgroundColor: deck.color }}
-        >
-          <BookOpen size={18} />
-        </span>
+          aria-hidden
+        />
         <div className="relative">
           <button
             onClick={(e) => {

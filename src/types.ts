@@ -58,6 +58,11 @@ export interface OcclusionShape {
 }
 
 export interface OcclusionSheet {
+  /**
+   * True when imagePath points at a file owned by something else (a note's
+   * slide). Deleting the sheet or its deck must not remove that file.
+   */
+  linkedImage?: boolean;
   id: string;
   title: string;
   imagePath: string;

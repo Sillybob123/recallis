@@ -79,7 +79,13 @@ export function DeckPage() {
   async function handleDeleteSheet(sheet: OcclusionSheet) {
     if (!user || !deckId) return;
     if (confirm(`Delete "${sheet.title}" and all its masks?`)) {
-      await deleteOcclusionSheet(user.uid, deckId, sheet.id, sheet.imagePath);
+      await deleteOcclusionSheet(
+        user.uid,
+        deckId,
+        sheet.id,
+        sheet.imagePath,
+        sheet.linkedImage
+      );
     }
   }
 
