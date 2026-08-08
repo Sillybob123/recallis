@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { ArrowRight, CalendarClock, Clock, Layers } from "lucide-react";
+import { ArrowRight, CalendarClock, Clock, Layers, Search } from "lucide-react";
 import { useAuth } from "../contexts/AuthContext";
 import { useStudyMode } from "../contexts/StudyModeContext";
 import { Layout } from "../components/Layout";
@@ -130,7 +130,14 @@ export function AnkiHome() {
           <Stat label="New" value={totals.newCount} color="text-sky-500" />
           <Stat label="Learn" value={totals.learnCount} color="text-orange-500" />
           <Stat label="Due" value={totals.dueCount} color="text-emerald-600" />
-          <div className="ml-auto">
+          <div className="ml-auto flex items-center gap-2">
+            <Link
+              to="/browse"
+              className="flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3.5 py-2.5 text-sm font-semibold text-slate-600 transition hover:bg-slate-50"
+              title="Search, filter, and bulk-edit every card in your collection"
+            >
+              <Search size={14} /> Browse
+            </Link>
             {totals.total > 0 && allIds ? (
               <Link
                 to={`/study-group?ids=${allIds}&name=${encodeURIComponent("everything due")}`}

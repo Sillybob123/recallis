@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import { Layers, LogOut, NotebookPen, Repeat, Search, Zap } from "lucide-react";
+import { Layers, LogOut, NotebookPen, Repeat, Zap } from "lucide-react";
 import { useAuth } from "../contexts/AuthContext";
 import { useStudyMode } from "../contexts/StudyModeContext";
 
@@ -16,7 +16,7 @@ export function Layout({ children }: { children: ReactNode }) {
     pathname.startsWith("/decks") ||
     pathname.startsWith("/deck/") ||
     pathname.startsWith("/study-group");
-  const inAnki = pathname.startsWith("/anki");
+  const inAnki = pathname.startsWith("/anki") || pathname.startsWith("/browse");
   const inQuizlet = pathname.startsWith("/quizlet");
   // The overview page is deliberately neutral: nothing highlighted.
   const isHome = pathname === "/";
@@ -25,9 +25,11 @@ export function Layout({ children }: { children: ReactNode }) {
     ? "theme-notes"
     : isHome
       ? "theme-home"
-      : studyMode === "anki"
+      : inAnki
         ? "theme-anki"
-        : "theme-quizlet";
+        : studyMode === "anki"
+          ? "theme-anki"
+          : "theme-quizlet";
 
   const suffix = inNotes
     ? "Notes"
@@ -36,6 +38,7 @@ export function Layout({ children }: { children: ReactNode }) {
       : inAnki || (inDecks && studyMode === "anki")
         ? "Anki"
         : "Quizlet";
+  // The Anki nav stays lit on /browse too — Browse is part of that section.
 
   const badge = inNotes
     ? "Lectures"
@@ -104,13 +107,6 @@ export function Layout({ children }: { children: ReactNode }) {
               </NavPill>
               <NavPill to="/notes" active={inNotes} activeClass="bg-blue-700">
                 <NotebookPen size={12} /> Notes
-              </NavPill>
-              <NavPill
-                to="/browse"
-                active={pathname.startsWith("/browse")}
-                activeClass="bg-indigo-700"
-              >
-                <Search size={12} /> Browse
               </NavPill>
 
               <div className="flex overflow-hidden rounded-full border border-slate-200 text-xs font-semibold">
