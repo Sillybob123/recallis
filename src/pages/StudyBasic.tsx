@@ -26,6 +26,7 @@ import {
   deleteCard,
   deleteOcclusionSheet,
   deleteSrsState,
+  logReview,
   recordCardResult,
   updateCard,
 } from "../lib/firestore";
@@ -575,8 +576,20 @@ export function StudyBasic() {
     if (!current || !user) return;
     const prev = srsMap?.get(combinedKey(current)) ?? null;
     pushHistory(current, prev);
-    recordAnkiReview(Date.now() - shownAtRef.current);
+    const durMs = Date.now() - shownAtRef.current;
+    recordAnkiReview(durMs);
     const next = rate(prev, rating, Date.now(), srsConfig);
+    // Append-only history, like Anki's revlog — drives Browse's Today filters
+    // and future FSRS optimization. Losing one entry is tolerable, so it
+    // doesn't go through the retrying writer.
+    logReview(user.uid, current.deckId, {
+      itemKey: current.key,
+      rating,
+      at: Date.now(),
+      durMs: Math.min(durMs, 60000),
+      phase: prev && prev.reps > 0 ? prev.phase : "new",
+      firstReview: !prev || prev.reps === 0,
+    }).catch(() => {});
     writerRef.current!.write(user.uid, current.deckId, current.key, next);
     setSrsMap((m) => {
       const copy = new Map(m);
@@ -702,6 +715,14 @@ export function StudyBasic() {
       const days = Math.max(0, parseInt(raw, 10) || 0);
       const now = Date.now();
       pushHistory();
+      logReview(user!.uid, current.deckId, {
+        itemKey: current.key,
+        rating: "rescheduled",
+        at: now,
+        durMs: 0,
+        phase: srsMap?.get(combinedKey(current))?.phase ?? "new",
+        firstReview: false,
+      }).catch(() => {});
       updateMeta(current.deckId, [current.key], {
         phase: "review",
         due: now + days * 86400000,

@@ -24,6 +24,7 @@ import {
   deleteCard,
   deleteOcclusionSheet,
   deleteSrsState,
+  getTodayRevlog,
   moveCardsToDeck,
   moveSheetsToDeck,
   setSrsState,
@@ -31,6 +32,7 @@ import {
   watchDecks,
 } from "../lib/firestore";
 import { loadStudyData, type StudyData } from "../lib/studyLoad";
+import type { ReviewLogEntry } from "../lib/firestore";
 import type { StudyItem } from "../lib/studyItems";
 import { normalizeDeckPath, splitDeckPath } from "../lib/deckPath";
 import {
@@ -44,7 +46,14 @@ import { startOfStudyDay } from "../lib/settings";
 import type { Deck } from "../types";
 
 type CardState = "new" | "learning" | "review" | "suspended" | "buried";
-type TodayFilter = "due" | "overdue" | "added" | "studied";
+type TodayFilter =
+  | "due"
+  | "overdue"
+  | "added"
+  | "studied"
+  | "again"
+  | "firstReview"
+  | "rescheduled";
 type SortCol = "preview" | "type" | "state" | "due" | "deck";
 
 const TODAY_LABELS: Record<TodayFilter, string> = {
@@ -52,6 +61,9 @@ const TODAY_LABELS: Record<TodayFilter, string> = {
   overdue: "Overdue",
   added: "Added today",
   studied: "Studied today",
+  again: "Again today",
+  firstReview: "First review",
+  rescheduled: "Rescheduled",
 };
 
 const STATE_ORDER: Record<CardState, number> = {
@@ -136,6 +148,8 @@ export function BrowsePage() {
 
   const [decks, setDecks] = useState<Deck[] | null>(null);
   const [data, setData] = useState<StudyData | null>(null);
+  const [revlog, setRevlog] = useState<Map<string, ReviewLogEntry[]>>(new Map());
+  const [viewMode, setViewMode] = useState<"cards" | "notes">("cards");
   const [search, setSearch] = useState("");
   const [stateFilter, setStateFilter] = useState<CardState | null>(null);
   const [deckFilter, setDeckFilter] = useState<string[] | null>(() => {
@@ -161,7 +175,15 @@ export function BrowsePage() {
 
   const reload = useCallback(async () => {
     if (!user || !decks) return;
-    setData(await loadStudyData(user.uid, decks.map((d) => d.id)));
+    const ids = decks.map((d) => d.id);
+    const [studyData, log] = await Promise.all([
+      loadStudyData(user.uid, ids),
+      getTodayRevlog(user.uid, ids, startOfStudyDay()).catch(
+        () => new Map<string, ReviewLogEntry[]>()
+      ),
+    ]);
+    setData(studyData);
+    setRevlog(log);
   }, [user, decks]);
 
   useEffect(() => {
@@ -307,6 +329,16 @@ export function BrowsePage() {
           if (row.createdAt < dayStart) return false;
         } else if (todayFilter === "studied") {
           if ((row.srs?.lastReviewed ?? 0) < dayStart) return false;
+        } else if (todayFilter === "again") {
+          const entries = revlog.get(row.key);
+          if (!entries?.some((e) => e.rating === "again")) return false;
+        } else if (todayFilter === "firstReview") {
+          const entries = revlog.get(row.key);
+          if (!entries?.some((e) => e.firstReview && e.rating !== "rescheduled"))
+            return false;
+        } else if (todayFilter === "rescheduled") {
+          const entries = revlog.get(row.key);
+          if (!entries?.some((e) => e.rating === "rescheduled")) return false;
         }
       }
       if (deckFilter && !deckFilter.includes(row.item.deckId)) return false;
@@ -317,7 +349,7 @@ export function BrowsePage() {
       if (q && !row.preview.toLowerCase().includes(q)) return false;
       return true;
     });
-  }, [allRows, search, stateFilter, deckFilter, kindFilter, flagFilter, todayFilter]);
+  }, [allRows, search, stateFilter, deckFilter, kindFilter, flagFilter, todayFilter, revlog]);
 
   const sorted = useMemo(() => {
     const rows = [...filtered];
@@ -343,6 +375,45 @@ export function BrowsePage() {
     return rows;
   }, [filtered, sort]);
 
+  /**
+   * Notes mode collapses sibling cards into one row per note, Anki-style:
+   * a 3-cloze note becomes a single "Cloze ×3" row whose due/state come from
+   * its most urgent sibling. Selecting it selects every sibling, so bulk
+   * actions keep working on whole notes.
+   */
+  const displayRows = useMemo<{ row: Row; siblings: Row[] }[]>(() => {
+    if (viewMode === "cards") return sorted.map((row) => ({ row, siblings: [row] }));
+    const byNote = new Map<string, Row[]>();
+    for (const row of sorted) {
+      const key = `${row.item.deckId}|${row.noteId}`;
+      const list = byNote.get(key) ?? [];
+      list.push(row);
+      byNote.set(key, list);
+    }
+    return [...byNote.values()].map((siblings) => {
+      const rep = [...siblings].sort((a, b) => dueSortValue(a) - dueSortValue(b))[0];
+      return { row: rep, siblings };
+    });
+  }, [sorted, viewMode]);
+
+  function noteTypeLabel(rep: Row, siblings: Row[]): string {
+    if (siblings.length === 1) return rep.typeLabel;
+    if (rep.kind === "occlusion") return `Masks ×${siblings.length}`;
+    return `${rep.kind === "cloze" ? "Cloze" : "Basic"} ×${siblings.length}`;
+  }
+
+  function toggleGroup(siblings: Row[]) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      const allIn = siblings.every((r) => next.has(r.key));
+      for (const r of siblings) {
+        if (allIn) next.delete(r.key);
+        else next.add(r.key);
+      }
+      return next;
+    });
+  }
+
   function toggleSort(col: SortCol) {
     setSort((prev) =>
       prev.col === col ? { col, dir: prev.dir === 1 ? -1 : 1 } : { col, dir: 1 }
@@ -359,14 +430,14 @@ export function BrowsePage() {
     () => filtered.filter((r) => selected.has(r.key)),
     [filtered, selected]
   );
-  const singleTextRow =
-    selectedRows.length === 1 && selectedRows[0].item.kind === "text"
-      ? selectedRows[0]
-      : null;
-  const singleOccRow =
-    selectedRows.length === 1 && selectedRows[0].item.kind === "occlusion"
-      ? selectedRows[0]
-      : null;
+  // Editing is note-level, so a selection spanning exactly one note (even as
+  // several sibling rows in notes mode) opens the editor.
+  const selectedNoteIds = new Set(
+    selectedRows.map((r) => `${r.item.deckId}|${r.noteId}`)
+  );
+  const singleNote = selectedNoteIds.size === 1 ? selectedRows[0] : null;
+  const singleTextRow = singleNote?.item.kind === "text" ? singleNote : null;
+  const singleOccRow = singleNote?.item.kind === "occlusion" ? singleNote : null;
 
   function toggleRow(key: string, additive: boolean) {
     setSelected((prev) => {
@@ -384,6 +455,7 @@ export function BrowsePage() {
         : new Set(filtered.map((r) => r.key))
     );
   }
+
 
   /** Applies an SRS patch to every selected row, per its own deck. */
   async function patchSelected(patch: Partial<SrsState>, label: string) {
@@ -482,11 +554,31 @@ export function BrowsePage() {
         <div>
           <h1 className="text-2xl font-bold text-slate-900">Browse</h1>
           <p className="text-sm text-slate-500">
-            {filtered.length.toLocaleString()} of {allRows.length.toLocaleString()}{" "}
-            cards{selected.size > 0 && ` · ${selected.size} selected`}
+            {viewMode === "notes"
+              ? `${displayRows.length.toLocaleString()} notes`
+              : `${filtered.length.toLocaleString()} of ${allRows.length.toLocaleString()} cards`}
+            {selected.size > 0 && ` · ${selected.size} card${selected.size === 1 ? "" : "s"} selected`}
           </p>
         </div>
-        <div className="ml-auto flex min-w-[16rem] flex-1 items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 sm:max-w-md">
+        <div className="ml-auto flex gap-1 rounded-full border border-slate-200 bg-white p-1 text-xs font-semibold">
+          {(["cards", "notes"] as const).map((m) => (
+            <button
+              key={m}
+              onClick={() => setViewMode(m)}
+              className={`rounded-full px-3 py-1 capitalize transition ${
+                viewMode === m ? "bg-indigo-600 text-white" : "text-slate-500 hover:text-slate-700"
+              }`}
+              title={
+                m === "cards"
+                  ? "One row per card — each cloze deletion and mask separately"
+                  : "One row per note — siblings collapsed together"
+              }
+            >
+              {m}
+            </button>
+          ))}
+        </div>
+        <div className="flex min-w-[16rem] flex-1 items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 sm:max-w-md">
           <Search size={15} className="shrink-0 text-slate-400" />
           <input
             value={search}
@@ -699,18 +791,24 @@ export function BrowsePage() {
                   Nothing matches these filters.
                 </p>
               ) : (
-                sorted.slice(0, 1000).map((row) => (
+                displayRows.slice(0, 1000).map(({ row, siblings }) => (
                   <div
                     key={row.key}
-                    onClick={(e) => toggleRow(row.key, e.metaKey || e.ctrlKey || e.shiftKey)}
+                    onClick={(e) =>
+                      viewMode === "notes"
+                        ? toggleGroup(siblings)
+                        : toggleRow(row.key, e.metaKey || e.ctrlKey || e.shiftKey)
+                    }
                     className={`grid cursor-pointer grid-cols-[2rem_1fr_5.5rem_5.5rem_6rem_9rem] items-center gap-2 border-b border-slate-50 px-3 py-1.5 text-sm transition last:border-b-0 ${
-                      selected.has(row.key) ? "bg-indigo-50" : "hover:bg-slate-50"
+                      siblings.every((r) => selected.has(r.key)) ? "bg-indigo-50" : "hover:bg-slate-50"
                     }`}
                   >
                     <input
                       type="checkbox"
-                      checked={selected.has(row.key)}
-                      onChange={() => toggleRow(row.key, true)}
+                      checked={siblings.every((r) => selected.has(r.key))}
+                      onChange={() =>
+                        viewMode === "notes" ? toggleGroup(siblings) : toggleRow(row.key, true)
+                      }
                       onClick={(e) => e.stopPropagation()}
                       className="h-3.5 w-3.5"
                     />
@@ -728,7 +826,7 @@ export function BrowsePage() {
                       )}
                       <span className="truncate text-slate-800">{row.preview || "(empty)"}</span>
                     </span>
-                    <span className="text-xs text-slate-500">{row.typeLabel}</span>
+                    <span className="text-xs text-slate-500">{noteTypeLabel(row, siblings)}</span>
                     <span
                       className={`text-xs font-medium ${
                         {
@@ -752,7 +850,7 @@ export function BrowsePage() {
                   </div>
                 ))
               )}
-              {sorted.length > 1000 && (
+              {displayRows.length > 1000 && (
                 <p className="px-4 py-2 text-center text-xs text-slate-400">
                   Showing the first 1,000 rows — narrow the filters to see the rest.
                 </p>

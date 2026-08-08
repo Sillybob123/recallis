@@ -6,6 +6,7 @@ import {
   deleteDoc,
   onSnapshot,
   query,
+  where,
   orderBy,
   serverTimestamp,
   Timestamp,
@@ -304,13 +305,21 @@ export async function deleteDeck(uid: string, deckId: string) {
   const cardsSnap = await getDocs(collection(db, "users", uid, "decks", deckId, "cards"));
   const occSnap = await getDocs(collection(db, "users", uid, "decks", deckId, "occlusions"));
   const srsSnap = await getDocs(collection(db, "users", uid, "decks", deckId, "srs"));
+  const revSnap = await getDocs(collection(db, "users", uid, "decks", deckId, "revlog"));
 
-  const batch = writeBatch(db);
-  cardsSnap.docs.forEach((d) => batch.delete(d.ref));
-  occSnap.docs.forEach((d) => batch.delete(d.ref));
-  srsSnap.docs.forEach((d) => batch.delete(d.ref));
-  batch.delete(doc(db, "users", uid, "decks", deckId));
-  await batch.commit();
+  // The review log can outgrow a single 500-op batch, so delete in chunks.
+  const refs = [
+    ...cardsSnap.docs.map((d) => d.ref),
+    ...occSnap.docs.map((d) => d.ref),
+    ...srsSnap.docs.map((d) => d.ref),
+    ...revSnap.docs.map((d) => d.ref),
+  ];
+  for (let i = 0; i < refs.length; i += 400) {
+    const batch = writeBatch(db);
+    for (const ref of refs.slice(i, i + 400)) batch.delete(ref);
+    await batch.commit();
+  }
+  await deleteDoc(doc(db, "users", uid, "decks", deckId));
 
   await Promise.all(
     occSnap.docs.map(async (d) => {
@@ -561,6 +570,62 @@ export async function uploadNoteSlide(
   await uploadBytes(storageRef, blob, { contentType });
   const url = await getDownloadURL(storageRef);
   return { path, url };
+}
+
+// ---------- Review log ----------
+// One entry per Anki-mode answer, like Anki's revlog table. Powers the
+// Again/First review/Rescheduled filters in Browse and, later, FSRS
+// parameter optimization — which is why it also records duration and phase.
+
+export type ReviewLogRating = "again" | "hard" | "good" | "easy" | "rescheduled";
+
+export interface ReviewLogEntry {
+  itemKey: string;
+  rating: ReviewLogRating;
+  /** epoch ms of the answer */
+  at: number;
+  /** how long the card was on screen before answering */
+  durMs: number;
+  /** card phase when the answer was given */
+  phase: "learn" | "review" | "relearn" | "new";
+  /** true when this was the card's first-ever grade */
+  firstReview: boolean;
+}
+
+function revlogCol(uid: string, deckId: string) {
+  return collection(db, "users", uid, "decks", deckId, "revlog");
+}
+
+export async function logReview(
+  uid: string,
+  deckId: string,
+  entry: ReviewLogEntry
+) {
+  await addDoc(revlogCol(uid, deckId), entry);
+}
+
+/** Today's log entries across decks, keyed `${deckId}|${itemKey}`. */
+export async function getTodayRevlog(
+  uid: string,
+  deckIds: string[],
+  dayStart: number
+): Promise<Map<string, ReviewLogEntry[]>> {
+  const out = new Map<string, ReviewLogEntry[]>();
+  await Promise.all(
+    deckIds.map(async (deckId) => {
+      const snap = await getDocs(
+        query(revlogCol(uid, deckId), where("at", ">=", dayStart))
+      );
+      for (const d of snap.docs) {
+        const entry = d.data() as ReviewLogEntry;
+        const key = `${deckId}|${entry.itemKey}`;
+        const list = out.get(key) ?? [];
+        list.push(entry);
+        out.set(key, list);
+      }
+    })
+  );
+  return out;
 }
 
 // ---------- Spaced repetition state ----------
