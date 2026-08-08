@@ -1,7 +1,16 @@
 [
   {
-    "origin": ["*"],
-    "method": ["GET"],
+    "origin": [
+      "https://recallis.org",
+      "https://www.recallis.org",
+      "https://recallis.pages.dev",
+      "https://med-quizlet.web.app",
+      "https://med-quizlet.firebaseapp.com",
+      "http://localhost:5173",
+      "http://localhost:4173"
+    ],
+    "method": ["GET", "HEAD"],
+    "responseHeader": ["Content-Type", "Content-Length", "Content-Range", "Range"],
     "maxAgeSeconds": 3600
   }
 ]

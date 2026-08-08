@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import { LogOut, NotebookPen, Repeat, Zap } from "lucide-react";
+import { Layers, LogOut, NotebookPen, Repeat, Zap } from "lucide-react";
 import { useAuth } from "../contexts/AuthContext";
 import { useStudyMode } from "../contexts/StudyModeContext";
 
@@ -68,6 +68,19 @@ export function Layout({ children }: { children: ReactNode }) {
           {user && (
             <div className="flex items-center gap-3 text-sm">
               <Link
+                to="/decks"
+                className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
+                  pathname.startsWith("/decks") ||
+                  pathname.startsWith("/deck/") ||
+                  pathname.startsWith("/study-group")
+                    ? "border-transparent bg-slate-800 text-white"
+                    : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+                }`}
+                title="All your decks"
+              >
+                <Layers size={12} /> Decks
+              </Link>
+              <Link
                 to="/notes"
                 className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
                   inNotes
@@ -79,13 +92,19 @@ export function Layout({ children }: { children: ReactNode }) {
                 <NotebookPen size={12} /> Notes
               </Link>
               <div
-                className="flex overflow-hidden rounded-full border border-slate-200 text-xs font-semibold"
-                title="Anki mode: spaced repetition — cards come back over days. Quizlet mode: cram freely without touching the schedule."
+                className={`flex overflow-hidden rounded-full border border-slate-200 text-xs font-semibold transition ${
+                  inNotes ? "opacity-45" : ""
+                }`}
+                title={
+                  inNotes
+                    ? "Study mode — applies when you're studying cards, not while taking notes."
+                    : "Anki mode: spaced repetition — cards come back over days. Quizlet mode: cram freely without touching the schedule."
+                }
               >
                 <button
                   onClick={() => setStudyMode("anki")}
                   className={`flex items-center gap-1 px-3 py-1.5 transition ${
-                    studyMode === "anki"
+                    studyMode === "anki" && !inNotes
                       ? "bg-emerald-600 text-white"
                       : "bg-white text-slate-500 hover:bg-slate-50"
                   }`}
@@ -95,7 +114,7 @@ export function Layout({ children }: { children: ReactNode }) {
                 <button
                   onClick={() => setStudyMode("quizlet")}
                   className={`flex items-center gap-1 px-3 py-1.5 transition ${
-                    studyMode === "quizlet"
+                    studyMode === "quizlet" && !inNotes
                       ? "bg-red-600 text-white"
                       : "bg-white text-slate-500 hover:bg-slate-50"
                   }`}

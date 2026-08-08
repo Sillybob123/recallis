@@ -4,7 +4,6 @@ import {
   ArrowLeft,
   CalendarClock,
   ChevronDown,
-  Eye,
   Flag,
   PartyPopper,
   Pencil,
@@ -69,6 +68,12 @@ import {
 import { gradeAnswer, shuffle } from "../lib/text";
 
 const FAST_ANSWER_MS = 7000;
+
+const FORMAT_LABELS: Record<"flip" | "type" | "learn", string> = {
+  flip: "Flashcards",
+  type: "Type the answer",
+  learn: "Learn",
+};
 
 type LearnFormat = "mc" | "written" | "flashcard";
 
@@ -147,7 +152,7 @@ function GradeButtons({
         <button
           key={d.rating}
           onClick={() => onGrade(d.rating)}
-          className={`flex-1 rounded-xl border py-2.5 transition ${d.cls}`}
+          className={`flex-1 rounded-xl border py-2 transition ${d.cls}`}
         >
           <span className="block text-sm font-semibold">
             {d.label}
@@ -193,6 +198,7 @@ export function StudyBasic() {
   const [mcPicked, setMcPicked] = useState<number | null>(null);
   const [retyped, setRetyped] = useState("");
   const [sessionNonce, setSessionNonce] = useState(0);
+  const [formatOpen, setFormatOpen] = useState(false);
 
   // Session-local memory for the smart Quizlet scheduler.
   const strengthRef = useRef<Map<string, number>>(new Map());
@@ -322,7 +328,7 @@ export function StudyBasic() {
   ]);
 
   const current = queue[0];
-  const hasOcclusion = !cardsOnly && (sheets?.length ?? 0) > 0;
+  const showMaskToggle = current?.kind === "occlusion";
 
   // Restart the answer timer whenever a new card is shown.
   useEffect(() => {
@@ -1087,18 +1093,11 @@ export function StudyBasic() {
       {current && (
         <>
           {/* spacer so the card never hides behind the fixed bar */}
-          <div className="h-44" aria-hidden />
+          <div className="h-32" aria-hidden />
           <div className="fixed inset-x-0 bottom-0 z-20 border-t border-slate-200 bg-white/95 shadow-[0_-2px_12px_rgba(15,23,42,0.06)] backdrop-blur">
-            <div className="mx-auto max-w-3xl px-4 py-3">
+            <div className="mx-auto max-w-3xl px-4 py-2">
               {isFlashcardContext && (
                 <>
-                  <p className="mb-2 text-center text-xs text-slate-400">
-                    {flipped
-                      ? studyMode === "anki"
-                        ? "Space = Good · X = Again"
-                        : "Space = got it · X = still learning"
-                      : "Space or click the card to flip"}
-                  </p>
                   {!flipped ? (
                     <div className="flex justify-center">
                       <button
@@ -1106,7 +1105,7 @@ export function StudyBasic() {
                           captureGuessTime();
                           setFlipped(true);
                         }}
-                        className="rounded-xl bg-indigo-600 px-10 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-700"
+                        className="rounded-xl bg-indigo-600 px-10 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-700"
                       >
                         Show answer <span className="text-[10px] opacity-60">(Space)</span>
                       </button>
@@ -1117,28 +1116,56 @@ export function StudyBasic() {
                 </>
               )}
 
-              <div className="mt-3 flex flex-wrap items-center justify-center gap-2 border-t border-slate-100 pt-3 text-sm">
-            <ModePill active={mode === "flip"} onClick={() => { setMode("flip"); resetCardUI(); }}>
-              Flashcards
-            </ModePill>
-            {studyMode === "quizlet" && (
-              <ModePill active={mode === "learn"} onClick={() => { setMode("learn"); resetCardUI(); }}>
-                Learn
-              </ModePill>
-            )}
-            <ModePill active={mode === "type"} onClick={() => { setMode("type"); resetCardUI(); }}>
-              Type the answer
-            </ModePill>
-            {hasOcclusion && (
-              <>
-                <span className="mx-1 self-center text-slate-300">|</span>
-                <ModePill dark active={occMode === "hideOne"} onClick={() => setOccMode("hideOne")}>
-                  Hide one
-                </ModePill>
-                <ModePill dark active={occMode === "hideAll"} onClick={() => setOccMode("hideAll")}>
-                  Hide all
-                </ModePill>
-              </>
+              <div className="mt-2 flex flex-wrap items-center justify-center gap-1.5 border-t border-slate-100 pt-2 text-sm">
+            <div className="relative">
+              <button
+                onClick={() => setFormatOpen((o) => !o)}
+                className="flex items-center gap-1 rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50"
+                title="Change how cards are asked"
+              >
+                {FORMAT_LABELS[mode]} <ChevronDown size={12} />
+              </button>
+              {formatOpen && (
+                <>
+                  <div className="fixed inset-0 z-20" onClick={() => setFormatOpen(false)} />
+                  <div className="absolute bottom-8 left-0 z-30 w-44 overflow-hidden rounded-xl border border-slate-200 bg-white py-1 shadow-xl">
+                    {(["flip", "type", ...(studyMode === "quizlet" ? ["learn" as const] : [])] as const).map(
+                      (m) => (
+                        <button
+                          key={m}
+                          onClick={() => {
+                            setMode(m);
+                            resetCardUI();
+                            setFormatOpen(false);
+                          }}
+                          className={`block w-full px-3 py-1.5 text-left text-sm transition hover:bg-slate-50 ${
+                            mode === m ? "font-semibold text-indigo-600" : "text-slate-700"
+                          }`}
+                        >
+                          {FORMAT_LABELS[m]}
+                        </button>
+                      )
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+            {showMaskToggle && (
+              <div className="flex overflow-hidden rounded-lg border border-slate-300 text-xs font-medium">
+                {(["hideOne", "hideAll"] as const).map((m) => (
+                  <button
+                    key={m}
+                    onClick={() => setOccMode(m)}
+                    className={`px-2.5 py-1 transition ${
+                      occMode === m
+                        ? "bg-slate-800 text-white"
+                        : "bg-white text-slate-600 hover:bg-slate-50"
+                    }`}
+                  >
+                    {m === "hideOne" ? "Hide one" : "Hide all"}
+                  </button>
+                ))}
+              </div>
             )}
           {studyMode === "anki" && current && (
             <>
@@ -1164,27 +1191,16 @@ export function StudyBasic() {
                   if (current.kind === "text") setShowEdit(true);
                   else navigate(`/deck/${current.deckId}/occlusion/${current.sheet.id}/edit`);
                 }}
-                className="flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 font-medium text-slate-700 hover:bg-slate-50"
+                className="flex items-center gap-1 rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50"
               >
-                <Pencil size={13} /> Edit
+                <Pencil size={12} /> Edit
               </button>
-              {isFlashcardContext && !flipped && (
-                <button
-                  onClick={() => {
-                    captureGuessTime();
-                    setFlipped(true);
-                  }}
-                  className="flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 font-medium text-slate-700 hover:bg-slate-50"
-                >
-                  <Eye size={13} /> Show answer <span className="text-[10px] text-slate-400">(Space)</span>
-                </button>
-              )}
               <div className="relative">
                 <button
                   onClick={() => setMoreOpen((o) => !o)}
-                  className="flex items-center gap-1 rounded-lg border border-slate-300 bg-white px-3 py-1.5 font-medium text-slate-700 hover:bg-slate-50"
+                  className="flex items-center gap-1 rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50"
                 >
-                  More <ChevronDown size={13} />
+                  More <ChevronDown size={12} />
                 </button>
                 {moreOpen && (
                   <div
@@ -1265,33 +1281,6 @@ export function StudyBasic() {
   );
 }
 
-function ModePill({
-  active,
-  dark,
-  onClick,
-  children,
-}: {
-  active: boolean;
-  dark?: boolean;
-  onClick: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      className={`rounded-full px-3 py-1 font-medium transition ${
-        active
-          ? dark
-            ? "bg-slate-800 text-white"
-            : "bg-indigo-600 text-white"
-          : "bg-white text-slate-500 border border-slate-200"
-      }`}
-    >
-      {children}
-    </button>
-  );
-}
-
 function BackLink({
   deckId,
   navigate,
@@ -1303,7 +1292,7 @@ function BackLink({
 }) {
   return (
     <button
-      onClick={() => navigate(deckId ? `/deck/${deckId}` : "/")}
+      onClick={() => navigate(deckId ? `/deck/${deckId}` : "/decks")}
       className={`flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-800 ${
         inline ? "" : "mb-4"
       }`}

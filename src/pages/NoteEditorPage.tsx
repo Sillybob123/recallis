@@ -453,6 +453,17 @@ export function NoteEditorPage() {
           onClose={() => setCardPrefill(null)}
           onSave={async (deckId, data) => {
             await createCard(user!.uid, deckId, data);
+            if (latest.current) {
+              const updated = {
+                ...latest.current,
+                cardsMade: (latest.current.cardsMade ?? 0) + 1,
+              };
+              latest.current = updated;
+              setNote(updated);
+              updateNote(user!.uid, noteId!, {
+                cardsMade: updated.cardsMade,
+              }).catch(() => {});
+            }
           }}
           uploadImage={async (file) => {
             const bytes = new Uint8Array(await file.arrayBuffer());

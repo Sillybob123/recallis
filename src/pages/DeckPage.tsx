@@ -113,7 +113,7 @@ export function DeckPage() {
   return (
     <Layout>
       <button
-        onClick={() => navigate("/")}
+        onClick={() => navigate("/decks")}
         className="mb-4 flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-800"
       >
         <ArrowLeft size={15} /> All decks

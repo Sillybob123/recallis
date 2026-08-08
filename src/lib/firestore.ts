@@ -335,6 +335,7 @@ function noteFromDoc(d: { id: string; data: () => Record<string, unknown> }): No
     className: (data.className as string) ?? "",
     content: (data.content as string) ?? "",
     slides: (data.slides as NoteSlide[]) ?? [],
+    cardsMade: (data.cardsMade as number) ?? 0,
     createdAt: toMillis(data.createdAt),
     updatedAt: toMillis(data.updatedAt),
   };
@@ -360,6 +361,7 @@ export async function createNote(
     className,
     content: "",
     slides: [],
+    cardsMade: 0,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   });
@@ -369,7 +371,9 @@ export async function createNote(
 export async function updateNote(
   uid: string,
   noteId: string,
-  updates: Partial<Pick<Note, "title" | "className" | "content" | "slides">>
+  updates: Partial<
+    Pick<Note, "title" | "className" | "content" | "slides" | "cardsMade">
+  >
 ) {
   await updateDoc(doc(db, "users", uid, "notes", noteId), {
     ...updates,

@@ -5,6 +5,7 @@ import { ProtectedRoute } from "./components/ProtectedRoute";
 import { Login } from "./pages/Login";
 import { Signup } from "./pages/Signup";
 import { Dashboard } from "./pages/Dashboard";
+import { HomePage } from "./pages/HomePage";
 import { NotesPage } from "./pages/NotesPage";
 import { NoteEditorPage } from "./pages/NoteEditorPage";
 import { DeckPage } from "./pages/DeckPage";
@@ -23,7 +24,17 @@ export default function App() {
           <Route path="/study-group" element={<ProtectedRoute><StudyBasic /></ProtectedRoute>} />
           <Route path="/notes" element={<ProtectedRoute><NotesPage /></ProtectedRoute>} />
           <Route path="/notes/:noteId" element={<ProtectedRoute><NoteEditorPage /></ProtectedRoute>} />
-          <Route path="/"             element={
+          <Route
+            path="/"
+            element={
+              <ProtectedRoute>
+                <HomePage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/decks"
+            element={
               <ProtectedRoute>
                 <Dashboard />
               </ProtectedRoute>

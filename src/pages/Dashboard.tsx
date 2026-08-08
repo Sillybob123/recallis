@@ -425,12 +425,7 @@ function DeckCard({
         className="absolute inset-x-0 top-0 h-1.5 rounded-t-2xl"
         style={{ backgroundColor: deck.color }}
       />
-      <div className="mb-2 flex items-start justify-between">
-        <span
-          className="mt-1 h-2.5 w-2.5 shrink-0 rounded-full"
-          style={{ backgroundColor: deck.color }}
-          aria-hidden
-        />
+      <div className="mb-2 flex items-start justify-end">
         <div className="relative">
           <button
             onClick={(e) => {

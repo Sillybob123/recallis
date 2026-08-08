@@ -92,6 +92,8 @@ export interface Note {
   /** main rich-text body (sanitized HTML) */
   content: string;
   slides: NoteSlide[];
+  /** how many flashcards have been made from this note */
+  cardsMade?: number;
   createdAt: number;
   updatedAt: number;
 }
