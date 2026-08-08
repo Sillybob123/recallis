@@ -126,5 +126,5 @@ export function importAnkiText(text: string): AnkiImportResult {
 
 /** "Anatomy::Lab00::Positions" -> "Anatomy Lab00 Positions" for a deck name. */
 export function ankiDeckToName(ankiDeck: string): string {
-  return ankiDeck.split("::").join(" · ") || "Imported deck";
+  return ankiDeck.trim() || "Imported deck";
 }

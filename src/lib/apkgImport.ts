@@ -223,7 +223,7 @@ export async function importParsedApkg(
   for (const deck of parsed.decks) {
     let target: TargetDeck;
     if (opts.split) {
-      target = await makeDeck(deck.name.split("::").join(" · "));
+      target = await makeDeck(deck.name);
     } else {
       if (!single) {
         single = await makeDeck(opts.singleDeckName || "Imported deck");

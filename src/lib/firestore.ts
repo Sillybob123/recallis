@@ -134,6 +134,42 @@ export async function createDeck(
   return ref.id;
 }
 
+/**
+ * Returns the deck at `path`, creating it (and any missing ancestors) if
+ * needed — typing "Anatomy::Lab 3::Vasculature" in one go builds the chain,
+ * just like Anki's Create Deck.
+ */
+export async function ensureDeckPath(
+  uid: string,
+  path: string,
+  existing: Deck[],
+  color = "#6366f1"
+): Promise<string> {
+  const { splitDeckPath, joinDeckPath, findDeckByPath } = await import("./deckPath");
+  const segments = splitDeckPath(path);
+  if (segments.length === 0) throw new Error("A deck needs a name.");
+
+  const known = [...existing];
+  let deckId = "";
+  for (let i = 0; i < segments.length; i++) {
+    const sub = joinDeckPath(segments.slice(0, i + 1));
+    const found = findDeckByPath(known, sub);
+    if (found) {
+      deckId = found.id;
+      continue;
+    }
+    deckId = await createDeck(uid, sub, "", color);
+    known.push({
+      id: deckId,
+      name: sub,
+      color,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+  }
+  return deckId;
+}
+
 export async function updateDeck(
   uid: string,
   deckId: string,

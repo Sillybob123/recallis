@@ -30,6 +30,7 @@ import {
 import { exportDeckToAnki, downloadBlob } from "../lib/ankiExport";
 import type { Card, CardData, Deck, OcclusionSheet } from "../types";
 import { stripCloze } from "../lib/cloze";
+import { normalizeDeckPath } from "../lib/deckPath";
 
 export function DeckPage() {
   const { deckId } = useParams();
@@ -93,7 +94,7 @@ export function DeckPage() {
     setExporting(true);
     try {
       const { blob, filename, warnings } = await exportDeckToAnki(
-        deck?.name ?? "My Deck",
+        deck ? normalizeDeckPath(deck.name) : "My Deck",
         cards,
         sheets
       );
@@ -122,7 +123,7 @@ export function DeckPage() {
       <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">
-            {deck?.name ?? "Deck"}
+            {deck ? normalizeDeckPath(deck.name) : "Deck"}
           </h1>
           <p className="text-sm text-slate-500">
             {cards.length} card{cards.length === 1 ? "" : "s"} · {sheets.length} image

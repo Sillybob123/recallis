@@ -19,6 +19,7 @@ import { RichTextEditor } from "../components/RichTextEditor";
 import {
   createCard,
   createOcclusionSheet,
+  ensureDeckPath,
   getNote,
   updateNote,
   uploadDeckMedia,
@@ -26,6 +27,12 @@ import {
   watchDecks,
 } from "../lib/firestore";
 import type { CardData, Deck, Note, NoteSlide } from "../types";
+import {
+  findDeckByPath,
+  joinDeckPath,
+  normalizeDeckPath,
+  splitDeckPath,
+} from "../lib/deckPath";
 
 type SaveState = "saved" | "saving" | "dirty" | "offline";
 
@@ -449,9 +456,11 @@ export function NoteEditorPage() {
       {cardPrefill !== null && (
         <MakeCardModal
           decks={decks}
+          suggestedPath={suggestedDeckPath(note)}
           prefillHtml={cardPrefill}
           onClose={() => setCardPrefill(null)}
-          onSave={async (deckId, data) => {
+          onSave={async (deckPath, data) => {
+            const deckId = await ensureDeckPath(user!.uid, deckPath, decks);
             await createCard(user!.uid, deckId, data);
             if (latest.current) {
               const updated = {
@@ -574,22 +583,33 @@ function SlideToOcclusionButton({
   );
 }
 
+/** Cards from a lecture belong in a deck named after it: Class::Lecture. */
+function suggestedDeckPath(note: Note): string {
+  return joinDeckPath([note.className.trim(), note.title.trim()]);
+}
+
 function MakeCardModal({
   decks,
+  suggestedPath,
   prefillHtml,
   onSave,
   onClose,
   uploadImage,
 }: {
   decks: Deck[];
+  suggestedPath: string;
   prefillHtml: string;
-  onSave: (deckId: string, data: CardData) => Promise<void>;
+  onSave: (deckPath: string, data: CardData) => Promise<void>;
   onClose: () => void;
   uploadImage: (file: File) => Promise<string>;
 }) {
-  const [deckId, setDeckId] = useState(
-    () => localStorage.getItem("lastCardDeck") ?? decks[0]?.id ?? ""
-  );
+  const [deckPath, setDeckPath] = useState(suggestedPath);
+  const [subdeck, setSubdeck] = useState("");
+  const fullPath = joinDeckPath([
+    ...splitDeckPath(deckPath),
+    ...splitDeckPath(subdeck),
+  ]);
+  const existing = findDeckByPath(decks, fullPath);
   const [type, setType] = useState<"cloze" | "basic">("cloze");
   const [text, setText] = useState(prefillHtml);
   const [front, setFront] = useState(prefillHtml);
@@ -609,8 +629,8 @@ function MakeCardModal({
   }
 
   async function handleSave(keepOpen: boolean) {
-    if (!deckId) {
-      alert("Pick a deck first (or create one on the dashboard).");
+    if (!fullPath) {
+      alert("Give the card a deck — e.g. Anatomy::Lab 3.");
       return;
     }
     if (type === "cloze" && clozeCount === 0) {
@@ -626,12 +646,11 @@ function MakeCardModal({
     setBusy(true);
     try {
       await onSave(
-        deckId,
+        fullPath,
         type === "cloze"
           ? { type: "cloze", text, extra: plain(extra) ? extra : undefined }
           : { type: "basic", front, back }
       );
-      localStorage.setItem("lastCardDeck", deckId);
       setAdded((prev) => [
         ...prev,
         plain(type === "cloze" ? text : front).slice(0, 70) || "card",
@@ -672,20 +691,30 @@ function MakeCardModal({
 
         {/* controls */}
         <div className="flex shrink-0 flex-wrap items-center gap-3 border-b border-slate-100 bg-slate-50 px-6 py-3">
-          <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
+          <label className="flex min-w-[15rem] flex-1 items-center gap-2 text-xs font-medium text-slate-600">
             Deck
-            <select
-              value={deckId}
-              onChange={(e) => setDeckId(e.target.value)}
-              className="rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-sm text-slate-800 outline-none focus:border-indigo-500"
-            >
-              <option value="">Choose a deck…</option>
+            <input
+              value={deckPath}
+              onChange={(e) => setDeckPath(e.target.value)}
+              list="deck-paths"
+              placeholder="Anatomy::Lab 3"
+              className="min-w-0 flex-1 rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-sm text-slate-800 outline-none focus:border-indigo-500"
+            />
+            <datalist id="deck-paths">
               {decks.map((d) => (
-                <option key={d.id} value={d.id}>
-                  {d.name}
-                </option>
+                <option key={d.id} value={normalizeDeckPath(d.name)} />
               ))}
-            </select>
+            </datalist>
+          </label>
+
+          <label className="flex items-center gap-2 text-xs font-medium text-slate-600">
+            Subdeck
+            <input
+              value={subdeck}
+              onChange={(e) => setSubdeck(e.target.value)}
+              placeholder="optional, e.g. Breast and Thorax"
+              className="w-52 rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-sm text-slate-800 outline-none focus:border-indigo-500"
+            />
           </label>
 
           <div className="flex gap-1 rounded-lg bg-white p-1 text-sm ring-1 ring-slate-200">
@@ -821,7 +850,14 @@ function MakeCardModal({
         {/* footer */}
         <div className="flex shrink-0 items-center gap-2 border-t border-slate-200 bg-white px-6 py-4">
           <p className="mr-auto text-xs text-slate-400">
-            Cards go straight into the deck — your note stays as it is.
+            {fullPath ? (
+              <>
+                Saving to <b className="text-slate-600">{fullPath}</b>
+                {!existing && " — this deck will be created"}
+              </>
+            ) : (
+              "Choose a deck to save into."
+            )}
           </p>
           <button
             onClick={onClose}

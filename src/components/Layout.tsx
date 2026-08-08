@@ -34,19 +34,17 @@ export function Layout({ children }: { children: ReactNode }) {
             >
               Recallis
             </span>
-            {inNotes && (
-              <span
-                className="hidden text-[26px] text-slate-400 sm:inline"
-                style={{
-                  fontFamily: "'Inter', system-ui, sans-serif",
-                  fontWeight: 600,
-                  letterSpacing: "-0.02em",
-                  lineHeight: 1,
-                }}
-              >
-                Notes
-              </span>
-            )}
+            <span
+              className="hidden text-[26px] text-slate-400 sm:inline"
+              style={{
+                fontFamily: "'Inter', system-ui, sans-serif",
+                fontWeight: 600,
+                letterSpacing: "-0.02em",
+                lineHeight: 1,
+              }}
+            >
+              {inNotes ? "Notes" : studyMode === "anki" ? "Anki" : "Quizlet"}
+            </span>
             <span
               className="ml-1 hidden rounded-full px-2 py-1 uppercase text-white sm:inline"
               style={{
