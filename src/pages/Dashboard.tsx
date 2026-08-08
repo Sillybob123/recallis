@@ -383,7 +383,7 @@ function DeckRows({
             </Link>
           ) : (
             <span
-              className="min-w-0 truncate text-sm font-medium text-slate-500"
+              className="min-w-0 truncate text-sm font-medium text-slate-800"
               title="No cards of its own — just groups the decks beneath it"
             >
               {node.name}

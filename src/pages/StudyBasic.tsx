@@ -1,9 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
+  AlertTriangle,
   ArrowLeft,
   CalendarClock,
+  Check,
   ChevronDown,
+  CloudOff,
+  Loader2,
   Flag,
   PartyPopper,
   Pencil,
@@ -23,7 +27,6 @@ import {
   deleteOcclusionSheet,
   deleteSrsState,
   recordCardResult,
-  setSrsState,
   updateCard,
 } from "../lib/firestore";
 import { CardEditorModal } from "../components/CardEditorModal";
@@ -65,6 +68,12 @@ import {
   type SrsState,
 } from "../lib/srs";
 import { gradeAnswer, shuffle } from "../lib/text";
+import { SrsWriter, type SaveStatus } from "../lib/srsWriter";
+import {
+  clearCramSession,
+  loadCramSession,
+  saveCramSession,
+} from "../lib/cramSession";
 
 const FAST_ANSWER_MS = 7000;
 
@@ -175,6 +184,7 @@ export function StudyBasic() {
     ? [deckId]
     : (groupIdsParam ?? "").split(",").filter(Boolean);
   const deckScopeKey = deckIds.join(",");
+  const cramScope = `${deckScopeKey}:${cardsOnly ? "cards" : "all"}`;
   const { user } = useAuth();
   const { studyMode, setStudyMode } = useStudyMode();
   const navigate = useNavigate();
@@ -198,6 +208,23 @@ export function StudyBasic() {
   const [retyped, setRetyped] = useState("");
   const [sessionNonce, setSessionNonce] = useState(0);
   const [formatOpen, setFormatOpen] = useState(false);
+  const [saveStatus, setSaveStatus] = useState<SaveStatus>("saved");
+
+  // Every graded card is written through here so nothing is silently lost.
+  const writerRef = useRef<SrsWriter | null>(null);
+  if (!writerRef.current) {
+    writerRef.current = new SrsWriter((status) => setSaveStatus(status));
+  }
+  useEffect(() => () => writerRef.current?.dispose(), []);
+
+  // Pending writes are safe (Firestore replays them from IndexedDB), but a
+  // rejected one would be lost, so warn before the tab closes on that state.
+  useEffect(() => {
+    if (saveStatus !== "error") return;
+    const warn = (e: BeforeUnloadEvent) => e.preventDefault();
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [saveStatus]);
 
   // Session-local memory for the smart Quizlet scheduler.
   const strengthRef = useRef<Map<string, number>>(new Map());
@@ -241,6 +268,22 @@ export function StudyBasic() {
     strengthRef.current = new Map();
 
     if (studyMode === "quizlet") {
+      // Resume an unfinished cram session rather than reshuffling from scratch.
+      const saved = loadCramSession(cramScope);
+      if (saved) {
+        const byKey = new Map(all.map((it) => [combinedKey(it), it]));
+        const restored = saved.order
+          .map((k) => byKey.get(k))
+          .filter((it): it is StudyItem => Boolean(it));
+        if (restored.length > 0) {
+          strengthRef.current = new Map(saved.strengths);
+          setQueue(restored);
+          setTotal(Math.max(saved.total, restored.length));
+          setNextDueMs(null);
+          return;
+        }
+        clearCramSession(cramScope);
+      }
       const items = shuffle(all);
       setQueue(items);
       setTotal(items.length);
@@ -385,6 +428,21 @@ export function StudyBasic() {
     return [...rest.slice(0, pos), item, ...rest.slice(pos)];
   }
 
+  /** Commits a cram queue to state and to the device, so a refresh resumes. */
+  function commitCramQueue(next: StudyItem[], sessionTotal: number) {
+    setQueue(next);
+    if (next.length === 0) {
+      // Finished — nothing about a cram run is worth keeping.
+      clearCramSession(cramScope);
+    } else {
+      saveCramSession(cramScope, {
+        order: next.map(combinedKey),
+        strengths: [...strengthRef.current.entries()],
+        total: sessionTotal,
+      });
+    }
+  }
+
   function recordStats(item: StudyItem, correct: boolean) {
     if (item.kind !== "text" || !user) return;
     const stats =
@@ -399,19 +457,20 @@ export function StudyBasic() {
     pushHistory();
     recordStats(current, correct);
     const st = strengthRef.current.get(current.key) ?? 0;
+    let nextQueue: StudyItem[];
     if (!correct) {
       strengthRef.current.set(current.key, 0);
-      setQueue((prev) => reinsert(prev, current, 3));
+      nextQueue = reinsert(queue, current, 3);
     } else {
       const fast = guessMsRef.current > 0 && guessMsRef.current < FAST_ANSWER_MS;
-      const next = st + (fast ? 2 : 1);
-      strengthRef.current.set(current.key, next);
-      if (next >= 2) {
-        setQueue((prev) => prev.slice(1));
-      } else {
-        setQueue((prev) => reinsert(prev, current, Math.max(8, prev.length - 2)));
-      }
+      const strength = st + (fast ? 2 : 1);
+      strengthRef.current.set(current.key, strength);
+      nextQueue =
+        strength >= 2
+          ? queue.slice(1)
+          : reinsert(queue, current, Math.max(8, queue.length - 2));
     }
+    commitCramQueue(nextQueue, total);
     resetCardUI();
   }
 
@@ -421,18 +480,17 @@ export function StudyBasic() {
     pushHistory();
     recordStats(current, correct);
     const st = strengthRef.current.get(current.key) ?? 0;
+    let nextQueue: StudyItem[];
     if (!correct) {
       strengthRef.current.set(current.key, 0);
-      setQueue((prev) => reinsert(prev, current, 3));
+      nextQueue = reinsert(queue, current, 3);
     } else {
-      const next = st + 1;
-      strengthRef.current.set(current.key, next);
-      if (next >= 2) {
-        setQueue((prev) => prev.slice(1));
-      } else {
-        setQueue((prev) => reinsert(prev, current, Math.min(6, prev.length)));
-      }
+      const strength = st + 1;
+      strengthRef.current.set(current.key, strength);
+      nextQueue =
+        strength >= 2 ? queue.slice(1) : reinsert(queue, current, Math.min(6, queue.length));
     }
+    commitCramQueue(nextQueue, total);
     resetCardUI();
   }
 
@@ -443,7 +501,7 @@ export function StudyBasic() {
     pushHistory(current, prev);
     recordAnkiReview(Date.now() - shownAtRef.current);
     const next = rate(prev, rating, Date.now(), srsConfig);
-    setSrsState(user.uid, current.deckId, current.key, next).catch(() => {});
+    writerRef.current!.write(user.uid, current.deckId, current.key, next);
     setSrsMap((m) => {
       const copy = new Map(m);
       copy.set(combinedKey(current), next);
@@ -465,6 +523,7 @@ export function StudyBasic() {
   }
 
   function restart() {
+    clearCramSession(cramScope);
     setSessionNonce((n) => n + 1);
     resetCardUI();
   }
@@ -504,7 +563,7 @@ export function StudyBasic() {
         const ck = `${deckIdFor}|${key}`;
         const next = { ...(copy.get(ck) ?? newSrsState()), ...patch };
         copy.set(ck, next);
-        setSrsState(user.uid, deckIdFor, key, next).catch(() => {});
+        writerRef.current!.write(user.uid, deckIdFor, key, next);
       }
       return copy;
     });
@@ -604,7 +663,7 @@ export function StudyBasic() {
           const ck = `${last.deckId}|${last.key}`;
           if (last.prevSrs) {
             copy.set(ck, last.prevSrs);
-            setSrsState(user.uid, last.deckId!, last.key!, last.prevSrs).catch(() => {});
+            writerRef.current!.write(user.uid, last.deckId!, last.key!, last.prevSrs);
           } else {
             copy.delete(ck);
             deleteSrsState(user.uid, last.deckId!, last.key!).catch(() => {});
@@ -821,6 +880,7 @@ export function StudyBasic() {
         <span className="shrink-0 text-sm font-medium text-slate-500">
           {total - queue.length}/{total}
         </span>
+        {studyMode === "anki" && <SaveBadge status={saveStatus} />}
         {settingsButton}
       </div>
 
@@ -1278,6 +1338,45 @@ export function StudyBasic() {
         />
       )}
     </Layout>
+  );
+}
+
+/** Tells you whether graded cards have actually reached the server. */
+function SaveBadge({ status }: { status: SaveStatus }) {
+  if (status === "saved") {
+    return (
+      <span
+        className="hidden items-center gap-1 text-xs font-medium text-emerald-600 sm:flex"
+        title="Every answer so far is saved."
+      >
+        <Check size={13} /> Saved
+      </span>
+    );
+  }
+  if (status === "saving") {
+    return (
+      <span className="flex items-center gap-1 text-xs font-medium text-slate-400">
+        <Loader2 size={13} className="animate-spin" /> Saving
+      </span>
+    );
+  }
+  if (status === "offline") {
+    return (
+      <span
+        className="flex items-center gap-1 text-xs font-medium text-amber-600"
+        title="You're offline. Your answers are stored on this device and sync automatically when you reconnect."
+      >
+        <CloudOff size={13} /> Offline
+      </span>
+    );
+  }
+  return (
+    <span
+      className="flex items-center gap-1 text-xs font-medium text-red-600"
+      title="Some answers couldn't be saved. Keep this tab open — retrying automatically."
+    >
+      <AlertTriangle size={13} /> Retrying
+    </span>
   );
 }
 
