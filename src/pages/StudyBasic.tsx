@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   AlertTriangle,
   ArrowLeft,
@@ -189,6 +189,8 @@ export function StudyBasic() {
   const { user } = useAuth();
   const { studyMode, setStudyMode } = useStudyMode();
   const navigate = useNavigate();
+  const location = useLocation();
+  const canGoBack = location.key !== "default";
 
   const [cards, setCards] = useState<(Card & { deckId: string })[] | null>(null);
   const [sheets, setSheets] = useState<(OcclusionSheet & { deckId: string })[] | null>(null);
@@ -217,6 +219,11 @@ export function StudyBasic() {
   const [formatOpen, setFormatOpen] = useState(false);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("saved");
   const [queueReady, setQueueReady] = useState(false);
+  // Session performance is deliberately separate from the progress bar: the
+  // bar measures cards retired from today's queue, while these count every
+  // button press. Failing a card three times before getting it right is one
+  // retired card but four answers.
+  const [stats, setStats] = useState({ answers: 0, correct: 0, wrong: 0 });
 
   // Every graded card is written through here so nothing is silently lost.
   const writerRef = useRef<SrsWriter | null>(null);
@@ -274,6 +281,7 @@ export function StudyBasic() {
   useEffect(() => {
     if (!cards || !sheets || !srsMap) return;
     setQueueReady(false);
+    setStats({ answers: 0, correct: 0, wrong: 0 });
     const all = [
       ...buildTextItems(cards, {
         answerWithTerm:
@@ -427,6 +435,14 @@ export function StudyBasic() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [current?.key, mode, learnFormat]);
 
+  function recordAnswer(correct: boolean) {
+    setStats((s) => ({
+      answers: s.answers + 1,
+      correct: s.correct + (correct ? 1 : 0),
+      wrong: s.wrong + (correct ? 0 : 1),
+    }));
+  }
+
   function resetCardUI() {
     setFlipped(false);
     setTyped("");
@@ -475,6 +491,7 @@ export function StudyBasic() {
     if (!current) return;
     pushHistory();
     recordStats(current, correct);
+    recordAnswer(correct);
     const st = strengthRef.current.get(current.key) ?? 0;
     let nextQueue: StudyItem[];
     if (!correct) {
@@ -498,6 +515,7 @@ export function StudyBasic() {
     if (!current) return;
     pushHistory();
     recordStats(current, correct);
+    recordAnswer(correct);
     const st = strengthRef.current.get(current.key) ?? 0;
     let nextQueue: StudyItem[];
     if (!correct) {
@@ -527,6 +545,9 @@ export function StudyBasic() {
       return copy;
     });
     recordStats(current, rating !== "again");
+    recordAnswer(rating !== "again");
+    // Reinsert only if the card is coming back within this sitting; a long
+    // relearning step means it leaves today's queue and counts as retired.
     if (next.due - Date.now() < 20 * 60 * 1000) {
       setQueue((prevQ) => reinsert(prevQ, current, 3));
     } else {
@@ -795,7 +816,7 @@ export function StudyBasic() {
     return (
       <Layout>
         <div className="mb-4 flex items-center gap-3">
-          <BackLink deckId={deckId} navigate={navigate} inline />
+          <BackLink deckId={deckId} navigate={navigate} canGoBack={canGoBack} inline />
           <span className="flex-1" />
           {settingsButton}
         </div>
@@ -880,7 +901,7 @@ export function StudyBasic() {
     <Layout>
       {/* One compact line: back · what you're studying · progress · settings */}
       <div className="mb-4 flex items-center gap-3">
-        <BackLink deckId={deckId} navigate={navigate} inline />
+        <BackLink deckId={deckId} navigate={navigate} canGoBack={canGoBack} inline />
         {groupName && (
           <span
             className="hidden max-w-[16rem] truncate text-sm font-semibold text-slate-500 sm:inline"
@@ -898,8 +919,20 @@ export function StudyBasic() {
             style={{ width: `${progress}%` }}
           />
         </div>
-        <span className="shrink-0 text-sm font-medium text-slate-500">
+        <span
+          className="shrink-0 text-sm font-medium text-slate-500"
+          title={`${total - queue.length} of ${total} cards cleared from today's queue${
+            stats.answers > 0
+              ? ` · ${stats.correct}/${stats.answers} answers correct`
+              : ""
+          }`}
+        >
           {total - queue.length}/{total}
+          {stats.answers > 0 && (
+            <span className="ml-2 text-xs font-normal text-slate-400">
+              {Math.round((stats.correct / stats.answers) * 100)}%
+            </span>
+          )}
         </span>
         {studyMode === "anki" && <SaveBadge status={saveStatus} />}
         {settingsButton}
@@ -915,10 +948,25 @@ export function StudyBasic() {
               ? "All caught up for today!"
               : "You got through the whole deck!"}
           </p>
-          <p className="mb-5 text-sm text-emerald-700">
-            {total} card{total === 1 ? "" : "s"} {studyMode === "anki" ? "reviewed" : "mastered"} this
-            session.
+          <p className="mb-1 text-sm text-emerald-700">
+            {total} card{total === 1 ? "" : "s"}{" "}
+            {studyMode === "anki" ? "cleared" : "mastered"} this session.
           </p>
+          {stats.answers > 0 && (
+            <p className="mb-5 text-sm text-emerald-700">
+              You answered <b>{stats.correct}</b> of <b>{stats.answers}</b>{" "}
+              correctly —{" "}
+              <b>{Math.round((stats.correct / stats.answers) * 100)}% accuracy</b>
+              {stats.answers > total && (
+                <span className="text-emerald-600/70">
+                  {" "}
+                  ({stats.answers - total} repeat
+                  {stats.answers - total === 1 ? "" : "s"} along the way)
+                </span>
+              )}
+              .
+            </p>
+          )}
           <div className="flex justify-center gap-3">
             {studyMode === "quizlet" && (
               <button
@@ -929,10 +977,12 @@ export function StudyBasic() {
               </button>
             )}
             <button
-              onClick={() => navigate(`/deck/${deckId}`)}
+              onClick={() =>
+                canGoBack ? navigate(-1) : navigate(deckId ? `/deck/${deckId}` : "/decks")
+              }
               className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-white"
             >
-              Back to deck
+              Done
             </button>
           </div>
         </div>
@@ -1401,23 +1451,32 @@ function SaveBadge({ status }: { status: SaveStatus }) {
   );
 }
 
+/**
+ * Returns to wherever the session was started from — the Anki page, the
+ * Quizlet page, a deck, the home overview. Falls back to a sensible page when
+ * the study screen was opened directly (a bookmark or a fresh tab).
+ */
 function BackLink({
   deckId,
   navigate,
+  canGoBack,
   inline,
 }: {
   deckId?: string;
   navigate: ReturnType<typeof useNavigate>;
+  canGoBack: boolean;
   inline?: boolean;
 }) {
   return (
     <button
-      onClick={() => navigate(deckId ? `/deck/${deckId}` : "/decks")}
+      onClick={() =>
+        canGoBack ? navigate(-1) : navigate(deckId ? `/deck/${deckId}` : "/decks")
+      }
       className={`flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-800 ${
         inline ? "" : "mb-4"
       }`}
     >
-      <ArrowLeft size={15} /> Back to deck
+      <ArrowLeft size={15} /> Back
     </button>
   );
 }
