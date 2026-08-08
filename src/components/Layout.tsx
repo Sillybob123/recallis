@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { LogOut, Repeat, Zap } from "lucide-react";
+import { LogOut, NotebookPen, Repeat, Zap } from "lucide-react";
 import { useAuth } from "../contexts/AuthContext";
 import { useStudyMode } from "../contexts/StudyModeContext";
 
@@ -17,18 +17,43 @@ export function Layout({ children }: { children: ReactNode }) {
       <div className="h-1.5 w-full" style={{ backgroundColor: "var(--accent)" }} />
       <header className="sticky top-0 z-20 border-b border-slate-200 bg-white/80 backdrop-blur">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3 sm:px-6">
-          <Link to="/" className="flex items-center gap-2 font-bold text-slate-900">
+          <Link to="/" className="flex items-center" style={{ gap: "11px" }}>
             <img src="/logo.png" alt="Recallis" className="h-9 w-9 object-contain" />
-            <span className="text-lg">Recallis</span>
             <span
-              className="ml-1 hidden rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white sm:inline"
-              style={{ backgroundColor: "var(--accent)" }}
+              style={{
+                fontFamily: "'Inter', system-ui, sans-serif",
+                fontWeight: 600,
+                fontSize: "26px",
+                letterSpacing: "-0.02em",
+                color: "#002871",
+                lineHeight: 1,
+              }}
+            >
+              Recallis
+            </span>
+            <span
+              className="ml-1 hidden rounded-full px-2 py-1 uppercase text-white sm:inline"
+              style={{
+                backgroundColor: "var(--accent)",
+                fontFamily: "'Inter', system-ui, sans-serif",
+                fontWeight: 500,
+                fontSize: "11px",
+                letterSpacing: "0.05em",
+                lineHeight: 1,
+              }}
             >
               {studyMode === "anki" ? "Anki · spaced" : "Quizlet · cram"}
             </span>
           </Link>
           {user && (
             <div className="flex items-center gap-3 text-sm">
+              <Link
+                to="/notes"
+                className="flex items-center gap-1.5 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 transition hover:bg-slate-50"
+                title="Lecture notes — take notes, drop in slides, turn them into cards"
+              >
+                <NotebookPen size={12} /> Notes
+              </Link>
               <div
                 className="flex overflow-hidden rounded-full border border-slate-200 text-xs font-semibold"
                 title="Anki mode: spaced repetition — cards come back over days. Quizlet mode: cram freely without touching the schedule."

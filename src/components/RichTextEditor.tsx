@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import {
   Bold,
   Brackets,
+  Heading1,
+  Heading2,
   Eraser,
   Highlighter,
   Image as ImageIcon,
@@ -26,7 +28,9 @@ export function RichTextEditor({
   onChange,
   placeholder,
   cloze = false,
+  headings = false,
   minHeightClass = "min-h-20",
+  maxHeightClass = "max-h-64",
   onUploadImage,
   autoFocus,
 }: {
@@ -34,7 +38,9 @@ export function RichTextEditor({
   onChange: (html: string) => void;
   placeholder?: string;
   cloze?: boolean;
+  headings?: boolean;
   minHeightClass?: string;
+  maxHeightClass?: string;
   onUploadImage?: (file: File) => Promise<string>;
   autoFocus?: boolean;
 }) {
@@ -131,6 +137,20 @@ export function RichTextEditor({
   return (
     <div className="rounded-lg border border-slate-300 focus-within:border-indigo-500 focus-within:ring-2 focus-within:ring-indigo-100">
       <div className="relative flex flex-wrap items-center gap-0.5 border-b border-slate-200 px-1.5 py-1">
+        {headings && (
+          <>
+            <ToolButton title="Heading 1" onClick={() => exec("formatBlock", "<h1>")}>
+              <Heading1 size={14} />
+            </ToolButton>
+            <ToolButton title="Heading 2" onClick={() => exec("formatBlock", "<h2>")}>
+              <Heading2 size={14} />
+            </ToolButton>
+            <ToolButton title="Normal text" onClick={() => exec("formatBlock", "<div>")}>
+              <span className="text-[10px] font-bold">¶</span>
+            </ToolButton>
+            <span className="mx-1 h-4 w-px bg-slate-200" />
+          </>
+        )}
         <ToolButton title="Bold (⌘B)" onClick={() => exec("bold")}>
           <Bold size={14} />
         </ToolButton>
@@ -230,7 +250,7 @@ export function RichTextEditor({
         onInput={emit}
         onKeyDown={handleKeyDown}
         data-placeholder={placeholder}
-        className={`prose-card ${minHeightClass} max-h-64 overflow-y-auto px-3 py-2 text-sm outline-none empty:before:text-slate-400 empty:before:content-[attr(data-placeholder)]`}
+        className={`prose-card ${minHeightClass} ${maxHeightClass} overflow-y-auto px-3 py-2 text-sm outline-none empty:before:text-slate-400 empty:before:content-[attr(data-placeholder)]`}
       />
     </div>
   );

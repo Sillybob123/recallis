@@ -316,6 +316,84 @@ async function touchDeck(uid: string, deckId: string) {
   });
 }
 
+// ---------- Lecture notes ----------
+
+import type { Note, NoteSlide } from "../types";
+
+function notesCol(uid: string) {
+  return collection(db, "users", uid, "notes");
+}
+
+function noteFromDoc(d: { id: string; data: () => Record<string, unknown> }): Note {
+  const data = d.data();
+  return {
+    id: d.id,
+    title: (data.title as string) ?? "Untitled",
+    className: (data.className as string) ?? "",
+    content: (data.content as string) ?? "",
+    slides: (data.slides as NoteSlide[]) ?? [],
+    createdAt: toMillis(data.createdAt),
+    updatedAt: toMillis(data.updatedAt),
+  };
+}
+
+export function watchNotes(uid: string, cb: (notes: Note[]) => void) {
+  const q = query(notesCol(uid), orderBy("updatedAt", "desc"));
+  return onSnapshot(q, (snap) => cb(snap.docs.map(noteFromDoc)));
+}
+
+export async function getNote(uid: string, noteId: string): Promise<Note | null> {
+  const snap = await getDoc(doc(db, "users", uid, "notes", noteId));
+  return snap.exists() ? noteFromDoc(snap) : null;
+}
+
+export async function createNote(
+  uid: string,
+  title: string,
+  className: string
+): Promise<string> {
+  const docRef = await addDoc(notesCol(uid), {
+    title,
+    className,
+    content: "",
+    slides: [],
+    createdAt: serverTimestamp(),
+    updatedAt: serverTimestamp(),
+  });
+  return docRef.id;
+}
+
+export async function updateNote(
+  uid: string,
+  noteId: string,
+  updates: Partial<Pick<Note, "title" | "className" | "content" | "slides">>
+) {
+  await updateDoc(doc(db, "users", uid, "notes", noteId), {
+    ...updates,
+    updatedAt: serverTimestamp(),
+  });
+}
+
+export async function deleteNote(uid: string, noteId: string, slides: NoteSlide[]) {
+  await Promise.all(
+    slides.map((s) => deleteObject(ref(storage, s.imagePath)).catch(() => {}))
+  );
+  await deleteDoc(doc(db, "users", uid, "notes", noteId));
+}
+
+/** Uploads one rendered slide image for a note. */
+export async function uploadNoteSlide(
+  uid: string,
+  noteId: string,
+  blob: Blob
+): Promise<{ path: string; url: string }> {
+  const path = `users/${uid}/notes/${noteId}/slides/${crypto.randomUUID()}.png`;
+  const storageRef = ref(storage, path);
+  await uploadBytes(storageRef, blob, { contentType: "image/png" });
+  const url = await getDownloadURL(storageRef);
+  return { path, url };
+}
+
 // ---------- Spaced repetition state ----------
 // One doc per study item (basic card / cloze deletion / occlusion unit),
 // keyed by the item's stable key. Only Anki-mode grading writes here, so

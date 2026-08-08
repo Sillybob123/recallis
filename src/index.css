@@ -42,6 +42,29 @@ body {
   transform: rotateY(180deg);
 }
 
+.prose-card :where(h1) {
+  font-size: 1.45em;
+  font-weight: 700;
+  margin: 0.6em 0 0.3em;
+}
+.prose-card :where(h2) {
+  font-size: 1.2em;
+  font-weight: 600;
+  margin: 0.5em 0 0.25em;
+}
+.prose-card :where(mark) {
+  background: #fef08a;
+  border-radius: 2px;
+}
+.prose-card :where(table) {
+  border-collapse: collapse;
+  margin: 0.5em 0;
+}
+.prose-card :where(td, th) {
+  border: 1px solid #cbd5e1;
+  padding: 0.25em 0.5em;
+}
+
 .prose-card :where(img) {
   max-width: 100%;
   max-height: 16rem;

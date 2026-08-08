@@ -5,6 +5,8 @@ import { ProtectedRoute } from "./components/ProtectedRoute";
 import { Login } from "./pages/Login";
 import { Signup } from "./pages/Signup";
 import { Dashboard } from "./pages/Dashboard";
+import { NotesPage } from "./pages/NotesPage";
+import { NoteEditorPage } from "./pages/NoteEditorPage";
 import { DeckPage } from "./pages/DeckPage";
 import { StudyBasic } from "./pages/StudyBasic";
 import { StudyOcclusion } from "./pages/StudyOcclusion";
@@ -18,9 +20,9 @@ export default function App() {
         <Routes>
           <Route path="/login" element={<Login />} />
           <Route path="/signup" element={<Signup />} />
-          <Route
-            path="/"
-            element={
+          <Route path="/notes" element={<ProtectedRoute><NotesPage /></ProtectedRoute>} />
+          <Route path="/notes/:noteId" element={<ProtectedRoute><NoteEditorPage /></ProtectedRoute>} />
+          <Route path="/"             element={
               <ProtectedRoute>
                 <Dashboard />
               </ProtectedRoute>

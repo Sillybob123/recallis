@@ -70,3 +70,23 @@ export interface OcclusionSheet {
 }
 
 export type OcclusionMode = "hideOne" | "hideAll";
+
+export interface NoteSlide {
+  id: string;
+  imagePath: string;
+  imageUrl: string;
+  /** per-slide lecture notes (sanitized HTML) */
+  note: string;
+}
+
+export interface Note {
+  id: string;
+  title: string;
+  /** class this lecture belongs to, e.g. "Anatomy" */
+  className: string;
+  /** main rich-text body (sanitized HTML) */
+  content: string;
+  slides: NoteSlide[];
+  createdAt: number;
+  updatedAt: number;
+}
