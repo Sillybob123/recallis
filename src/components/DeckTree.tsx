@@ -1,9 +1,11 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { createPortal } from "react-dom";
 import { Link } from "react-router-dom";
 import {
   ChevronDown,
   Copy,
+  Search,
   Download,
   MoreVertical,
   Pencil,
@@ -205,6 +207,7 @@ function DeckRowMenu({
   onAddChild: (parentPath: string) => void;
   onDelete: (node: DeckNode) => void;
 }) {
+  const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
@@ -222,7 +225,7 @@ function DeckRowMenu({
     if (!open || !buttonRef.current) return;
     const rect = buttonRef.current.getBoundingClientRect();
     const MENU_W = 176;
-    const MENU_H = 210;
+    const MENU_H = 340;
     const below = window.innerHeight - rect.bottom;
     setPos({
       top: below < MENU_H ? rect.top - Math.min(MENU_H, rect.top - 8) : rect.bottom + 4,
@@ -335,6 +338,17 @@ function DeckRowMenu({
             className="fixed z-50 w-44 overflow-hidden rounded-xl border border-slate-200 bg-white py-1 shadow-xl"
             style={{ top: pos.top, left: pos.left }}
           >
+            <MenuItem
+              icon={<Search size={14} />}
+              onClick={() => {
+                setOpen(false);
+                navigate(
+                  `/browse?deck=${descendants.map((d) => d.id).join(",")}`
+                );
+              }}
+            >
+              Browse
+            </MenuItem>
             <MenuItem
               icon={<Plus size={14} />}
               onClick={() => {

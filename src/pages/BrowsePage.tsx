@@ -40,9 +40,33 @@ import {
   type FlagColor,
   type SrsState,
 } from "../lib/srs";
+import { startOfStudyDay } from "../lib/settings";
 import type { Deck } from "../types";
 
 type CardState = "new" | "learning" | "review" | "suspended" | "buried";
+type TodayFilter = "due" | "overdue" | "added" | "studied";
+type SortCol = "preview" | "type" | "state" | "due" | "deck";
+
+const TODAY_LABELS: Record<TodayFilter, string> = {
+  due: "Due",
+  overdue: "Overdue",
+  added: "Added today",
+  studied: "Studied today",
+};
+
+const STATE_ORDER: Record<CardState, number> = {
+  new: 0,
+  learning: 1,
+  review: 2,
+  suspended: 3,
+  buried: 4,
+};
+
+/** Sortable due value: scheduled cards by date, new cards after, by position. */
+function dueSortValue(row: Row): number {
+  if (row.state === "new") return 8e15 + (row.newPos ?? 0);
+  return row.srs?.due ?? 9e15;
+}
 type NoteKind = "cloze" | "basic" | "occlusion";
 
 const STATE_LABELS: Record<CardState, string> = {
@@ -70,6 +94,9 @@ interface Row {
   preview: string;
   srs: SrsState | undefined;
   state: CardState;
+  createdAt: number;
+  /** queue position among the deck's new cards, like Anki's "New #12" */
+  newPos?: number;
 }
 
 function stateOf(srs: SrsState | undefined): CardState {
@@ -84,7 +111,7 @@ function stateOf(srs: SrsState | undefined): CardState {
 }
 
 function dueText(row: Row): string {
-  if (row.state === "new") return "—";
+  if (row.state === "new") return row.newPos ? `New #${row.newPos}` : "New";
   if (row.state === "suspended") return "suspended";
   const due = row.srs!.due;
   const delta = due - Date.now();
@@ -111,11 +138,17 @@ export function BrowsePage() {
   const [data, setData] = useState<StudyData | null>(null);
   const [search, setSearch] = useState("");
   const [stateFilter, setStateFilter] = useState<CardState | null>(null);
-  const [deckFilter, setDeckFilter] = useState<string | null>(
-    searchParams.get("deck")
-  );
+  const [deckFilter, setDeckFilter] = useState<string[] | null>(() => {
+    const raw = searchParams.get("deck");
+    return raw ? raw.split(",").filter(Boolean) : null;
+  });
   const [kindFilter, setKindFilter] = useState<NoteKind | null>(null);
   const [flagFilter, setFlagFilter] = useState<FlagColor | "marked" | null>(null);
+  const [todayFilter, setTodayFilter] = useState<TodayFilter | null>(null);
+  const [sort, setSort] = useState<{ col: SortCol; dir: 1 | -1 }>({
+    col: "deck",
+    dir: 1,
+  });
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState<string | null>(null);
   const [showReplace, setShowReplace] = useState(false);
@@ -143,7 +176,8 @@ export function BrowsePage() {
   const allRows = useMemo<Row[]>(() => {
     if (!data) return [];
     const out: Row[] = [];
-    for (const card of data.cards) {
+    const sortedCards = [...data.cards].sort((a, b) => a.createdAt - b.createdAt);
+    for (const card of sortedCards) {
       if (card.data.type === "basic") {
         const key = `${card.deckId}|${card.id}`;
         const srs = data.srs.get(key);
@@ -167,6 +201,7 @@ export function BrowsePage() {
           preview: plain(card.data.front),
           srs,
           state: stateOf(srs),
+          createdAt: card.createdAt,
         });
       } else {
         const nums = [
@@ -197,6 +232,7 @@ export function BrowsePage() {
             preview: plain(card.data.text),
             srs,
             state: stateOf(srs),
+            createdAt: card.createdAt,
           });
         }
       }
@@ -233,8 +269,17 @@ export function BrowsePage() {
               preview: shape.label?.trim() || sheet.title,
               srs,
               state: stateOf(srs),
+              createdAt: sheet.createdAt,
             });
       }
+    }
+    // Anki-style queue positions for new cards, per deck in creation order.
+    const counters = new Map<string, number>();
+    for (const row of out) {
+      if (row.state !== "new") continue;
+      const n = (counters.get(row.item.deckId) ?? 0) + 1;
+      counters.set(row.item.deckId, n);
+      row.newPos = n;
     }
     return out;
   }, [data, deckById]);
@@ -243,7 +288,28 @@ export function BrowsePage() {
     const q = search.trim().toLowerCase();
     return allRows.filter((row) => {
       if (stateFilter && row.state !== stateFilter) return false;
-      if (deckFilter && row.item.deckId !== deckFilter) return false;
+      if (todayFilter) {
+        const now = Date.now();
+        const dayStart = startOfStudyDay(now);
+        if (todayFilter === "due") {
+          const ok =
+            row.srs !== undefined &&
+            row.state !== "suspended" &&
+            row.state !== "buried" &&
+            row.state !== "new" &&
+            row.srs.due <= now;
+          if (!ok) return false;
+        } else if (todayFilter === "overdue") {
+          const ok =
+            row.state === "review" && row.srs !== undefined && row.srs.due < dayStart;
+          if (!ok) return false;
+        } else if (todayFilter === "added") {
+          if (row.createdAt < dayStart) return false;
+        } else if (todayFilter === "studied") {
+          if ((row.srs?.lastReviewed ?? 0) < dayStart) return false;
+        }
+      }
+      if (deckFilter && !deckFilter.includes(row.item.deckId)) return false;
       if (kindFilter && row.kind !== kindFilter) return false;
       if (flagFilter === "marked" && !row.srs?.marked) return false;
       if (flagFilter && flagFilter !== "marked" && row.srs?.flag !== flagFilter)
@@ -251,7 +317,37 @@ export function BrowsePage() {
       if (q && !row.preview.toLowerCase().includes(q)) return false;
       return true;
     });
-  }, [allRows, search, stateFilter, deckFilter, kindFilter, flagFilter]);
+  }, [allRows, search, stateFilter, deckFilter, kindFilter, flagFilter, todayFilter]);
+
+  const sorted = useMemo(() => {
+    const rows = [...filtered];
+    const dir = sort.dir;
+    rows.sort((a, b) => {
+      switch (sort.col) {
+        case "preview":
+          return dir * a.preview.localeCompare(b.preview);
+        case "type":
+          return dir * a.typeLabel.localeCompare(b.typeLabel, undefined, { numeric: true });
+        case "state":
+          return dir * (STATE_ORDER[a.state] - STATE_ORDER[b.state]);
+        case "due":
+          return dir * (dueSortValue(a) - dueSortValue(b));
+        case "deck": {
+          const byDeck = normalizeDeckPath(a.deck?.name ?? "").localeCompare(
+            normalizeDeckPath(b.deck?.name ?? "")
+          );
+          return byDeck !== 0 ? dir * byDeck : dueSortValue(a) - dueSortValue(b);
+        }
+      }
+    });
+    return rows;
+  }, [filtered, sort]);
+
+  function toggleSort(col: SortCol) {
+    setSort((prev) =>
+      prev.col === col ? { col, dir: prev.dir === 1 ? -1 : 1 } : { col, dir: 1 }
+    );
+  }
 
   const stateCounts = useMemo(() => {
     const counts = { new: 0, learning: 0, review: 0, suspended: 0, buried: 0 };
@@ -409,6 +505,18 @@ export function BrowsePage() {
       <div className="flex gap-4">
         {/* ---- sidebar ---- */}
         <aside className="hidden w-52 shrink-0 space-y-4 lg:block">
+          <SidebarSection title="Today">
+            {(Object.keys(TODAY_LABELS) as TodayFilter[]).map((t) => (
+              <SidebarRow
+                key={t}
+                active={todayFilter === t}
+                onClick={() => setTodayFilter(todayFilter === t ? null : t)}
+              >
+                {TODAY_LABELS[t]}
+              </SidebarRow>
+            ))}
+          </SidebarSection>
+
           <SidebarSection title="Card state">
             {(Object.keys(STATE_LABELS) as CardState[]).map((s) => (
               <SidebarRow
@@ -467,8 +575,14 @@ export function BrowsePage() {
                 return (
                   <SidebarRow
                     key={d.id}
-                    active={deckFilter === d.id}
-                    onClick={() => setDeckFilter(deckFilter === d.id ? null : d.id)}
+                    active={deckFilter?.length === 1 && deckFilter[0] === d.id}
+                    onClick={() =>
+                      setDeckFilter(
+                        deckFilter?.length === 1 && deckFilter[0] === d.id
+                          ? null
+                          : [d.id]
+                      )
+                    }
                   >
                     <span
                       className="block truncate"
@@ -556,18 +670,28 @@ export function BrowsePage() {
           )}
 
           <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-            <div className="grid grid-cols-[2rem_1fr_5.5rem_5.5rem_5rem_9rem] items-center gap-2 border-b border-slate-100 bg-slate-50 px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+            <div className="grid grid-cols-[2rem_1fr_5.5rem_5.5rem_6rem_9rem] items-center gap-2 border-b border-slate-100 bg-slate-50 px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
               <input
                 type="checkbox"
                 checked={filtered.length > 0 && selected.size === filtered.length}
                 onChange={toggleAll}
                 className="h-3.5 w-3.5"
               />
-              <span>Card</span>
-              <span>Type</span>
-              <span>State</span>
-              <span>Due</span>
-              <span>Deck</span>
+              <HeaderCell col="preview" sort={sort} onSort={toggleSort}>
+                Card
+              </HeaderCell>
+              <HeaderCell col="type" sort={sort} onSort={toggleSort}>
+                Type
+              </HeaderCell>
+              <HeaderCell col="state" sort={sort} onSort={toggleSort}>
+                State
+              </HeaderCell>
+              <HeaderCell col="due" sort={sort} onSort={toggleSort}>
+                Due
+              </HeaderCell>
+              <HeaderCell col="deck" sort={sort} onSort={toggleSort}>
+                Deck
+              </HeaderCell>
             </div>
             <div className="max-h-[58vh] overflow-y-auto">
               {filtered.length === 0 ? (
@@ -575,11 +699,11 @@ export function BrowsePage() {
                   Nothing matches these filters.
                 </p>
               ) : (
-                filtered.slice(0, 1000).map((row) => (
+                sorted.slice(0, 1000).map((row) => (
                   <div
                     key={row.key}
                     onClick={(e) => toggleRow(row.key, e.metaKey || e.ctrlKey || e.shiftKey)}
-                    className={`grid cursor-pointer grid-cols-[2rem_1fr_5.5rem_5.5rem_5rem_9rem] items-center gap-2 border-b border-slate-50 px-3 py-1.5 text-sm transition last:border-b-0 ${
+                    className={`grid cursor-pointer grid-cols-[2rem_1fr_5.5rem_5.5rem_6rem_9rem] items-center gap-2 border-b border-slate-50 px-3 py-1.5 text-sm transition last:border-b-0 ${
                       selected.has(row.key) ? "bg-indigo-50" : "hover:bg-slate-50"
                     }`}
                   >
@@ -628,7 +752,7 @@ export function BrowsePage() {
                   </div>
                 ))
               )}
-              {filtered.length > 1000 && (
+              {sorted.length > 1000 && (
                 <p className="px-4 py-2 text-center text-xs text-slate-400">
                   Showing the first 1,000 rows — narrow the filters to see the rest.
                 </p>
@@ -636,6 +760,9 @@ export function BrowsePage() {
             </div>
           </div>
 
+          {selectedRows.length === 1 && (
+            <CardInfoStrip row={selectedRows[0]} />
+          )}
           {singleTextRow && (
             <InlineEditor
               key={singleTextRow.key}
@@ -722,6 +849,55 @@ export function BrowsePage() {
         />
       )}
     </Layout>
+  );
+}
+
+function HeaderCell({
+  col,
+  sort,
+  onSort,
+  children,
+}: {
+  col: SortCol;
+  sort: { col: SortCol; dir: 1 | -1 };
+  onSort: (col: SortCol) => void;
+  children: React.ReactNode;
+}) {
+  const active = sort.col === col;
+  return (
+    <button
+      onClick={() => onSort(col)}
+      className={`flex items-center gap-0.5 text-left uppercase tracking-wide transition hover:text-slate-600 ${
+        active ? "text-slate-600" : ""
+      }`}
+    >
+      {children}
+      {active && <span>{sort.dir === 1 ? "▲" : "▼"}</span>}
+    </button>
+  );
+}
+
+/** Anki's Card Info, condensed: everything the scheduler knows about a card. */
+function CardInfoStrip({ row }: { row: Row }) {
+  const s = row.srs;
+  const cells: [string, string][] = [
+    ["State", STATE_LABELS[row.state]],
+    ["Due", s && row.state !== "new" ? new Date(s.due).toLocaleString() : row.newPos ? `New #${row.newPos}` : "—"],
+    ["Interval", s && s.reps > 0 ? `${s.ivl}d` : "—"],
+    ["Stability", s?.stab !== undefined ? s.stab.toFixed(1) : "—"],
+    ["Difficulty", s?.diff !== undefined ? s.diff.toFixed(1) : "—"],
+    ["Reviews", String(s?.reps ?? 0)],
+    ["Lapses", String(s?.lapses ?? 0)],
+    ["Added", new Date(row.createdAt).toLocaleDateString()],
+  ];
+  return (
+    <div className="mt-3 flex flex-wrap gap-x-6 gap-y-1 rounded-xl border border-slate-200 bg-slate-50 px-4 py-2.5">
+      {cells.map(([label, value]) => (
+        <span key={label} className="text-xs text-slate-500">
+          {label}: <b className="font-semibold text-slate-700">{value}</b>
+        </span>
+      ))}
+    </div>
   );
 }
 
