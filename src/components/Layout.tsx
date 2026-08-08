@@ -6,21 +6,56 @@ import { useStudyMode } from "../contexts/StudyModeContext";
 
 export function Layout({ children }: { children: ReactNode }) {
   const { user, logOut } = useAuth();
-  const { studyMode, setStudyMode } = useStudyMode();
+  const { studyMode } = useStudyMode();
   const navigate = useNavigate();
   const { pathname } = useLocation();
+
+  // Which section owns this page — drives the theme, wordmark and nav state.
   const inNotes = pathname.startsWith("/notes");
-  const theme = inNotes ? "theme-notes" : studyMode === "anki" ? "theme-anki" : "theme-quizlet";
+  const inDecks =
+    pathname.startsWith("/decks") ||
+    pathname.startsWith("/deck/") ||
+    pathname.startsWith("/study-group");
+  const inAnki = pathname.startsWith("/anki");
+  const inQuizlet = pathname.startsWith("/quizlet");
+  // The overview page is deliberately neutral: nothing highlighted.
+  const isHome = pathname === "/";
+
+  const theme = inNotes
+    ? "theme-notes"
+    : isHome
+      ? "theme-home"
+      : studyMode === "anki"
+        ? "theme-anki"
+        : "theme-quizlet";
+
+  const suffix = inNotes
+    ? "Notes"
+    : isHome
+      ? ""
+      : inAnki || (inDecks && studyMode === "anki")
+        ? "Anki"
+        : "Quizlet";
+
+  const badge = inNotes
+    ? "Lectures"
+    : isHome
+      ? "Overview"
+      : suffix === "Anki"
+        ? "Anki · spaced"
+        : "Quizlet · cram";
 
   return (
-    <div
-      className={`min-h-screen ${theme}`}
-      style={{ background: "var(--page-bg)" }}
-    >
+    <div className={`min-h-screen ${theme}`} style={{ background: "var(--page-bg)" }}>
       <div className="h-1.5 w-full" style={{ backgroundColor: "var(--accent)" }} />
       <header className="sticky top-0 z-20 border-b border-slate-200 bg-white/80 backdrop-blur">
-        <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3 sm:px-6">
-          <Link to="/" className="flex items-center" style={{ gap: "11px" }}>
+        <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-3 sm:px-6">
+          <Link
+            to="/"
+            className="flex shrink-0 items-center"
+            style={{ gap: "11px" }}
+            title="Home"
+          >
             <img src="/logo.png" alt="Recallis" className="h-9 w-9 object-contain" />
             <span
               style={{
@@ -34,17 +69,19 @@ export function Layout({ children }: { children: ReactNode }) {
             >
               Recallis
             </span>
-            <span
-              className="hidden text-[26px] text-slate-400 sm:inline"
-              style={{
-                fontFamily: "'Inter', system-ui, sans-serif",
-                fontWeight: 600,
-                letterSpacing: "-0.02em",
-                lineHeight: 1,
-              }}
-            >
-              {inNotes ? "Notes" : studyMode === "anki" ? "Anki" : "Quizlet"}
-            </span>
+            {suffix && (
+              <span
+                className="hidden text-[26px] text-slate-400 sm:inline"
+                style={{
+                  fontFamily: "'Inter', system-ui, sans-serif",
+                  fontWeight: 600,
+                  letterSpacing: "-0.02em",
+                  lineHeight: 1,
+                }}
+              >
+                {suffix}
+              </span>
+            )}
             <span
               className="ml-1 hidden rounded-full px-2 py-1 uppercase text-white sm:inline"
               style={{
@@ -56,71 +93,45 @@ export function Layout({ children }: { children: ReactNode }) {
                 lineHeight: 1,
               }}
             >
-              {inNotes
-                ? "Lectures"
-                : studyMode === "anki"
-                  ? "Anki · spaced"
-                  : "Quizlet · cram"}
+              {badge}
             </span>
           </Link>
+
           {user && (
-            <div className="flex items-center gap-3 text-sm">
-              <Link
-                to="/decks"
-                className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
-                  pathname.startsWith("/decks") ||
-                  pathname.startsWith("/deck/") ||
-                  pathname.startsWith("/study-group")
-                    ? "border-transparent bg-slate-800 text-white"
-                    : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
-                }`}
-                title="All your decks"
-              >
+            <div className="flex items-center gap-2 text-sm">
+              <NavPill to="/decks" active={inDecks} activeClass="bg-slate-800">
                 <Layers size={12} /> Decks
-              </Link>
-              <Link
-                to="/notes"
-                className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
-                  inNotes
-                    ? "border-transparent bg-blue-700 text-white"
-                    : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
-                }`}
-                title="Lecture notes — take notes, drop in slides, turn them into cards"
-              >
+              </NavPill>
+              <NavPill to="/notes" active={inNotes} activeClass="bg-blue-700">
                 <NotebookPen size={12} /> Notes
-              </Link>
-              <div
-                className={`flex overflow-hidden rounded-full border border-slate-200 text-xs font-semibold transition ${
-                  inNotes ? "opacity-45" : ""
-                }`}
-                title={
-                  inNotes
-                    ? "Study mode — applies when you're studying cards, not while taking notes."
-                    : "Anki mode: spaced repetition — cards come back over days. Quizlet mode: cram freely without touching the schedule."
-                }
-              >
-                <button
-                  onClick={() => setStudyMode("anki")}
+              </NavPill>
+
+              <div className="flex overflow-hidden rounded-full border border-slate-200 text-xs font-semibold">
+                <Link
+                  to="/anki"
                   className={`flex items-center gap-1 px-3 py-1.5 transition ${
-                    studyMode === "anki" && !inNotes
+                    inAnki
                       ? "bg-emerald-600 text-white"
                       : "bg-white text-slate-500 hover:bg-slate-50"
                   }`}
+                  title="Spaced repetition — cards come back over days"
                 >
                   <Repeat size={12} /> Anki
-                </button>
-                <button
-                  onClick={() => setStudyMode("quizlet")}
+                </Link>
+                <Link
+                  to="/quizlet"
                   className={`flex items-center gap-1 px-3 py-1.5 transition ${
-                    studyMode === "quizlet" && !inNotes
+                    inQuizlet
                       ? "bg-red-600 text-white"
                       : "bg-white text-slate-500 hover:bg-slate-50"
                   }`}
+                  title="Cram freely without touching your schedule"
                 >
                   <Zap size={12} /> Quizlet
-                </button>
+                </Link>
               </div>
-              <span className="hidden text-slate-500 sm:inline">
+
+              <span className="ml-1 hidden text-slate-500 lg:inline">
                 {user.displayName || user.email}
               </span>
               <button
@@ -131,7 +142,7 @@ export function Layout({ children }: { children: ReactNode }) {
                 className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-slate-600 transition hover:border-slate-300 hover:bg-slate-50"
               >
                 <LogOut size={14} />
-                Log out
+                <span className="hidden sm:inline">Log out</span>
               </button>
             </div>
           )}
@@ -139,5 +150,30 @@ export function Layout({ children }: { children: ReactNode }) {
       </header>
       <main className="mx-auto max-w-6xl px-4 py-8 sm:px-6">{children}</main>
     </div>
+  );
+}
+
+function NavPill({
+  to,
+  active,
+  activeClass,
+  children,
+}: {
+  to: string;
+  active: boolean;
+  activeClass: string;
+  children: ReactNode;
+}) {
+  return (
+    <Link
+      to={to}
+      className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
+        active
+          ? `border-transparent text-white ${activeClass}`
+          : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+      }`}
+    >
+      {children}
+    </Link>
   );
 }

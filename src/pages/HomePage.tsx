@@ -6,8 +6,10 @@ import {
   FileText,
   Layers,
   NotebookPen,
+  Repeat,
   Scissors,
   Sparkles,
+  Zap,
 } from "lucide-react";
 import { useAuth } from "../contexts/AuthContext";
 import { useStudyMode } from "../contexts/StudyModeContext";
@@ -112,6 +114,22 @@ export function HomePage() {
       .slice(0, 4);
   }, [notes]);
 
+  /** Totals across everything, so the overview isn't only about what's due. */
+  const library = useMemo(() => {
+    let cards = 0;
+    let right = 0;
+    let answered = 0;
+    for (const c of counts.values()) {
+      cards += c.practice.total;
+      if (c.practice.accuracy !== null) {
+        // Weight each deck's accuracy by its size for a fair overall figure.
+        right += c.practice.accuracy * c.practice.total;
+        answered += c.practice.total;
+      }
+    }
+    return { cards, accuracy: answered > 0 ? right / answered : null };
+  }, [counts]);
+
   const loading = decks === null || notes === null;
   const empty = !loading && decks!.length === 0 && notes!.length === 0;
   const allDeckIds = (decks ?? []).map((d) => d.id).join(",");
@@ -178,6 +196,19 @@ export function HomePage() {
             </div>
             <div className="flex flex-wrap items-center gap-x-5 gap-y-1 border-t border-slate-100 bg-slate-50 px-5 py-2.5 text-xs text-slate-500">
               <span className="flex items-center gap-1.5">
+                <Layers size={13} />
+                <b className="text-slate-700">{library.cards}</b> cards
+                {library.accuracy !== null && (
+                  <>
+                    {" · "}
+                    <b className="text-slate-700">
+                      {Math.round(library.accuracy * 100)}%
+                    </b>{" "}
+                    correct so far
+                  </>
+                )}
+              </span>
+              <span className="flex items-center gap-1.5">
                 <CalendarClock size={13} />
                 {today.count > 0 ? (
                   <>
@@ -209,6 +240,41 @@ export function HomePage() {
               </span>
             </div>
           </section>
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Link
+              to="/anki"
+              className="flex items-center gap-3 rounded-2xl border border-emerald-200 bg-white p-4 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
+            >
+              <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-emerald-100 text-emerald-700">
+                <Repeat size={16} />
+              </span>
+              <span className="min-w-0">
+                <span className="block text-sm font-bold text-slate-800">Anki</span>
+                <span className="block truncate text-xs text-slate-500">
+                  {totals.total > 0
+                    ? `${totals.total} due today · ${totals.dueTomorrow} tomorrow`
+                    : "Caught up — nothing due"}
+                </span>
+              </span>
+              <ArrowRight size={15} className="ml-auto shrink-0 text-slate-300" />
+            </Link>
+            <Link
+              to="/quizlet"
+              className="flex items-center gap-3 rounded-2xl border border-red-200 bg-white p-4 shadow-sm transition hover:-translate-y-0.5 hover:shadow-md"
+            >
+              <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-red-100 text-red-700">
+                <Zap size={16} />
+              </span>
+              <span className="min-w-0">
+                <span className="block text-sm font-bold text-slate-800">Quizlet</span>
+                <span className="block truncate text-xs text-slate-500">
+                  Practice freely — schedule untouched
+                </span>
+              </span>
+              <ArrowRight size={15} className="ml-auto shrink-0 text-slate-300" />
+            </Link>
+          </div>
 
           <div className="grid gap-5 lg:grid-cols-2">
             {/* Start here */}

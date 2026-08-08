@@ -6,6 +6,8 @@ import { Login } from "./pages/Login";
 import { Signup } from "./pages/Signup";
 import { Dashboard } from "./pages/Dashboard";
 import { HomePage } from "./pages/HomePage";
+import { AnkiHome } from "./pages/AnkiHome";
+import { QuizletHome } from "./pages/QuizletHome";
 import { NotesPage } from "./pages/NotesPage";
 import { NoteEditorPage } from "./pages/NoteEditorPage";
 import { DeckPage } from "./pages/DeckPage";
@@ -29,6 +31,22 @@ export default function App() {
             element={
               <ProtectedRoute>
                 <HomePage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/anki"
+            element={
+              <ProtectedRoute>
+                <AnkiHome />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/quizlet"
+            element={
+              <ProtectedRoute>
+                <QuizletHome />
               </ProtectedRoute>
             }
           />

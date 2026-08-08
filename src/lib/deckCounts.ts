@@ -3,12 +3,22 @@ import { buildOcclusionItems, buildTextItems } from "./studyItems";
 import { loadAnkiSettings, startOfStudyDay } from "./settings";
 import { isExcluded, isNew } from "./srs";
 
+export interface DeckPractice {
+  /** study items in the deck */
+  total: number;
+  /** items answered wrong more often than right — worth another pass */
+  shaky: number;
+  /** 0-1 accuracy over everything answered so far, or null if untouched */
+  accuracy: number | null;
+}
+
 export interface DeckCounts {
   newCount: number;
   learnCount: number;
   dueCount: number;
   /** review cards that come due during tomorrow */
   dueTomorrow: number;
+  practice: DeckPractice;
 }
 
 /**
@@ -34,6 +44,24 @@ export async function computeDeckCounts(
     ...buildTextItems(cards.map((c) => ({ ...c, deckId }))),
     ...buildOcclusionItems(sheets.map((sh) => ({ ...sh, deckId }))),
   ];
+
+  // Practice signal comes from plain right/wrong tallies, so it reflects
+  // Quizlet cramming too — not just the Anki schedule.
+  let right = 0;
+  let wrong = 0;
+  let shaky = 0;
+  for (const card of cards) {
+    const st = card.stats ?? { correct: 0, incorrect: 0 };
+    right += st.correct;
+    wrong += st.incorrect;
+    if (st.incorrect > st.correct) shaky++;
+  }
+  const answered = right + wrong;
+  const practice = {
+    total: items.length,
+    shaky,
+    accuracy: answered > 0 ? right / answered : null,
+  };
 
   let newRaw = 0;
   let learnCount = 0;
@@ -63,6 +91,7 @@ export async function computeDeckCounts(
   const newAllowance = Math.max(0, settings.newPerDay - newToday);
   const reviewAllowance = Math.max(0, settings.maxReviewsPerDay - reviewsToday);
   return {
+    practice,
     dueTomorrow,
     newCount: Math.min(newRaw, newAllowance),
     learnCount,

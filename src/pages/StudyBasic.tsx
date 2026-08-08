@@ -69,6 +69,7 @@ import {
 } from "../lib/srs";
 import { gradeAnswer, shuffle } from "../lib/text";
 import { SrsWriter, type SaveStatus } from "../lib/srsWriter";
+import { recordRecentDecks } from "../lib/recents";
 import {
   clearCramSession,
   loadCramSession,
@@ -200,7 +201,13 @@ export function StudyBasic() {
   const [total, setTotal] = useState(0);
   const [nextDueMs, setNextDueMs] = useState<number | null>(null);
   const [flipped, setFlipped] = useState(false);
-  const [mode, setMode] = useState<"flip" | "type" | "learn">("flip");
+  const [mode, setMode] = useState<"flip" | "type" | "learn">(() => {
+    // Quizlet home links in with a chosen study format.
+    const f = searchParams.get("format");
+    if (f === "learn") return "learn";
+    if (f === "write") return "type";
+    return "flip";
+  });
   const [occMode, setOccMode] = useState<"hideOne" | "hideAll">("hideOne");
   const [typed, setTyped] = useState("");
   const [checked, setChecked] = useState<null | boolean>(null);
@@ -209,6 +216,7 @@ export function StudyBasic() {
   const [sessionNonce, setSessionNonce] = useState(0);
   const [formatOpen, setFormatOpen] = useState(false);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("saved");
+  const [queueReady, setQueueReady] = useState(false);
 
   // Every graded card is written through here so nothing is silently lost.
   const writerRef = useRef<SrsWriter | null>(null);
@@ -251,13 +259,21 @@ export function StudyBasic() {
     setCards(null);
     setSheets(null);
     setSrsMap(null);
+    setQueueReady(false);
     reloadData();
   }, [reloadData]);
+
+  // Remember what was studied so the Quizlet home can offer it again.
+  useEffect(() => {
+    if (deckIds.length > 0) recordRecentDecks(deckIds);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [deckScopeKey]);
 
   // Build the session queue once everything is loaded (and rebuild when the
   // study mode toggles — the queues are fundamentally different).
   useEffect(() => {
     if (!cards || !sheets || !srsMap) return;
+    setQueueReady(false);
     const all = [
       ...buildTextItems(cards, {
         answerWithTerm:
@@ -280,6 +296,7 @@ export function StudyBasic() {
           setQueue(restored);
           setTotal(Math.max(saved.total, restored.length));
           setNextDueMs(null);
+          setQueueReady(true);
           return;
         }
         clearCramSession(cramScope);
@@ -288,6 +305,7 @@ export function StudyBasic() {
       setQueue(items);
       setTotal(items.length);
       setNextDueMs(null);
+      setQueueReady(true);
     } else {
       let cancelled = false;
       (async () => {
@@ -353,6 +371,7 @@ export function StudyBasic() {
           .map((it) => srsMap.get(combinedKey(it))?.due)
           .filter((d): d is number => typeof d === "number" && d > now);
         setNextDueMs(future.length ? Math.min(...future) - now : null);
+        setQueueReady(true);
       })();
       return () => {
         cancelled = true;
@@ -754,7 +773,7 @@ export function StudyBasic() {
 
   const progress = total > 0 ? Math.round(((total - queue.length) / total) * 100) : 0;
 
-  if (!cards || !sheets || !srsMap) {
+  if (!cards || !sheets || !srsMap || !queueReady) {
     return (
       <Layout>
         <div className="py-24 text-center text-slate-400">Loading…</div>
@@ -788,8 +807,10 @@ export function StudyBasic() {
             </p>
             <p className="mb-5 text-sm text-indigo-700">
               {nextDueMs !== null
-                ? `Next card comes due in ${formatDelay(nextDueMs)}.`
-                : "This deck has no cards yet."}{" "}
+                ? `You're done for today — the next card comes due in ${formatDelay(nextDueMs)}.`
+                : cards.length + sheets.length === 0
+                  ? "This deck has no cards yet."
+                  : "Everything here is either scheduled for later, suspended, or buried."}{" "}
               Want to practice anyway without touching the schedule?
             </p>
             <button
