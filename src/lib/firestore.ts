@@ -294,18 +294,21 @@ export async function createCard(uid: string, deckId: string, data: CardData) {
   await touchDeck(uid, deckId);
 }
 
+/** Returns the new card ids, in the same order as `items`. */
 export async function createCardsBulk(
   uid: string,
   deckId: string,
   items: CardData[]
-) {
+): Promise<string[]> {
   // Firestore hard-limits a batch to 500 operations, so commit in chunks.
   const col = cardsCol(uid, deckId);
   const CHUNK = 400;
+  const ids: string[] = [];
   for (let i = 0; i < items.length; i += CHUNK) {
     const batch = writeBatch(db);
     for (const data of items.slice(i, i + CHUNK)) {
       const ref = doc(col);
+      ids.push(ref.id);
       batch.set(ref, {
         data,
         stats: { correct: 0, incorrect: 0 },
@@ -316,6 +319,7 @@ export async function createCardsBulk(
     await batch.commit();
   }
   await touchDeck(uid, deckId);
+  return ids;
 }
 
 export async function updateCard(

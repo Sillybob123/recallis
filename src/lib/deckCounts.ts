@@ -16,6 +16,16 @@ export interface DeckCounts {
   newCount: number;
   learnCount: number;
   dueCount: number;
+  /**
+   * Uncapped tallies. A parent row must sum these and apply the daily
+   * allowance once — summing already-capped children would let a parent
+   * report the full limit no matter how much you'd already studied.
+   */
+  newRaw: number;
+  dueRaw: number;
+  /** today's remaining budget; identical for every deck (one shared preset) */
+  newAllowance: number;
+  reviewAllowance: number;
   /** review cards that come due during tomorrow */
   dueTomorrow: number;
   practice: DeckPractice;
@@ -93,6 +103,10 @@ export async function computeDeckCounts(
   return {
     practice,
     dueTomorrow,
+    newRaw,
+    dueRaw,
+    newAllowance,
+    reviewAllowance,
     newCount: Math.min(newRaw, newAllowance),
     learnCount,
     dueCount: Math.min(dueRaw, reviewAllowance),

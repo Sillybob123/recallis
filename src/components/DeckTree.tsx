@@ -17,7 +17,6 @@ import {
   updateDeck,
 } from "../lib/firestore";
 import { exportDeckToAnki, downloadBlob } from "../lib/ankiExport";
-import { loadAnkiSettings } from "../lib/settings";
 import type { DeckCounts } from "../lib/deckCounts";
 import { collectDecks, normalizeDeckPath, type DeckNode } from "../lib/deckPath";
 import type { Deck } from "../types";
@@ -48,28 +47,31 @@ export function DeckRows({
 
   // A parent shows the sum beneath it, capped by the daily limits (Anki does
   // the same: 71 new under Anatomy still displays as 60).
-  let totals: DeckCounts | null = null;
+  let totals: { newCount: number; learnCount: number; dueCount: number } | null =
+    null;
   if (counts) {
-    let n = 0;
-    let l = 0;
-    let d = 0;
+    let newRaw = 0;
+    let learn = 0;
+    let dueRaw = 0;
+    let newAllowance = Infinity;
+    let reviewAllowance = Infinity;
     let any = false;
     for (const deck of descendants) {
       const c = counts.get(deck.id);
       if (!c) continue;
       any = true;
-      n += c.newCount;
-      l += c.learnCount;
-      d += c.dueCount;
+      newRaw += c.newRaw;
+      learn += c.learnCount;
+      dueRaw += c.dueRaw;
+      // The budget is shared, so take it once rather than per deck.
+      newAllowance = Math.min(newAllowance, c.newAllowance);
+      reviewAllowance = Math.min(reviewAllowance, c.reviewAllowance);
     }
     if (any) {
-      const limits = loadAnkiSettings();
       totals = {
-        newCount: Math.min(n, limits.newPerDay),
-        learnCount: l,
-        dueCount: Math.min(d, limits.maxReviewsPerDay),
-        dueTomorrow: 0,
-        practice: { total: 0, shaky: 0, accuracy: null },
+        newCount: Math.min(newRaw, newAllowance),
+        learnCount: learn,
+        dueCount: Math.min(dueRaw, reviewAllowance),
       };
     }
   }

@@ -17,10 +17,30 @@ export interface ParsedSheet {
   needsPixelNormalize?: boolean;
 }
 
+/** A card's scheduling as Anki stored it, already converted to our shape. */
+export interface ImportedSchedule {
+  phase: "learn" | "review" | "relearn";
+  /** epoch ms */
+  due: number;
+  /** interval in days */
+  ivl: number;
+  ease: number;
+  reps: number;
+  lapses: number;
+  suspended: boolean;
+  buried: boolean;
+}
+
+export interface ParsedCard {
+  data: CardData;
+  /** keyed by cloze number (1-based); basic cards use 1 */
+  schedule?: Map<number, ImportedSchedule>;
+}
+
 export interface ParsedApkgDeck {
   /** "Anatomy::Lab00::Positions" style */
   name: string;
-  cards: CardData[];
+  cards: ParsedCard[];
   sheets: ParsedSheet[];
 }
 
@@ -37,6 +57,8 @@ export interface ParsedApkg {
     sheets: number;
     masks: number;
     skippedNotes: number;
+    /** cards that arrived with real scheduling we can preserve */
+    scheduled: number;
     warnings: string[];
   };
 }
@@ -455,6 +477,58 @@ export async function parseApkg(
       }
     }
 
+    // --- scheduling, keyed by note id then card ordinal ---
+    // Anki stores review due dates as day offsets from the collection's
+    // creation day, and learning steps as absolute epoch seconds.
+    const schedules = new Map<number, Map<number, ImportedSchedule>>();
+    let scheduledCount = 0;
+    {
+      let crtSeconds = 0;
+      try {
+        const colRes = db.exec("SELECT crt FROM col");
+        crtSeconds = Number(colRes[0]?.values?.[0]?.[0] ?? 0);
+      } catch {
+        /* no col row; treat everything as new */
+      }
+      const dayMs = 86400000;
+      const res = db.exec(
+        "SELECT nid, ord, type, queue, due, ivl, factor, reps, lapses FROM cards"
+      );
+      for (const row of res[0]?.values ?? []) {
+        const [nid, ord, type, queue, due, ivl, factor, reps, lapses] = row.map(Number);
+        if (type === 0) continue; // still new — nothing worth carrying over
+        const suspended = queue === -1;
+        const buried = queue === -2 || queue === -3;
+        let dueMs: number;
+        let phase: ImportedSchedule["phase"];
+        if (type === 2) {
+          phase = "review";
+          dueMs = (crtSeconds + due * 86400) * 1000;
+        } else {
+          phase = type === 3 ? "relearn" : "learn";
+          // Learning due values are epoch seconds; very small ones are day
+          // offsets from an older scheduler.
+          dueMs = due > 1e9 ? due * 1000 : (crtSeconds + due * 86400) * 1000;
+        }
+        const entry: ImportedSchedule = {
+          phase,
+          due: dueMs,
+          ivl: Math.max(0, Math.round(ivl)),
+          ease: factor > 0 ? factor / 1000 : 2.5,
+          reps: Math.max(reps, 1),
+          lapses,
+          suspended,
+          buried,
+        };
+        const byOrd = schedules.get(nid) ?? new Map<number, ImportedSchedule>();
+        // Anki card ordinals are 0-based; cloze numbers are 1-based.
+        byOrd.set(ord + 1, entry);
+        schedules.set(nid, byOrd);
+        scheduledCount++;
+        void dayMs;
+      }
+    }
+
     // --- note -> deck via its first card ---
     const noteDeck = new Map<number, number>();
     {
@@ -504,6 +578,7 @@ export async function parseApkg(
       sheets: 0,
       masks: 0,
       skippedNotes: 0,
+      scheduled: 0,
       warnings,
     };
 
@@ -557,15 +632,18 @@ export async function parseApkg(
         stats.skippedNotes++;
         continue;
       }
+      const schedule = schedules.get(note.id);
       if (kind === "cloze" && /\{\{c\d+::/.test(first)) {
         deckFor(note.deckName).cards.push({
-          type: "cloze",
-          text: first,
-          extra: second || undefined,
+          data: { type: "cloze", text: first, extra: second || undefined },
+          schedule,
         });
         stats.cloze++;
       } else if (second) {
-        deckFor(note.deckName).cards.push({ type: "basic", front: first, back: second });
+        deckFor(note.deckName).cards.push({
+          data: { type: "basic", front: first, back: second },
+          schedule,
+        });
         stats.basic++;
       } else {
         stats.skippedNotes++;
@@ -608,6 +686,7 @@ export async function parseApkg(
       stats.masks += parsed.shapes.length;
     }
 
+    stats.scheduled = scheduledCount;
     return {
       decks: Array.from(deckMap.values()).filter(
         (d) => d.cards.length > 0 || d.sheets.length > 0

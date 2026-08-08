@@ -37,6 +37,19 @@ export function AnkiHome() {
     return watchDecks(user.uid, setDecks);
   }, [user]);
 
+  const [countsNonce, setCountsNonce] = useState(0);
+  useEffect(() => {
+    const refresh = () => {
+      if (document.visibilityState === "visible") setCountsNonce((n) => n + 1);
+    };
+    document.addEventListener("visibilitychange", refresh);
+    window.addEventListener("focus", refresh);
+    return () => {
+      document.removeEventListener("visibilitychange", refresh);
+      window.removeEventListener("focus", refresh);
+    };
+  }, []);
+
   useEffect(() => {
     if (!user || !decks || decks.length === 0) return;
     let cancelled = false;
@@ -55,28 +68,33 @@ export function AnkiHome() {
     return () => {
       cancelled = true;
     };
-  }, [user, decks]);
+  }, [user, decks, countsNonce]);
 
   const tree = useMemo(() => buildDeckTree(decks ?? []), [decks]);
 
   const totals = useMemo(() => {
-    let n = 0;
-    let l = 0;
-    let d = 0;
+    let newRaw = 0;
+    let learn = 0;
+    let dueRaw = 0;
     let tomorrow = 0;
+    let newAllowance = Infinity;
+    let reviewAllowance = Infinity;
     for (const c of counts.values()) {
-      n += c.newCount;
-      l += c.learnCount;
-      d += c.dueCount;
+      newRaw += c.newRaw;
+      learn += c.learnCount;
+      dueRaw += c.dueRaw;
       tomorrow += c.dueTomorrow;
+      newAllowance = Math.min(newAllowance, c.newAllowance);
+      reviewAllowance = Math.min(reviewAllowance, c.reviewAllowance);
     }
-    const limits = loadAnkiSettings();
+    const newCount = Math.min(newRaw, newAllowance);
+    const dueCount = Math.min(dueRaw, reviewAllowance);
     return {
-      newCount: Math.min(n, limits.newPerDay),
-      learnCount: l,
-      dueCount: Math.min(d, limits.maxReviewsPerDay),
+      newCount,
+      learnCount: learn,
+      dueCount,
       tomorrow,
-      total: Math.min(n, limits.newPerDay) + l + Math.min(d, limits.maxReviewsPerDay),
+      total: newCount + learn + dueCount,
     };
   }, [counts]);
 

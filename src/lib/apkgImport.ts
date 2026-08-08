@@ -2,12 +2,16 @@ import type { SqlJsStatic } from "sql.js";
 import {
   parseApkg,
   readMediaBytes,
+  type ImportedSchedule,
   type ParsedApkg,
   type ParsedSheet,
 } from "./apkgParse";
+import { findClozeNumbers } from "./cloze";
+import { newSrsState, type SrsState } from "./srs";
 import {
   contentTypeForFilename,
   createCardsBulk,
+  setSrsState,
   createDeck,
   createOcclusionSheet,
   uploadDeckMedia,
@@ -49,7 +53,44 @@ export interface ApkgImportOutcome {
   sheetsCreated: number;
   masksCreated: number;
   mediaUploaded: number;
+  schedulesRestored: number;
   warnings: string[];
+}
+
+/**
+ * Converts Anki's SM-2 record into our FSRS state. Stability starts at the
+ * interval Anki had already earned, and difficulty is derived from the ease
+ * factor (1.3 = hardest, 2.5 = default, 3.0+ = easy), so a mature card keeps
+ * its spacing instead of restarting from scratch.
+ */
+function srsFromAnki(entry: ImportedSchedule): SrsState {
+  const now = Date.now();
+  const base = newSrsState(now);
+  const difficulty = Math.min(Math.max(10 - (entry.ease - 1.3) * 4.12, 1), 10);
+  return {
+    ...base,
+    phase: entry.phase,
+    step: 0,
+    ease: entry.ease,
+    ivl: entry.ivl,
+    due: entry.due,
+    reps: entry.reps,
+    lapses: entry.lapses,
+    stab: Math.max(entry.ivl, 0.5),
+    diff: difficulty,
+    lastReviewAt: Math.min(now, entry.due),
+    firstSeen: Math.min(now, entry.due),
+    lastReviewed: Math.min(now, entry.due),
+    suspended: entry.suspended || undefined,
+    buriedUntil: entry.buried ? nextDayStartFrom(now) : null,
+  };
+}
+
+function nextDayStartFrom(now: number): number {
+  const d = new Date(now);
+  d.setHours(4, 0, 0, 0);
+  if (d.getTime() <= now) d.setDate(d.getDate() + 1);
+  return d.getTime();
 }
 
 const IMG_SRC_RE = /(<img\b[^>]*\bsrc=")([^"]+)(")/gi;
@@ -99,6 +140,8 @@ export async function importParsedApkg(
   opts: {
     split: boolean;
     singleDeckName: string;
+    /** carry over Anki's due dates and intervals when the package has them */
+    importSchedule: boolean;
     onProgress?: (p: ApkgImportProgress) => void;
   }
 ): Promise<ApkgImportOutcome> {
@@ -108,6 +151,7 @@ export async function importParsedApkg(
   let sheetsCreated = 0;
   let masksCreated = 0;
   let mediaUploaded = 0;
+  let schedulesRestored = 0;
 
   const totalWork = parsed.decks.reduce(
     (n, d) => n + d.cards.length + d.sheets.length,
@@ -233,28 +277,58 @@ export async function importParsedApkg(
 
     // Cards: rewrite media references, then bulk-create.
     const rewritten: CardData[] = [];
+    const schedules: (Map<number, ImportedSchedule> | undefined)[] = [];
     for (const card of deck.cards) {
       progress(`Uploading card images (${deck.name})`);
-      if (card.type === "basic") {
+      const data = card.data;
+      if (data.type === "basic") {
         rewritten.push({
           type: "basic",
-          front: await rewriteHtml(target, card.front),
-          back: await rewriteHtml(target, card.back),
+          front: await rewriteHtml(target, data.front),
+          back: await rewriteHtml(target, data.back),
         });
       } else {
         rewritten.push({
           type: "cloze",
-          text: await rewriteHtml(target, card.text),
-          extra: card.extra ? await rewriteHtml(target, card.extra) : undefined,
+          text: await rewriteHtml(target, data.text),
+          extra: data.extra ? await rewriteHtml(target, data.extra) : undefined,
         });
       }
+      schedules.push(card.schedule);
       workDone++;
     }
     if (rewritten.length) {
       progress(`Saving cards (${deck.name})`);
       try {
-        await createCardsBulk(uid, target.deckId, rewritten);
+        const ids = await createCardsBulk(uid, target.deckId, rewritten);
         cardsCreated += rewritten.length;
+
+        if (opts.importSchedule) {
+          progress(`Restoring schedules (${deck.name})`);
+          for (let i = 0; i < ids.length; i++) {
+            const schedule = schedules[i];
+            if (!schedule) continue;
+            const data = rewritten[i];
+            const numbers =
+              data.type === "cloze" ? findClozeNumbers(data.text) : [1];
+            for (const num of numbers) {
+              const entry = schedule.get(num);
+              if (!entry) continue;
+              const itemKey = data.type === "cloze" ? `${ids[i]}-c${num}` : ids[i];
+              try {
+                await setSrsState(
+                  uid,
+                  target.deckId,
+                  itemKey,
+                  srsFromAnki(entry)
+                );
+                schedulesRestored++;
+              } catch {
+                warnings.push(`Couldn't restore the schedule for one card in "${deck.name}".`);
+              }
+            }
+          }
+        }
       } catch (err) {
         warnings.push(
           `Saving cards for "${deck.name}" failed: ${(err as Error).message}`
@@ -276,5 +350,13 @@ export async function importParsedApkg(
   }
 
   progress("Done");
-  return { decksCreated, cardsCreated, sheetsCreated, masksCreated, mediaUploaded, warnings };
+  return {
+    decksCreated,
+    cardsCreated,
+    sheetsCreated,
+    masksCreated,
+    mediaUploaded,
+    schedulesRestored,
+    warnings,
+  };
 }

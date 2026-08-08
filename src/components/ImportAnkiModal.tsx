@@ -20,6 +20,7 @@ export function ImportAnkiModal({
   const [parseError, setParseError] = useState("");
   const [parsing, setParsing] = useState(false);
   const [split, setSplit] = useState(true);
+  const [importSchedule, setImportSchedule] = useState(true);
   const [singleName, setSingleName] = useState("");
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState<ApkgImportProgress | null>(null);
@@ -79,11 +80,15 @@ export function ImportAnkiModal({
         const outcome = await importParsedApkg(uid, pkgResult, {
           split,
           singleDeckName: singleName.trim() || "Imported deck",
+          importSchedule,
           onProgress: setProgress,
         });
         setWarnings(outcome.warnings);
         setDone(
-          `Imported ${outcome.cardsCreated} cards, ${outcome.sheetsCreated} occlusion sheets (${outcome.masksCreated} masks), and ${outcome.mediaUploaded} images into ${outcome.decksCreated} deck${outcome.decksCreated === 1 ? "" : "s"}.`
+          `Imported ${outcome.cardsCreated} cards, ${outcome.sheetsCreated} occlusion sheets (${outcome.masksCreated} masks), and ${outcome.mediaUploaded} images into ${outcome.decksCreated} deck${outcome.decksCreated === 1 ? "" : "s"}.` +
+            (outcome.schedulesRestored > 0
+              ? ` Kept the review schedule for ${outcome.schedulesRestored} card${outcome.schedulesRestored === 1 ? "" : "s"}.`
+              : "")
         );
       } else if (txtResult) {
         if (split && txtResult.groups.some((g) => g.ankiDeck)) {
@@ -199,6 +204,11 @@ export function ImportAnkiModal({
                     masks — converted to native, editable occlusion sheets (groups preserved)
                   </li>
                   <li>Card images upload to your Firebase storage automatically</li>
+                  {pkgResult.stats.scheduled > 0 && (
+                    <li className="text-emerald-600">
+                      {pkgResult.stats.scheduled} cards carry review history
+                    </li>
+                  )}
                   {pkgResult.stats.skippedNotes > 0 && (
                     <li className="text-amber-600">
                       {pkgResult.stats.skippedNotes} notes skipped (empty or unreadable)
@@ -228,6 +238,24 @@ export function ImportAnkiModal({
 
             {ready && (
               <div className="space-y-3">
+                {(pkgResult?.stats.scheduled ?? 0) > 0 && (
+                  <label className="flex items-start gap-2 text-sm text-slate-700">
+                    <input
+                      type="checkbox"
+                      checked={importSchedule}
+                      onChange={(e) => setImportSchedule(e.target.checked)}
+                      className="mt-0.5"
+                    />
+                    <span>
+                      Keep Anki's review schedule
+                      <span className="mt-0.5 block text-xs text-slate-400">
+                        Due dates, intervals, and lapses carry over, so mature
+                        cards stay mature instead of restarting as new. Uncheck
+                        to import everything as brand-new cards.
+                      </span>
+                    </span>
+                  </label>
+                )}
                 {multiDeck && (
                   <label className="flex items-start gap-2 text-sm text-slate-700">
                     <input

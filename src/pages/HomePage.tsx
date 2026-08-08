@@ -52,6 +52,19 @@ export function HomePage() {
   }, [user]);
 
   // Due counts per deck, loaded in the background.
+  const [countsNonce, setCountsNonce] = useState(0);
+  useEffect(() => {
+    const refresh = () => {
+      if (document.visibilityState === "visible") setCountsNonce((n) => n + 1);
+    };
+    document.addEventListener("visibilitychange", refresh);
+    window.addEventListener("focus", refresh);
+    return () => {
+      document.removeEventListener("visibilitychange", refresh);
+      window.removeEventListener("focus", refresh);
+    };
+  }, []);
+
   useEffect(() => {
     if (!user || !decks || decks.length === 0) return;
     let cancelled = false;
@@ -70,19 +83,25 @@ export function HomePage() {
     return () => {
       cancelled = true;
     };
-  }, [user, decks]);
+  }, [user, decks, countsNonce]);
 
   const totals = useMemo(() => {
-    let newCount = 0;
+    let newRaw = 0;
     let learnCount = 0;
-    let dueCount = 0;
+    let dueRaw = 0;
     let dueTomorrow = 0;
+    let newAllowance = Infinity;
+    let reviewAllowance = Infinity;
     for (const c of counts.values()) {
-      newCount += c.newCount;
+      newRaw += c.newRaw;
       learnCount += c.learnCount;
-      dueCount += c.dueCount;
+      dueRaw += c.dueRaw;
       dueTomorrow += c.dueTomorrow;
+      newAllowance = Math.min(newAllowance, c.newAllowance);
+      reviewAllowance = Math.min(reviewAllowance, c.reviewAllowance);
     }
+    const newCount = Math.min(newRaw, newAllowance);
+    const dueCount = Math.min(dueRaw, reviewAllowance);
     return {
       newCount,
       learnCount,

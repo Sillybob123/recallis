@@ -21,25 +21,34 @@ body {
   box-sizing: border-box;
 }
 
-.flip-card {
-  perspective: 1600px;
-}
+/* The answer simply replaces the question. A 3D rotation looks lively in a
+   demo but is unpleasant when you're grading hundreds of cards in a row. */
 .flip-card-inner {
   position: relative;
-  transform-style: preserve-3d;
-  transition: transform 0.5s cubic-bezier(0.4, 0.2, 0.2, 1);
-}
-.flip-card-inner.flipped {
-  transform: rotateY(180deg);
 }
 .flip-card-face {
   position: absolute;
   inset: 0;
-  backface-visibility: hidden;
-  -webkit-backface-visibility: hidden;
+  opacity: 1;
+  transition: opacity 0.12s ease-out;
 }
-.flip-card-back {
-  transform: rotateY(180deg);
+.flip-card-inner .flip-card-back {
+  opacity: 0;
+  pointer-events: none;
+}
+.flip-card-inner.flipped .flip-card-face:not(.flip-card-back) {
+  opacity: 0;
+  pointer-events: none;
+}
+.flip-card-inner.flipped .flip-card-back {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .flip-card-face {
+    transition: none;
+  }
 }
 
 .prose-card :where(h1) {

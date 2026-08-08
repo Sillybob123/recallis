@@ -7,7 +7,7 @@ import { Layout } from "../components/Layout";
 import { watchDecks } from "../lib/firestore";
 import { computeDeckCounts, type DeckCounts } from "../lib/deckCounts";
 import { loadRecentDecks } from "../lib/recents";
-import { normalizeDeckPath } from "../lib/deckPath";
+import { deckLeafName, deckParentPath, splitDeckPath } from "../lib/deckPath";
 import type { Deck } from "../types";
 
 /** The three ways a Quizlet-mode session can ask you a deck. */
@@ -77,11 +77,23 @@ export function QuizletHome() {
       .slice(0, 5);
   }, [decks, counts]);
 
-  const studyable = useMemo(
-    () =>
-      (decks ?? []).filter((d) => (counts.get(d.id)?.practice.total ?? 0) > 0),
-    [decks, counts]
-  );
+  /** Decks with cards, grouped under their parent path so the list reads as
+   *  a hierarchy instead of repeating "A::B::C" on every row. */
+  const grouped = useMemo(() => {
+    const withCards = (decks ?? []).filter(
+      (d) => (counts.get(d.id)?.practice.total ?? 0) > 0
+    );
+    const map = new Map<string, Deck[]>();
+    for (const deck of withCards) {
+      const key = deckParentPath(deck.name);
+      const list = map.get(key) ?? [];
+      list.push(deck);
+      map.set(key, list);
+    }
+    return [...map.entries()].sort(([a], [b]) => a.localeCompare(b));
+  }, [decks, counts]);
+
+  const studyableCount = grouped.reduce((n, [, list]) => n + list.length, 0);
 
   return (
     <Layout>
@@ -118,9 +130,12 @@ export function QuizletHome() {
                     className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm transition hover:-translate-y-0.5 hover:border-red-300 hover:shadow-md"
                   >
                     <p className="truncate text-sm font-semibold text-slate-800">
-                      {normalizeDeckPath(deck.name)}
+                      {deckLeafName(deck.name)}
                     </p>
-                    <p className="text-xs text-slate-400">
+                    <p className="truncate text-xs text-slate-400">
+                      {deckParentPath(deck.name)
+                        ? splitDeckPath(deckParentPath(deck.name)).join(" › ") + " · "
+                        : ""}
                       {counts.get(deck.id)?.practice.total ?? 0} cards
                     </p>
                   </Link>
@@ -145,7 +160,12 @@ export function QuizletHome() {
                       className="flex items-center gap-3 rounded-lg px-2 py-2 transition hover:bg-white"
                     >
                       <span className="min-w-0 flex-1 truncate text-sm font-medium text-slate-800">
-                        {normalizeDeckPath(deck.name)}
+                        {deckLeafName(deck.name)}
+                        {deckParentPath(deck.name) && (
+                          <span className="ml-1.5 text-xs font-normal text-slate-400">
+                            {splitDeckPath(deckParentPath(deck.name)).join(" › ")}
+                          </span>
+                        )}
                       </span>
                       {p!.shaky > 0 && (
                         <span className="shrink-0 text-xs font-semibold text-amber-700">
@@ -168,13 +188,21 @@ export function QuizletHome() {
             <div className="border-b border-slate-100 bg-slate-50 px-4 py-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
               All decks — pick how you want to study
             </div>
-            {studyable.length === 0 ? (
+            {studyableCount === 0 ? (
               <p className="px-4 py-8 text-center text-sm text-slate-400">
                 Your decks are empty. Add some cards first.
               </p>
             ) : (
               <ul>
-                {studyable.map((deck) => (
+                {grouped.map(([parent, list]) => (
+                  <li key={parent || "__root"}>
+                    {parent && (
+                      <p className="border-b border-slate-100 bg-slate-50/70 px-4 py-1.5 text-[11px] font-bold uppercase tracking-wide text-slate-400">
+                        {splitDeckPath(parent).join(" › ")}
+                      </p>
+                    )}
+                    <ul>
+                      {list.map((deck) => (
                   <li
                     key={deck.id}
                     className="flex flex-wrap items-center gap-3 border-b border-slate-100 px-4 py-2.5 last:border-b-0 hover:bg-slate-50"
@@ -182,8 +210,9 @@ export function QuizletHome() {
                     <Link
                       to={`/deck/${deck.id}`}
                       className="min-w-0 flex-1 truncate text-sm font-medium text-slate-800 hover:text-red-600"
+                      style={{ paddingLeft: parent ? "0.75rem" : 0 }}
                     >
-                      {normalizeDeckPath(deck.name)}
+                      {deckLeafName(deck.name)}
                     </Link>
                     <span className="shrink-0 text-xs text-slate-400">
                       {counts.get(deck.id)?.practice.total ?? 0} cards
@@ -199,6 +228,9 @@ export function QuizletHome() {
                         </Link>
                       ))}
                     </div>
+                  </li>
+                      ))}
+                    </ul>
                   </li>
                 ))}
               </ul>
