@@ -158,6 +158,12 @@ export async function exportDeckToAnki(
         const unitShapes = unit.shapeIds
           .map((id) => shapeById.get(id))
           .filter((s): s is OcclusionShape => Boolean(s));
+        // On a text-box mask the label is the prompt already drawn onto the
+        // question image — echoing it above the answer just looks like a
+        // stray caption.
+        const answerLabel = unitShapes.some((s) => s.textPrompt)
+          ? ""
+          : unit.label ?? "";
         const qBlob = await bakeMasked(img, unitShapes);
         const qName = `occ_${sheet.id}_${unit.key.replace(/[^a-z0-9-]/gi, "")}_q.png`;
         media.file(qName, qBlob);
@@ -166,7 +172,7 @@ export async function exportDeckToAnki(
           "Basic",
           deckName,
           `<img src="${qName}">`,
-          `${unit.label ? `<b>${unit.label}</b><br>` : ""}<img src="${answerName}">`,
+          `${answerLabel ? `<b>${answerLabel}</b><br>` : ""}<img src="${answerName}">`,
         ]);
       }
     } catch {

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   ArrowLeft,
   Type,
@@ -46,8 +46,12 @@ function clamp(v: number, min: number, max: number) {
 
 export function OcclusionEditor() {
   const { deckId, sheetId } = useParams();
+  const [searchParams] = useSearchParams();
+  // Opened from a lecture note? Go back there (and to the slide) on save.
+  const returnTo = searchParams.get("returnTo");
   const { user } = useAuth();
   const navigate = useNavigate();
+  const goBack = () => navigate(returnTo || `/deck/${deckId}`);
 
   const [title, setTitle] = useState("");
   const [file, setFile] = useState<File | null>(null);
@@ -72,7 +76,7 @@ export function OcclusionEditor() {
     if (!sheetId || !user || !deckId) return;
     getOcclusionSheet(user.uid, deckId, sheetId).then((sheet) => {
       if (!sheet) {
-        navigate(`/deck/${deckId}`);
+        goBack();
         return;
       }
       setTitle(sheet.title);
@@ -271,6 +275,25 @@ export function OcclusionEditor() {
   function handleShapePointerDown(e: React.PointerEvent, shape: OcclusionShape) {
     if (tool === "polygon") return; // clicks pass through while drawing
     e.stopPropagation();
+    // With the text tool active, clicking an existing mask turns it into a
+    // text box (or edits the prompt of one that already is).
+    if (tool === "textbox") {
+      const asked = prompt(
+        "Question to show on this box:",
+        shape.textPrompt ? shape.label ?? "" : ""
+      );
+      if (asked === null) return;
+      const text = asked.trim();
+      setShapes((prev) =>
+        prev.map((sh) =>
+          sh.id === shape.id
+            ? { ...sh, label: text, textPrompt: text ? true : undefined }
+            : sh
+        )
+      );
+      setSelectedIds(new Set([shape.id]));
+      return;
+    }
     const pos = relPos(e.clientX, e.clientY);
     const additive = e.shiftKey;
     selectOnly(shape.id, additive);
@@ -464,7 +487,7 @@ export function OcclusionEditor() {
           shapes,
         });
       }
-      navigate(`/deck/${deckId}`);
+      goBack();
     } finally {
       setSaving(false);
     }
@@ -485,10 +508,10 @@ export function OcclusionEditor() {
   return (
     <Layout>
       <button
-        onClick={() => navigate(`/deck/${deckId}`)}
+        onClick={goBack}
         className="mb-4 flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-800"
       >
-        <ArrowLeft size={15} /> Back to deck
+        <ArrowLeft size={15} /> {returnTo ? "Back to notes" : "Back to deck"}
       </button>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_300px]">
@@ -801,7 +824,7 @@ export function OcclusionEditor() {
                   : tool === "select"
                   ? "Click to select (shift-click for multiple), drag to move, corner handle to resize."
                   : tool === "textbox"
-                  ? "Drag a box over the answer — you'll be asked for the question to show on it."
+                  ? "Drag a box over the answer, or click an existing mask to turn it into a text box."
                   : "Drag on the image to draw. Switch to the arrow tool to move/resize."}
               </p>
 

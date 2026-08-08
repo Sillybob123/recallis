@@ -553,10 +553,31 @@ export async function updateNote(
 }
 
 export async function deleteNote(uid: string, noteId: string, slides: NoteSlide[]) {
-  await Promise.all(
-    slides.map((s) => deleteObject(ref(storage, s.imagePath)).catch(() => {}))
-  );
+  // Sweep the note's whole storage folder rather than just slides[], so
+  // images pasted into the body don't linger and cost storage forever.
+  try {
+    const dir = await listAll(ref(storage, `users/${uid}/notes/${noteId}`));
+    await Promise.all([
+      ...dir.items.map((item) => deleteObject(item).catch(() => {})),
+      ...dir.prefixes.map(async (folder) => {
+        const inner = await listAll(folder);
+        await Promise.all(inner.items.map((i) => deleteObject(i).catch(() => {})));
+      }),
+    ]);
+  } catch {
+    // Listing can fail offline — fall back to the paths we know about.
+    await Promise.all(
+      slides.map((s) => deleteObject(ref(storage, s.imagePath)).catch(() => {}))
+    );
+  }
   await deleteDoc(doc(db, "users", uid, "notes", noteId));
+}
+
+/** Removes specific slide images (used when replacing a lecture's slides). */
+export async function deleteNoteSlideFiles(paths: string[]) {
+  await Promise.all(
+    paths.map((p) => deleteObject(ref(storage, p)).catch(() => {}))
+  );
 }
 
 /** Uploads a rendered slide, or any image pasted/inserted into a note. */

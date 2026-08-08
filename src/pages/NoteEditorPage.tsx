@@ -6,6 +6,7 @@ import {
   CloudOff,
   FilePlus2,
   Loader2,
+  RefreshCw,
   PanelLeftClose,
   PanelLeftOpen,
   Scissors,
@@ -24,6 +25,7 @@ import {
   updateNote,
   uploadDeckMedia,
   uploadNoteSlide,
+  deleteNoteSlideFiles,
   watchDecks,
 } from "../lib/firestore";
 import type { CardData, Deck, Note, NoteSlide } from "../types";
@@ -131,8 +133,19 @@ export function NoteEditorPage() {
     };
   }, [persist]);
 
-  async function handleSlideFile(file: File) {
+  async function handleSlideFile(file: File, replace = false) {
     if (!user || !noteId || !latest.current) return;
+    if (replace && latest.current.slides.length > 0) {
+      if (
+        !confirm(
+          `Replace all ${latest.current.slides.length} slides with this file?\n\n` +
+            "Notes you wrote under the old slides are removed with them. " +
+            "Cards and occlusion sheets you already made are not affected."
+        )
+      ) {
+        return;
+      }
+    }
     const isPptx = /\.pptx$/i.test(file.name);
     setSlideProgress(isPptx ? "Reading PowerPoint…" : "Reading PDF…");
     try {
@@ -169,10 +182,15 @@ export function NoteEditorPage() {
           note: "",
         });
       }
+      const old = replace ? latest.current.slides : [];
       scheduleSave({
         ...latest.current,
-        slides: [...latest.current.slides, ...newSlides],
+        slides: replace ? newSlides : [...latest.current.slides, ...newSlides],
       });
+      if (old.length > 0) {
+        // Free the replaced images rather than leaving them paid-for orphans.
+        deleteNoteSlideFiles(old.map((sl) => sl.imagePath)).catch(() => {});
+      }
       if (notice) alert(notice);
     } catch (err) {
       alert(
@@ -238,7 +256,8 @@ export function NoteEditorPage() {
       // Make sure nothing typed is lost before we navigate away.
       if (saveTimer.current) clearTimeout(saveTimer.current);
       await persist(latest.current).catch(() => {});
-      navigate(`/deck/${deckId}/occlusion/${sheetId}/edit`);
+      const back = encodeURIComponent(`/notes/${noteId}#slide-${slide.id}`);
+      navigate(`/deck/${deckId}/occlusion/${sheetId}/edit?returnTo=${back}`);
     } catch (err) {
       alert("Couldn't open that slide for occlusion: " + (err as Error).message);
     } finally {
@@ -253,6 +272,19 @@ export function NoteEditorPage() {
     div.appendChild(sel.getRangeAt(0).cloneContents());
     return div.innerHTML;
   }
+
+  // Coming back from the occlusion editor lands on #slide-<id>; scroll there
+  // once the slides have rendered.
+  useEffect(() => {
+    if (!note) return;
+    const hash = window.location.hash;
+    if (!hash.startsWith("#slide-")) return;
+    const id = hash.slice("#slide-".length);
+    const timer = setTimeout(() => {
+      slideRefs.current.get(id)?.scrollIntoView({ block: "start" });
+    }, 100);
+    return () => clearTimeout(timer);
+  }, [note]);
 
   function jumpToSlide(id: string) {
     slideRefs.current.get(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -339,7 +371,12 @@ export function NoteEditorPage() {
           ) : (
             <FilePlus2 size={14} />
           )}
-          <span className="truncate">{slideProgress ?? "Add lecture slides (PDF or PPTX)"}</span>
+          <span className="truncate">
+            {slideProgress ??
+              (note.slides.length > 0
+                ? "Add more slides"
+                : "Add lecture slides (PDF or PPTX)")}
+          </span>
           <input
             type="file"
             accept=".pdf,.pptx,application/pdf,application/vnd.openxmlformats-officedocument.presentationml.presentation"
@@ -348,6 +385,21 @@ export function NoteEditorPage() {
             onChange={(e) => e.target.files?.[0] && handleSlideFile(e.target.files[0])}
           />
         </label>
+        {note.slides.length > 0 && (
+          <label className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50">
+            <RefreshCw size={14} />
+            <span className="truncate">Replace slides</span>
+            <input
+              type="file"
+              accept=".pdf,.pptx,application/pdf,application/vnd.openxmlformats-officedocument.presentationml.presentation"
+              className="hidden"
+              disabled={Boolean(slideProgress)}
+              onChange={(e) =>
+                e.target.files?.[0] && handleSlideFile(e.target.files[0], true)
+              }
+            />
+          </label>
+        )}
       </div>
 
       <div className="flex gap-5">
@@ -405,6 +457,7 @@ export function NoteEditorPage() {
                 {note.slides.map((slide, i) => (
                   <div
                     key={slide.id}
+                    id={`slide-${slide.id}`}
                     ref={(el) => {
                       if (el) slideRefs.current.set(slide.id, el);
                       else slideRefs.current.delete(slide.id);
@@ -416,6 +469,23 @@ export function NoteEditorPage() {
                         Slide {i + 1}
                       </span>
                       <div className="flex gap-1">
+                        <button
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={() => {
+                            const html = captureSelection();
+                            if (!html) {
+                              alert(
+                                "Highlight the text in this slide's notes first, then press this."
+                              );
+                              return;
+                            }
+                            setCardPrefill(html);
+                          }}
+                          className="flex items-center gap-1 rounded-lg border border-indigo-200 bg-indigo-50 px-2 py-1 text-xs font-medium text-indigo-700 transition hover:bg-indigo-100"
+                          title="Make a card from the text you've highlighted in this slide's notes"
+                        >
+                          <Scissors size={13} /> Make card
+                        </button>
                         <SlideToOcclusionButton
                           decks={decks}
                           slideNumber={i + 1}
