@@ -50,24 +50,32 @@ export interface ShapeUnit {
   label?: string;
 }
 
+/**
+ * One study card per mask or mask group, in the order the masks appear on the
+ * image. Order matters beyond aesthetics: imported Anki schedules are matched
+ * to units positionally, so grouped masks must not be shuffled to the end.
+ */
 export function buildUnits(shapes: OcclusionShape[]): ShapeUnit[] {
   const units: ShapeUnit[] = [];
-  const grouped = new Map<string, OcclusionShape[]>();
+  const groupSlot = new Map<string, number>();
   for (const s of shapes) {
     if (s.groupId) {
-      const list = grouped.get(s.groupId) ?? [];
-      list.push(s);
-      grouped.set(s.groupId, list);
+      const existing = groupSlot.get(s.groupId);
+      if (existing === undefined) {
+        groupSlot.set(s.groupId, units.length);
+        units.push({
+          key: `g:${s.groupId}`,
+          shapeIds: [s.id],
+          label: s.label || undefined,
+        });
+      } else {
+        const unit = units[existing];
+        unit.shapeIds.push(s.id);
+        if (!unit.label && s.label) unit.label = s.label;
+      }
     } else {
       units.push({ key: s.id, shapeIds: [s.id], label: s.label || undefined });
     }
-  }
-  for (const [gid, members] of grouped) {
-    units.push({
-      key: `g:${gid}`,
-      shapeIds: members.map((m) => m.id),
-      label: members.find((m) => m.label)?.label,
-    });
   }
   return units;
 }

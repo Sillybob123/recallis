@@ -7,8 +7,10 @@ import {
   type ParsedSheet,
 } from "./apkgParse";
 import { findClozeNumbers } from "./cloze";
+import { buildUnits } from "./shapes";
 import { retry } from "./netRetry";
 import { newSrsState, type SrsState } from "./srs";
+import { startOfStudyDay } from "./settings";
 import {
   contentTypeForFilename,
   createCardsBulk,
@@ -67,7 +69,27 @@ export interface ApkgImportOutcome {
 function srsFromAnki(entry: ImportedSchedule): SrsState {
   const now = Date.now();
   const base = newSrsState(now);
+
+  // Suspended/buried new cards: keep them new (reps 0) but parked.
+  if (entry.isNew) {
+    return {
+      ...base,
+      suspended: entry.suspended || undefined,
+      buriedUntil: entry.buried ? nextDayStartFrom(now) : null,
+    };
+  }
+
   const difficulty = Math.min(Math.max(10 - (entry.ease - 1.3) * 4.12, 1), 10);
+
+  // These timestamps drive the daily limits. Stamping them "now" would make an
+  // import look like hundreds of cards introduced today, zeroing out the
+  // new-card allowance. The real last review is one interval before the due
+  // date; either way it must land before today started.
+  const DAY = 86400000;
+  const estimatedLastReview =
+    entry.phase === "review" ? entry.due - entry.ivl * DAY : entry.due - 10 * 60000;
+  const beforeToday = Math.min(estimatedLastReview, startOfStudyDay(now) - 1000);
+
   return {
     ...base,
     phase: entry.phase,
@@ -79,9 +101,9 @@ function srsFromAnki(entry: ImportedSchedule): SrsState {
     lapses: entry.lapses,
     stab: Math.max(entry.ivl, 0.5),
     diff: difficulty,
-    lastReviewAt: Math.min(now, entry.due),
-    firstSeen: Math.min(now, entry.due),
-    lastReviewed: Math.min(now, entry.due),
+    lastReviewAt: beforeToday,
+    firstSeen: Math.min(beforeToday - entry.reps * DAY, beforeToday),
+    lastReviewed: beforeToday,
     suspended: entry.suspended || undefined,
     buriedUntil: entry.buried ? nextDayStartFrom(now) : null,
   };
@@ -260,7 +282,7 @@ export async function importParsedApkg(
       () => uploadOcclusionImage(uid, target.deckId, asFile),
       { signal: opts.signal }
     );
-    await retry(
+    const sheetId = await retry(
       () =>
         createOcclusionSheet(uid, target.deckId, {
           title: sheet.title,
@@ -274,6 +296,32 @@ export async function importParsedApkg(
     );
     sheetsCreated++;
     masksCreated += shapes.length;
+
+    // Every mask is its own card in Anki, so each keeps its own due date.
+    if (opts.importSchedule && sheet.unitSchedules) {
+      const units = buildUnits(shapes);
+      for (let i = 0; i < units.length; i++) {
+        const entry = sheet.unitSchedules[i];
+        if (!entry) continue;
+        try {
+          await retry(
+            () =>
+              setSrsState(
+                uid,
+                target.deckId,
+                `${sheetId}-${units[i].key}`,
+                srsFromAnki(entry)
+              ),
+            { attempts: 2, timeoutMs: 20000, signal: opts.signal }
+          );
+          schedulesRestored++;
+        } catch {
+          warnings.push(
+            `Couldn't restore the schedule for a mask on "${sheet.title}".`
+          );
+        }
+      }
+    }
   }
 
   for (const deck of parsed.decks) {

@@ -444,6 +444,13 @@ export function StudyBasic() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [current?.key, mode, learnFormat]);
 
+  /** Opens the right editor for the card on screen (E, or the toolbar). */
+  function openEditor() {
+    if (!current) return;
+    if (current.kind === "text") setShowEdit(true);
+    else navigate(`/deck/${current.deckId}/occlusion/${current.sheet.id}/edit`);
+  }
+
   function recordAnswer(correct: boolean) {
     setStats((s) => ({
       answers: s.answers + 1,
@@ -792,8 +799,24 @@ export function StudyBasic() {
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       const target = e.target as HTMLElement;
-      if (target.tagName === "INPUT" || target.tagName === "TEXTAREA") return;
-      if (!current || !isFlashcardContext) return;
+      // Rich-text fields are contenteditable, not <input>, so they need their
+      // own check or typing "e" in the editor would reopen it.
+      if (
+        target.tagName === "INPUT" ||
+        target.tagName === "TEXTAREA" ||
+        target.isContentEditable ||
+        target.closest("[role='dialog'], .fixed.inset-0")
+      ) {
+        return;
+      }
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      if (!current || showEdit || showSettings || moreOpen) return;
+      if (e.key === "e" || e.key === "E") {
+        e.preventDefault();
+        openEditor();
+        return;
+      }
+      if (!isFlashcardContext) return;
       if (e.key === " " || e.code === "Space") {
         e.preventDefault();
         if (!flipped) {
@@ -1351,13 +1374,11 @@ export function StudyBasic() {
                 <Star size={14} fill="currentColor" className="text-amber-400" />
               )}
               <button
-                onClick={() => {
-                  if (current.kind === "text") setShowEdit(true);
-                  else navigate(`/deck/${current.deckId}/occlusion/${current.sheet.id}/edit`);
-                }}
+                onClick={openEditor}
+                title="Edit this card (E)"
                 className="flex items-center gap-1 rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50"
               >
-                <Pencil size={12} /> Edit
+                <Pencil size={12} /> Edit <span className="text-[10px] opacity-50">(E)</span>
               </button>
               <div className="relative">
                 <button

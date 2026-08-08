@@ -16,10 +16,18 @@ export interface ParsedSheet {
   shapes: OcclusionShape[];
   /** true when shape coords are in pixels and must be divided by image dims */
   needsPixelNormalize?: boolean;
+  /**
+   * Anki's scheduling for each study unit, in unit order. Each mask of an
+   * Image Occlusion note is its own card over there, so each keeps its own
+   * due date.
+   */
+  unitSchedules?: (ImportedSchedule | undefined)[];
 }
 
 /** A card's scheduling as Anki stored it, already converted to our shape. */
 export interface ImportedSchedule {
+  /** never answered — keep it new, but remember suspended/buried state */
+  isNew: boolean;
   phase: "learn" | "review" | "relearn";
   /** epoch ms */
   due: number;
@@ -239,6 +247,8 @@ export function parseIoeOriginalSvg(svgText: string): {
   width: number;
   height: number;
   shapes: OcclusionShape[];
+  /** the -oa-N number of each mask, aligned with study-unit order */
+  maskOrder: number[];
 } | null {
   const svgTag = svgText.match(/<svg\b[^>]*>/);
   if (!svgTag) return null;
@@ -251,17 +261,20 @@ export function parseIoeOriginalSvg(svgText: string): {
   const labelsMatch = svgText.match(/<g>\s*<title>Labels<\/title>[\s\S]*?<\/g>/);
   const body = labelsMatch ? svgText.replace(labelsMatch[0], "") : svgText;
 
-  const shapes: OcclusionShape[] = [];
+  // Collected as { oaIndex, shapes } so the masks can be emitted in the order
+  // Anki numbered them, which is how each IOE note maps to a study card.
+  const masks: { oaIndex: number; shapes: OcclusionShape[] }[] = [];
   const consumedRanges: [number, number][] = [];
 
   // Grouped masks: <g id="...-oa-N"> ... shapes ... </g>.
   // Also matches self-closing empty groups (<g id="..."/>) — stray notes whose
   // masks were deleted — so they can't swallow the following group's shapes.
   for (const gm of body.matchAll(
-    /<g\b[^>]*\bid="[^"]*-(?:oa|ao)-\d+"[^>]*?(?:\/>|>([\s\S]*?)<\/g>)/g
+    /<g\b[^>]*\bid="[^"]*-(?:oa|ao)-(\d+)"[^>]*?(?:\/>|>([\s\S]*?)<\/g>)/g
   )) {
     consumedRanges.push([gm.index!, gm.index! + gm[0].length]);
-    const inner = gm[1];
+    const oaIndex = Number(gm[1]);
+    const inner = gm[2];
     if (inner === undefined) continue; // self-closing empty group
     const groupShapes: OcclusionShape[] = [];
     for (const sm of inner.matchAll(/<(rect|ellipse|polygon)\b[^>]*\/?>/g)) {
@@ -269,26 +282,35 @@ export function parseIoeOriginalSvg(svgText: string): {
       if (shape) groupShapes.push(shape);
     }
     if (groupShapes.length === 1) {
-      shapes.push(groupShapes[0]);
+      masks.push({ oaIndex, shapes: groupShapes });
     } else if (groupShapes.length > 1) {
       const gid = uid();
-      for (const s of groupShapes) shapes.push({ ...s, groupId: gid });
+      masks.push({
+        oaIndex,
+        shapes: groupShapes.map((s) => ({ ...s, groupId: gid })),
+      });
     }
   }
 
   // Standalone masks: shape elements with their own -oa-N id, outside groups.
   for (const sm of body.matchAll(
-    /<(rect|ellipse|polygon)\b[^>]*\bid="[^"]*-(?:oa|ao)-\d+"[^>]*\/?>/g
+    /<(rect|ellipse|polygon)\b[^>]*\bid="[^"]*-(?:oa|ao)-(\d+)"[^>]*\/?>/g
   )) {
     const inConsumed = consumedRanges.some(
       ([a, b]) => sm.index! >= a && sm.index! < b
     );
     if (inConsumed) continue;
     const shape = shapeFromSvgTag(sm[1], parseAttrs(sm[0]), W, H);
-    if (shape) shapes.push(shape);
+    if (shape) masks.push({ oaIndex: Number(sm[2]), shapes: [shape] });
   }
 
-  return { width: W, height: H, shapes };
+  masks.sort((a, b) => a.oaIndex - b.oaIndex);
+  return {
+    width: W,
+    height: H,
+    shapes: masks.flatMap((m) => m.shapes),
+    maskOrder: masks.map((m) => m.oaIndex),
+  };
 }
 
 // ---------- native Image Occlusion (Anki 2.1.54+) occlusion field ----------
@@ -296,6 +318,8 @@ export function parseIoeOriginalSvg(svgText: string): {
 export function parseNativeOcclusionField(field: string): {
   shapes: OcclusionShape[];
   needsPixelNormalize: boolean;
+  /** the cloze number behind each study unit, in unit order */
+  clozeOrder: number[];
 } {
   const shapes: OcclusionShape[] = [];
   const clozeGroups = new Map<string, OcclusionShape[]>();
@@ -368,7 +392,13 @@ export function parseNativeOcclusionField(field: string): {
     }
   }
 
-  for (const members of clozeGroups.values()) {
+  // Emit in cloze order so units line up with Anki's card ordinals.
+  const clozeOrder: number[] = [];
+  const ordered = [...clozeGroups.entries()].sort(
+    (a, b) => Number(a[0]) - Number(b[0])
+  );
+  for (const [num, members] of ordered) {
+    clozeOrder.push(Number(num));
     if (members.length > 1) {
       const gid = uid();
       for (const s of members) shapes.push({ ...s, groupId: gid });
@@ -377,7 +407,7 @@ export function parseNativeOcclusionField(field: string): {
     }
   }
 
-  return { shapes, needsPixelNormalize: sawPixels };
+  return { shapes, needsPixelNormalize: sawPixels, clozeOrder };
 }
 
 // ---------- collection database ----------
@@ -497,9 +527,29 @@ export async function parseApkg(
       );
       for (const row of res[0]?.values ?? []) {
         const [nid, ord, type, queue, due, ivl, factor, reps, lapses] = row.map(Number);
-        if (type === 0) continue; // still new — nothing worth carrying over
         const suspended = queue === -1;
         const buried = queue === -2 || queue === -3;
+
+        // A new card carries no schedule, but a suspended or buried one must
+        // stay that way — a collection can hold thousands of parked new cards
+        // that would otherwise flood the queue on import.
+        if (type === 0) {
+          if (!suspended && !buried) continue;
+          const byOrdNew = schedules.get(nid) ?? new Map<number, ImportedSchedule>();
+          byOrdNew.set(ord + 1, {
+            isNew: true,
+            phase: "learn",
+            due: Date.now(),
+            ivl: 0,
+            ease: 2.5,
+            reps: 0,
+            lapses: 0,
+            suspended,
+            buried,
+          });
+          schedules.set(nid, byOrdNew);
+          continue;
+        }
         let dueMs: number;
         let phase: ImportedSchedule["phase"];
         if (type === 2) {
@@ -512,6 +562,7 @@ export async function parseApkg(
           dueMs = due > 1e9 ? due * 1000 : (crtSeconds + due * 86400) * 1000;
         }
         const entry: ImportedSchedule = {
+          isNew: false,
           phase,
           due: dueMs,
           ivl: Math.max(0, Math.round(ivl)),
@@ -609,11 +660,18 @@ export async function parseApkg(
         const imageHtml = fieldByName(note, "Image", 1);
         const header = fieldByName(note, "Header", 2);
         const imageName = firstImgSrc(imageHtml);
-        const { shapes, needsPixelNormalize } = parseNativeOcclusionField(occlusion);
+        const { shapes, needsPixelNormalize, clozeOrder } =
+          parseNativeOcclusionField(occlusion);
         if (!imageName || shapes.length === 0) {
           stats.skippedNotes++;
           continue;
         }
+        // Native occlusion notes make one card per cloze number, so each
+        // mask carries its own schedule just like a cloze deletion.
+        const byOrd = schedules.get(note.id);
+        const unitSchedules = byOrd
+          ? clozeOrder.map((num) => byOrd.get(num))
+          : undefined;
         deckFor(note.deckName).sheets.push({
           title: header.trim() || imageName,
           imageName,
@@ -621,6 +679,8 @@ export async function parseApkg(
           imageHeight: 0,
           shapes,
           needsPixelNormalize,
+          unitSchedules:
+            unitSchedules && unitSchedules.some(Boolean) ? unitSchedules : undefined,
         });
         stats.sheets++;
         stats.masks += shapes.length;
@@ -676,12 +736,24 @@ export async function parseApkg(
         continue;
       }
       const header = fieldByName(sample, "Header", 1).trim();
+
+      // Each IOE note owns one mask, identified by the -oa-N in its ID field.
+      const scheduleByOa = new Map<number, ImportedSchedule>();
+      for (const n of notes) {
+        const noteId = fieldByName(n, "ID (hidden)", 0);
+        const m = noteId.match(/-(?:oa|ao)-(\d+)$/);
+        const sched = schedules.get(n.id)?.get(1);
+        if (m && sched) scheduleByOa.set(Number(m[1]), sched);
+      }
+      const unitSchedules = parsed.maskOrder.map((oa) => scheduleByOa.get(oa));
+
       deckFor(sample.deckName).sheets.push({
         title: header || imageName.replace(/\.[^.]+$/, ""),
         imageName,
         imageWidth: parsed.width,
         imageHeight: parsed.height,
         shapes: parsed.shapes,
+        unitSchedules: unitSchedules.some(Boolean) ? unitSchedules : undefined,
       });
       stats.sheets++;
       stats.masks += parsed.shapes.length;
