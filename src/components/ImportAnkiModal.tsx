@@ -87,12 +87,26 @@ export function ImportAnkiModal({
           signal: abortRef.current.signal,
         });
         setWarnings(outcome.warnings);
-        setDone(
-          `Imported ${outcome.cardsCreated} cards, ${outcome.sheetsCreated} occlusion sheets (${outcome.masksCreated} masks), and ${outcome.mediaUploaded} images into ${outcome.decksCreated} deck${outcome.decksCreated === 1 ? "" : "s"}.` +
-            (outcome.schedulesRestored > 0
-              ? ` Kept the review schedule for ${outcome.schedulesRestored} card${outcome.schedulesRestored === 1 ? "" : "s"}.`
-              : "")
-        );
+        const parts = [
+          `Added ${outcome.cardsCreated} card${outcome.cardsCreated === 1 ? "" : "s"}` +
+            (outcome.sheetsCreated > 0
+              ? ` and ${outcome.sheetsCreated} occlusion sheet${outcome.sheetsCreated === 1 ? "" : "s"} (${outcome.masksCreated} masks)`
+              : "") +
+            (outcome.decksCreated > 0
+              ? `, creating ${outcome.decksCreated} new deck${outcome.decksCreated === 1 ? "" : "s"}.`
+              : "."),
+        ];
+        if (outcome.duplicatesSkipped > 0) {
+          parts.push(
+            `Skipped ${outcome.duplicatesSkipped} note${outcome.duplicatesSkipped === 1 ? "" : "s"} you already had — no duplicates were created.`
+          );
+        }
+        if (outcome.schedulesRestored > 0) {
+          parts.push(
+            `Review schedules updated for ${outcome.schedulesRestored} card${outcome.schedulesRestored === 1 ? "" : "s"}.`
+          );
+        }
+        setDone(parts.join(" "));
       } else if (txtResult) {
         if (split && txtResult.groups.some((g) => g.ankiDeck)) {
           let colorIdx = 0;

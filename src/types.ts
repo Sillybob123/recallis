@@ -33,6 +33,12 @@ export type CardData = BasicCardData | ClozeCardData;
 
 export interface Card {
   id: string;
+  /**
+   * Identity of the source note this came from (e.g. "anki:1785861078053").
+   * Re-importing the same package matches on this so existing cards are
+   * updated rather than duplicated.
+   */
+  importId?: string;
   createdAt: number;
   updatedAt: number;
   stats: { correct: number; incorrect: number };
@@ -70,6 +76,8 @@ export interface OcclusionSheet {
    */
   linkedImage?: boolean;
   id: string;
+  /** source-note identity, as on Card — used to merge re-imports */
+  importId?: string;
   title: string;
   imagePath: string;
   imageUrl: string;

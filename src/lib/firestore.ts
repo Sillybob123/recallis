@@ -68,6 +68,12 @@ export function watchTrashedDecks(uid: string, cb: (decks: Deck[]) => void) {
   });
 }
 
+/** One-shot read of active decks (importers can't wait on a listener). */
+export async function listDecksOnce(uid: string): Promise<Deck[]> {
+  const snap = await getDocs(decksCol(uid));
+  return snap.docs.map(deckFromDoc).filter((d) => !d.deletedAt);
+}
+
 export const TRASH_RETENTION_DAYS = 30;
 
 /** Soft-delete: the deck moves to the trash; nothing else is touched. */
@@ -381,6 +387,7 @@ export async function getCardsOnce(uid: string, deckId: string): Promise<Card[]>
     const data = d.data();
     return {
       id: d.id,
+      importId: data.importId as string | undefined,
       createdAt: toMillis(data.createdAt),
       updatedAt: toMillis(data.updatedAt),
       stats: data.stats ?? { correct: 0, incorrect: 0 },
@@ -398,6 +405,7 @@ export async function getOcclusionsOnce(
     const data = d.data();
     return {
       id: d.id,
+      importId: data.importId as string | undefined,
       title: data.title ?? "Untitled",
       imagePath: data.imagePath,
       imageUrl: data.imageUrl,
@@ -425,7 +433,8 @@ export async function createCard(uid: string, deckId: string, data: CardData) {
 export async function createCardsBulk(
   uid: string,
   deckId: string,
-  items: CardData[]
+  items: CardData[],
+  importIds?: (string | undefined)[]
 ): Promise<string[]> {
   // Firestore hard-limits a batch to 500 operations, so commit in chunks.
   const col = cardsCol(uid, deckId);
@@ -433,16 +442,17 @@ export async function createCardsBulk(
   const ids: string[] = [];
   for (let i = 0; i < items.length; i += CHUNK) {
     const batch = writeBatch(db);
-    for (const data of items.slice(i, i + CHUNK)) {
+    items.slice(i, i + CHUNK).forEach((data, j) => {
       const ref = doc(col);
       ids.push(ref.id);
       batch.set(ref, {
         data,
+        importId: importIds?.[i + j] ?? null,
         stats: { correct: 0, incorrect: 0 },
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
       });
-    }
+    });
     await batch.commit();
   }
   await touchDeck(uid, deckId);
@@ -831,10 +841,12 @@ export async function createOcclusionSheet(
     imageHeight: number;
     shapes: OcclusionShape[];
     linkedImage?: boolean;
+    importId?: string;
   }
 ) {
   const ref = await addDoc(occlusionsCol(uid, deckId), {
     ...sheet,
+    importId: sheet.importId ?? null,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
   });

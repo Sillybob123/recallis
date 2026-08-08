@@ -14,13 +14,17 @@ import { startOfStudyDay } from "./settings";
 import {
   contentTypeForFilename,
   createCardsBulk,
+  listDecksOnce,
+  getCardsOnce,
+  getOcclusionsOnce,
   setSrsState,
   createDeck,
   createOcclusionSheet,
   uploadDeckMedia,
   uploadOcclusionImage,
 } from "./firestore";
-import type { CardData } from "../types";
+import type { CardData, Deck } from "../types";
+import { findDeckByPath } from "./deckPath";
 
 const DECK_COLORS = ["#6366f1", "#0ea5e9", "#10b981", "#f59e0b", "#ef4444", "#a855f7", "#ec4899"];
 
@@ -57,7 +61,25 @@ export interface ApkgImportOutcome {
   masksCreated: number;
   mediaUploaded: number;
   schedulesRestored: number;
+  /** notes already present, skipped instead of duplicated */
+  duplicatesSkipped: number;
   warnings: string[];
+}
+
+/**
+ * Fallback identity for cards imported before importId existed: the note's
+ * text with markup and spacing normalized away, which is close to how Anki
+ * itself detects duplicates.
+ */
+function contentKey(data: CardData): string {
+  const raw =
+    data.type === "cloze" ? data.text : `${data.front}\u241f${data.back}`;
+  return raw
+    .replace(/<[^>]*>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
 }
 
 /**
@@ -176,6 +198,7 @@ export async function importParsedApkg(
   let masksCreated = 0;
   let mediaUploaded = 0;
   let schedulesRestored = 0;
+  let duplicatesSkipped = 0;
 
   const totalWork = parsed.decks.reduce(
     (n, d) => n + d.cards.length + d.sheets.length,
@@ -188,20 +211,79 @@ export async function importParsedApkg(
   interface TargetDeck {
     deckId: string;
     mediaUrlCache: Map<string, string | null>;
+    /** existing cards in this deck, by importId and by content */
+    cardIndex: Map<string, string>;
+    sheetIndex: Map<string, string>;
+    indexed: boolean;
   }
 
   let colorIdx = 0;
   let single: TargetDeck | null = null;
+  const existingDecks = await listDecksOnce(uid).catch(() => [] as Deck[]);
 
+  /**
+   * Finds the deck of this name or creates it. Reusing it is what turns a
+   * second import of the same package into a merge rather than a duplicate.
+   */
   async function makeDeck(name: string): Promise<TargetDeck> {
+    const existing = findDeckByPath(existingDecks, name);
+    if (existing) {
+      const reused: TargetDeck = {
+        deckId: existing.id,
+        mediaUrlCache: new Map(),
+        cardIndex: new Map(),
+        sheetIndex: new Map(),
+        indexed: false,
+      };
+      await indexExisting(reused);
+      return reused;
+    }
     const deckId = await createDeck(
       uid,
       name,
       "Imported from Anki",
       DECK_COLORS[colorIdx++ % DECK_COLORS.length]
     );
+    existingDecks.push({
+      id: deckId,
+      name,
+      color: "#6366f1",
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    });
     decksCreated++;
-    return { deckId, mediaUrlCache: new Map() };
+    return {
+      deckId,
+      mediaUrlCache: new Map(),
+      cardIndex: new Map(),
+      sheetIndex: new Map(),
+      indexed: false,
+    };
+  }
+
+  /**
+   * Indexes what a deck already holds so a re-import updates instead of
+   * duplicating. Only runs for decks that existed before this import.
+   */
+  async function indexExisting(target: TargetDeck) {
+    if (target.indexed) return;
+    target.indexed = true;
+    try {
+      const [existingCards, existingSheets] = await Promise.all([
+        getCardsOnce(uid, target.deckId),
+        getOcclusionsOnce(uid, target.deckId),
+      ]);
+      for (const card of existingCards) {
+        if (card.importId) target.cardIndex.set(card.importId, card.id);
+        target.cardIndex.set(`content:${contentKey(card.data)}`, card.id);
+      }
+      for (const sheet of existingSheets) {
+        if (sheet.importId) target.sheetIndex.set(sheet.importId, sheet.id);
+        target.sheetIndex.set(`title:${sheet.title.trim().toLowerCase()}`, sheet.id);
+      }
+    } catch {
+      /* couldn't read the deck — fall back to plain insertion */
+    }
   }
 
   async function resolveMediaUrl(
@@ -249,6 +331,38 @@ export async function importParsedApkg(
   }
 
   async function importSheet(target: TargetDeck, sheet: ParsedSheet) {
+    const existingSheetId =
+      target.sheetIndex.get(sheet.importId) ??
+      target.sheetIndex.get(`title:${sheet.title.trim().toLowerCase()}`);
+    if (existingSheetId && existingSheetId !== "pending") {
+      // Already imported: leave the image and masks alone (they may have been
+      // edited here) and only bring the due dates up to date.
+      duplicatesSkipped++;
+      if (opts.importSchedule && sheet.unitSchedules) {
+        const units = buildUnits(sheet.shapes);
+        for (let i = 0; i < units.length; i++) {
+          const entry = sheet.unitSchedules[i];
+          if (!entry) continue;
+          try {
+            await retry(
+              () =>
+                setSrsState(
+                  uid,
+                  target.deckId,
+                  `${existingSheetId}-${units[i].key}`,
+                  srsFromAnki(entry)
+                ),
+              { attempts: 2, timeoutMs: 20000, signal: opts.signal }
+            );
+            schedulesRestored++;
+          } catch {
+            /* one mask's schedule is not worth failing the import */
+          }
+        }
+      }
+      return;
+    }
+
     const bytes = await readMediaBytes(parsed, sheet.imageName);
     if (!bytes) {
       warnings.push(
@@ -291,9 +405,12 @@ export async function importParsedApkg(
           imageWidth: Math.round(width),
           imageHeight: Math.round(height),
           shapes,
+          importId: sheet.importId,
         }),
       { signal: opts.signal }
     );
+    target.sheetIndex.set(sheet.importId, sheetId);
+    target.sheetIndex.set(`title:${sheet.title.trim().toLowerCase()}`, sheetId);
     sheetsCreated++;
     masksCreated += shapes.length;
 
@@ -336,65 +453,100 @@ export async function importParsedApkg(
       target = single;
     }
 
-    // Cards: rewrite media references, then bulk-create.
+    // Cards: rewrite media references, then insert only what's missing.
     const rewritten: CardData[] = [];
     const schedules: (Map<number, ImportedSchedule> | undefined)[] = [];
+    const importIds: (string | undefined)[] = [];
+    // Cards already in the deck: keep their id so their schedule can refresh.
+    const existingHits: { cardId: string; card: (typeof deck.cards)[number] }[] = [];
+
     for (const card of deck.cards) {
       if (opts.signal?.aborted) throw new Error("Import cancelled");
-      progress(`Uploading card images (${deck.name})`);
+      progress(`Checking cards (${deck.name})`);
       const data = card.data;
-      if (data.type === "basic") {
-        rewritten.push({
-          type: "basic",
-          front: await rewriteHtml(target, data.front),
-          back: await rewriteHtml(target, data.back),
-        });
-      } else {
-        rewritten.push({
-          type: "cloze",
-          text: await rewriteHtml(target, data.text),
-          extra: data.extra ? await rewriteHtml(target, data.extra) : undefined,
-        });
+
+      const existingId =
+        target.cardIndex.get(card.importId) ??
+        target.cardIndex.get(`content:${contentKey(data)}`);
+      if (existingId) {
+        // Same note, already imported — don't duplicate it, just let its
+        // scheduling be refreshed below.
+        existingHits.push({ cardId: existingId, card });
+        duplicatesSkipped++;
+        workDone++;
+        continue;
       }
+
+      progress(`Uploading card images (${deck.name})`);
+      const prepared: CardData =
+        data.type === "basic"
+          ? {
+              type: "basic",
+              front: await rewriteHtml(target, data.front),
+              back: await rewriteHtml(target, data.back),
+            }
+          : {
+              type: "cloze",
+              text: await rewriteHtml(target, data.text),
+              extra: data.extra ? await rewriteHtml(target, data.extra) : undefined,
+            };
+      rewritten.push(prepared);
       schedules.push(card.schedule);
+      importIds.push(card.importId);
+      // Guard against the same note appearing twice in one package.
+      target.cardIndex.set(card.importId, "pending");
+      target.cardIndex.set(`content:${contentKey(prepared)}`, "pending");
       workDone++;
     }
+    /** Writes one note's scheduling against whatever card id it lives under. */
+    async function applySchedule(
+      cardId: string,
+      data: CardData,
+      schedule: Map<number, ImportedSchedule> | undefined
+    ) {
+      if (!opts.importSchedule || !schedule) return;
+      const numbers = data.type === "cloze" ? findClozeNumbers(data.text) : [1];
+      for (const num of numbers) {
+        const entry = schedule.get(num);
+        if (!entry) continue;
+        const itemKey = data.type === "cloze" ? `${cardId}-c${num}` : cardId;
+        try {
+          await retry(
+            () => setSrsState(uid, target.deckId, itemKey, srsFromAnki(entry)),
+            { attempts: 2, timeoutMs: 20000, signal: opts.signal }
+          );
+          schedulesRestored++;
+        } catch {
+          warnings.push(`Couldn't restore the schedule for one card in "${deck.name}".`);
+        }
+      }
+    }
+
     if (rewritten.length) {
       progress(`Saving cards (${deck.name})`);
       try {
-        const ids = await retry(() => createCardsBulk(uid, target.deckId, rewritten), {
-          signal: opts.signal,
-        });
+        const ids = await retry(
+          () => createCardsBulk(uid, target.deckId, rewritten, importIds),
+          { signal: opts.signal }
+        );
         cardsCreated += rewritten.length;
-
-        if (opts.importSchedule) {
-          progress(`Restoring schedules (${deck.name})`);
-          for (let i = 0; i < ids.length; i++) {
-            const schedule = schedules[i];
-            if (!schedule) continue;
-            const data = rewritten[i];
-            const numbers =
-              data.type === "cloze" ? findClozeNumbers(data.text) : [1];
-            for (const num of numbers) {
-              const entry = schedule.get(num);
-              if (!entry) continue;
-              const itemKey = data.type === "cloze" ? `${ids[i]}-c${num}` : ids[i];
-              try {
-                await retry(
-                  () => setSrsState(uid, target.deckId, itemKey, srsFromAnki(entry)),
-                  { attempts: 2, timeoutMs: 20000, signal: opts.signal }
-                );
-                schedulesRestored++;
-              } catch {
-                warnings.push(`Couldn't restore the schedule for one card in "${deck.name}".`);
-              }
-            }
-          }
+        for (let i = 0; i < ids.length; i++) {
+          if (importIds[i]) target.cardIndex.set(importIds[i]!, ids[i]);
+          await applySchedule(ids[i], rewritten[i], schedules[i]);
         }
       } catch (err) {
         warnings.push(
           `Saving cards for "${deck.name}" failed: ${(err as Error).message}`
         );
+      }
+    }
+
+    // Cards that were already here still get the newest due dates.
+    if (existingHits.length && opts.importSchedule) {
+      progress(`Updating schedules (${deck.name})`);
+      for (const hit of existingHits) {
+        if (hit.cardId === "pending") continue;
+        await applySchedule(hit.cardId, hit.card.data, hit.card.schedule);
       }
     }
 
@@ -420,6 +572,7 @@ export async function importParsedApkg(
     masksCreated,
     mediaUploaded,
     schedulesRestored,
+    duplicatesSkipped,
     warnings,
   };
 }

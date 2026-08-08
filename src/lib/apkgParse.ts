@@ -9,6 +9,8 @@ import type { CardData, OcclusionShape } from "../types";
 import { uid } from "./uid";
 
 export interface ParsedSheet {
+  /** "anki:<note id>" (native IO) or "anki-ioe:<shared prefix>" */
+  importId: string;
   title: string;
   imageName: string;
   imageWidth: number;
@@ -42,6 +44,8 @@ export interface ImportedSchedule {
 
 export interface ParsedCard {
   data: CardData;
+  /** "anki:<note id>" — stable across exports of the same collection */
+  importId: string;
   /** keyed by cloze number (1-based); basic cards use 1 */
   schedule?: Map<number, ImportedSchedule>;
 }
@@ -673,6 +677,7 @@ export async function parseApkg(
           ? clozeOrder.map((num) => byOrd.get(num))
           : undefined;
         deckFor(note.deckName).sheets.push({
+          importId: `anki:${note.id}`,
           title: header.trim() || imageName,
           imageName,
           imageWidth: 0, // resolved when the image is loaded at import time
@@ -698,12 +703,14 @@ export async function parseApkg(
         deckFor(note.deckName).cards.push({
           data: { type: "cloze", text: first, extra: second || undefined },
           schedule,
+          importId: `anki:${note.id}`,
         });
         stats.cloze++;
       } else if (second) {
         deckFor(note.deckName).cards.push({
           data: { type: "basic", front: first, back: second },
           schedule,
+          importId: `anki:${note.id}`,
         });
         stats.basic++;
       } else {
@@ -748,6 +755,7 @@ export async function parseApkg(
       const unitSchedules = parsed.maskOrder.map((oa) => scheduleByOa.get(oa));
 
       deckFor(sample.deckName).sheets.push({
+        importId: `anki-ioe:${prefix}`,
         title: header || imageName.replace(/\.[^.]+$/, ""),
         imageName,
         imageWidth: parsed.width,
