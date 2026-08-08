@@ -71,6 +71,12 @@ import { gradeAnswer, shuffle } from "../lib/text";
 import { SrsWriter, type SaveStatus } from "../lib/srsWriter";
 import { recordRecentDecks } from "../lib/recents";
 import {
+  disperseSiblings,
+  removeSiblings,
+  spreadSiblings,
+  MIN_SIBLING_GAP,
+} from "../lib/siblings";
+import {
   clearCramSession,
   loadCramSession,
   saveCramSession,
@@ -309,7 +315,7 @@ export function StudyBasic() {
         }
         clearCramSession(cramScope);
       }
-      const items = shuffle(all);
+      const items = spreadSiblings(shuffle(all), ankiSettings.siblingGap);
       setQueue(items);
       setTotal(items.length);
       setNextDueMs(null);
@@ -371,7 +377,10 @@ export function StudyBasic() {
         }
         const cappedNew = fresh.slice(0, newAllowance);
 
-        const items = [...learning, ...cappedReviews, ...cappedNew];
+        const items = spreadSiblings(
+          [...learning, ...cappedReviews, ...cappedNew],
+          ankiSettings.siblingGap
+        );
         if (cancelled) return;
         setQueue(items);
         setTotal(items.length);
@@ -463,6 +472,29 @@ export function StudyBasic() {
     return [...rest.slice(0, pos), item, ...rest.slice(pos)];
   }
 
+  /**
+   * Keeps the other cards from this note away from the one just answered, so
+   * the next sibling is a real recall rather than a read-back of what's still
+   * on screen. Bury mode additionally drops them out of today's session.
+   */
+  function applySiblingPolicy(nextQueue: StudyItem[], answered: StudyItem) {
+    const mode = ankiSettings.siblingMode;
+    if (mode === "bury") {
+      const { queue: pruned, removed } = removeSiblings(nextQueue, answered);
+      if (removed.length > 0 && studyMode === "anki") {
+        // Persist the bury so they stay hidden until tomorrow, like Anki.
+        updateMeta(
+          answered.deckId,
+          removed.map((item) => item.key),
+          { buriedUntil: nextDayStart() }
+        );
+      }
+      return pruned;
+    }
+    const gap = mode === "off" ? MIN_SIBLING_GAP : ankiSettings.siblingGap;
+    return disperseSiblings(nextQueue, answered, gap);
+  }
+
   /** Commits a cram queue to state and to the device, so a refresh resumes. */
   function commitCramQueue(next: StudyItem[], sessionTotal: number) {
     setQueue(next);
@@ -506,7 +538,7 @@ export function StudyBasic() {
           ? queue.slice(1)
           : reinsert(queue, current, Math.max(8, queue.length - 2));
     }
-    commitCramQueue(nextQueue, total);
+    commitCramQueue(applySiblingPolicy(nextQueue, current), total);
     resetCardUI();
   }
 
@@ -527,7 +559,7 @@ export function StudyBasic() {
       nextQueue =
         strength >= 2 ? queue.slice(1) : reinsert(queue, current, Math.min(6, queue.length));
     }
-    commitCramQueue(nextQueue, total);
+    commitCramQueue(applySiblingPolicy(nextQueue, current), total);
     resetCardUI();
   }
 
@@ -548,11 +580,11 @@ export function StudyBasic() {
     recordAnswer(rating !== "again");
     // Reinsert only if the card is coming back within this sitting; a long
     // relearning step means it leaves today's queue and counts as retired.
-    if (next.due - Date.now() < 20 * 60 * 1000) {
-      setQueue((prevQ) => reinsert(prevQ, current, 3));
-    } else {
-      setQueue((prevQ) => prevQ.slice(1));
-    }
+    const graded =
+      next.due - Date.now() < 20 * 60 * 1000
+        ? reinsert(queue, current, 3)
+        : queue.slice(1);
+    setQueue(applySiblingPolicy(graded, current));
     resetCardUI();
   }
 

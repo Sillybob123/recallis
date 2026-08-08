@@ -2,6 +2,8 @@
 // user's actual Anki preset: learning steps 10m, relearning steps 10m,
 // 60 new/day, 9999 reviews/day, max interval 36500 days.
 
+import type { SiblingMode } from "./siblings";
+
 export interface AnkiSettings {
   newPerDay: number;
   maxReviewsPerDay: number;
@@ -14,6 +16,13 @@ export interface AnkiSettings {
   maxIntervalDays: number;
   /** FSRS desired retention percent, e.g. 90 */
   desiredRetentionPct: number;
+  /**
+   * What to do with the other cards from a note you just answered.
+   * Applies to both study modes — it's about the session, not the schedule.
+   */
+  siblingMode: SiblingMode;
+  /** cards to keep between siblings when dispersing */
+  siblingGap: number;
 }
 
 export const DEFAULT_ANKI_SETTINGS: AnkiSettings = {
@@ -25,6 +34,8 @@ export const DEFAULT_ANKI_SETTINGS: AnkiSettings = {
   relearnStepsMin: [10],
   maxIntervalDays: 36500,
   desiredRetentionPct: 90,
+  siblingMode: "disperse",
+  siblingGap: 10,
 };
 
 export type GradingLevel = "relaxed" | "moderate" | "strict";

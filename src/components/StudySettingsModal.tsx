@@ -131,6 +131,8 @@ export function StudySettingsModal({
                 </p>
               </Card>
 
+              <SiblingSettings a={a} setA={setA} num={num} />
+
               <Card title="Advanced">
                 <NumberField
                   label="Maximum interval (days)"
@@ -181,6 +183,8 @@ export function StudySettingsModal({
                   Applies to basic front/back cards.
                 </p>
               </Card>
+
+              <SiblingSettings a={a} setA={setA} num={num} />
 
               <Card title="Grading" className="md:col-span-2">
                 <div className="grid gap-2 sm:grid-cols-3">
@@ -253,6 +257,74 @@ export function StudySettingsModal({
         </div>
       </div>
     </div>
+  );
+}
+
+
+function SiblingSettings({
+  a,
+  setA,
+  num,
+}: {
+  a: AnkiSettings;
+  setA: (s: AnkiSettings) => void;
+  num: (v: string, fallback: number) => number;
+}) {
+  return (
+    <Card title="Siblings" className="md:col-span-2">
+      <p className="mb-3 text-xs leading-snug text-slate-500">
+        Cards from the same note — {"{{c1::…}}"} and {"{{c2::…}}"} in one
+        sentence, or every mask on one image. Seeing them back to back tests
+        recognition, not recall.
+      </p>
+      <div className="grid gap-2 sm:grid-cols-3">
+        {(
+          [
+            [
+              "disperse",
+              "Space them out",
+              "Stay in today's session, but pushed well apart. Best for dense cloze notes.",
+            ],
+            [
+              "bury",
+              "Hide until tomorrow",
+              "Anki's default. Purest spacing, but a 9-cloze note takes 9 days.",
+            ],
+            ["off", "No limit", "Siblings can follow closely (never back to back)."],
+          ] as const
+        ).map(([value, label, desc]) => (
+          <label
+            key={value}
+            className={`cursor-pointer rounded-lg border p-3 text-sm transition ${
+              a.siblingMode === value
+                ? "border-indigo-400 bg-indigo-50"
+                : "border-slate-200 hover:bg-slate-50"
+            }`}
+          >
+            <span className="flex items-center gap-2 font-medium text-slate-800">
+              <input
+                type="radio"
+                checked={a.siblingMode === value}
+                onChange={() => setA({ ...a, siblingMode: value })}
+              />
+              {label}
+            </span>
+            <span className="mt-1 block text-xs leading-snug text-slate-500">
+              {desc}
+            </span>
+          </label>
+        ))}
+      </div>
+      {a.siblingMode === "disperse" && (
+        <div className="mt-3">
+          <NumberField
+            label="Cards between siblings"
+            value={a.siblingGap}
+            onChange={(v) => setA({ ...a, siblingGap: num(v, a.siblingGap) })}
+          />
+        </div>
+      )}
+    </Card>
   );
 }
 
