@@ -6,6 +6,7 @@ import { stripHtml } from "./text";
 export type StudyItem =
   | {
       kind: "text";
+      deckId: string;
       key: string;
       cardId: string;
       frontHtml: string;
@@ -17,13 +18,14 @@ export type StudyItem =
     }
   | {
       kind: "occlusion";
+      deckId: string;
       key: string;
       sheet: OcclusionSheet;
       unit: ShapeUnit;
     };
 
 export function buildTextItems(
-  cards: Card[],
+  cards: (Card & { deckId: string })[],
   opts: { answerWithTerm?: boolean } = {}
 ): StudyItem[] {
   const items: StudyItem[] = [];
@@ -36,6 +38,7 @@ export function buildTextItems(
       const back = swap ? card.data.front : card.data.back;
       items.push({
         kind: "text",
+        deckId: card.deckId,
         key: card.id,
         cardId: card.id,
         frontHtml: front,
@@ -53,6 +56,7 @@ export function buildTextItems(
             : "");
         items.push({
           kind: "text",
+          deckId: card.deckId,
           key: `${card.id}-c${num}`,
           cardId: card.id,
           frontHtml: renderClozeQuestion(card.data.text, num),
@@ -67,14 +71,27 @@ export function buildTextItems(
   return items;
 }
 
-export function buildOcclusionItems(sheets: OcclusionSheet[]): StudyItem[] {
+export function buildOcclusionItems(
+  sheets: (OcclusionSheet & { deckId: string })[]
+): StudyItem[] {
   const items: StudyItem[] = [];
   for (const sheet of sheets) {
     for (const unit of buildUnits(sheet.shapes)) {
-      items.push({ kind: "occlusion", key: `${sheet.id}-${unit.key}`, sheet, unit });
+      items.push({
+        kind: "occlusion",
+        deckId: sheet.deckId,
+        key: `${sheet.id}-${unit.key}`,
+        sheet,
+        unit,
+      });
     }
   }
   return items;
+}
+
+/** Deck-qualified key for in-memory SRS maps spanning several decks. */
+export function combinedKey(item: Pick<StudyItem, "deckId" | "key">): string {
+  return `${item.deckId}|${item.key}`;
 }
 
 /** The short answer a study item expects (for written/multiple-choice). */

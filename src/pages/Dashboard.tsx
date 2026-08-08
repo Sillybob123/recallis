@@ -298,19 +298,20 @@ function ClassSection({ top, list, uid, counts, onOptions }: { top: string; list
 
   return (
     <section className="rounded-2xl border border-slate-200 bg-white shadow-sm">
-      <button
-        onClick={toggle}
-        className="flex w-full items-center gap-2 px-5 py-4 text-left"
-      >
-        <ChevronDown
-          size={18}
-          className={`text-slate-400 transition-transform ${open ? "" : "-rotate-90"}`}
-        />
-        <span className="text-base font-bold text-slate-900">{top}</span>
-        <span className="ml-auto text-xs text-slate-400">
-          {list.length} deck{list.length === 1 ? "" : "s"}
-        </span>
-      </button>
+      <div className="flex w-full items-center gap-2 px-5 py-4">
+        <button onClick={toggle} className="flex min-w-0 flex-1 items-center gap-2 text-left">
+          <ChevronDown
+            size={18}
+            className={`shrink-0 text-slate-400 transition-transform ${open ? "" : "-rotate-90"}`}
+          />
+          <span className="truncate text-base font-bold text-slate-900">{top}</span>
+          <span className="text-xs text-slate-400">
+            {list.length} deck{list.length === 1 ? "" : "s"}
+          </span>
+        </button>
+        <GroupCounts decks={list} counts={counts} />
+        <GroupStudyLink name={top} decks={list} />
+      </div>
       {open && (
         <div className="space-y-5 border-t border-slate-100 p-5">
           {Array.from(subGroups.entries())
@@ -318,9 +319,13 @@ function ClassSection({ top, list, uid, counts, onOptions }: { top: string; list
             .map(([sub, subDecks]) => (
               <div key={sub || "__root"}>
                 {sub && (
-                  <h3 className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-400">
-                    {sub}
-                  </h3>
+                  <div className="mb-2 flex items-center gap-2">
+                    <h3 className="text-xs font-bold uppercase tracking-wide text-slate-400">
+                      {sub}
+                    </h3>
+                    <GroupCounts decks={subDecks} counts={counts} />
+                    <GroupStudyLink name={`${top} · ${sub}`} decks={subDecks} small />
+                  </div>
                 )}
                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
                   {subDecks.map((deck) => {
@@ -690,5 +695,65 @@ function TrashModal({
         )}
       </div>
     </div>
+  );
+}
+
+/** "Study" for a whole class or subdeck group: pools every deck underneath. */
+function GroupStudyLink({
+  name,
+  decks,
+  small,
+}: {
+  name: string;
+  decks: Deck[];
+  small?: boolean;
+}) {
+  const ids = decks.map((d) => d.id).join(",");
+  return (
+    <Link
+      to={`/study-group?ids=${ids}&name=${encodeURIComponent(name)}`}
+      onClick={(e) => e.stopPropagation()}
+      className={`shrink-0 rounded-lg bg-indigo-600 font-semibold text-white transition hover:bg-indigo-700 ${
+        small ? "px-2.5 py-1 text-xs" : "px-3.5 py-1.5 text-sm"
+      }`}
+      title={`Study all ${decks.length} decks under ${name} together (Anki-style: pooled queue, shared daily limits)`}
+    >
+      Study
+    </Link>
+  );
+}
+
+function GroupCounts({
+  decks,
+  counts,
+}: {
+  decks: Deck[];
+  counts?: Map<string, DeckCounts>;
+}) {
+  if (!counts) return null;
+  let n = 0,
+    l = 0,
+    d = 0;
+  let any = false;
+  for (const deck of decks) {
+    const c = counts.get(deck.id);
+    if (!c) continue;
+    any = true;
+    n += c.newCount;
+    l += c.learnCount;
+    d += c.dueCount;
+  }
+  if (!any) return null;
+  // A parent shows at most its own daily limit, even if more exists beneath
+  // (Anki: 71 new under Anatomy, but Anatomy displays 60).
+  const limits = loadAnkiSettings();
+  n = Math.min(n, limits.newPerDay);
+  d = Math.min(d, limits.maxReviewsPerDay);
+  return (
+    <span className="flex shrink-0 gap-2 text-xs font-bold">
+      <span className="text-sky-500">{n}</span>
+      <span className="text-orange-500">{l}</span>
+      <span className="text-emerald-600">{d}</span>
+    </span>
   );
 }

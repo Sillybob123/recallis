@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   ArrowLeft,
@@ -23,12 +23,9 @@ import {
   deleteCard,
   deleteOcclusionSheet,
   deleteSrsState,
-  getSrsMap,
   recordCardResult,
   setSrsState,
   updateCard,
-  watchCards,
-  watchOcclusions,
 } from "../lib/firestore";
 import { CardEditorModal } from "../components/CardEditorModal";
 import { findClozeNumbers } from "../lib/cloze";
@@ -37,9 +34,15 @@ import type { Card, OcclusionSheet } from "../types";
 import {
   buildOcclusionItems,
   buildTextItems,
+  combinedKey,
   itemAnswer,
   type StudyItem,
 } from "../lib/studyItems";
+import {
+  countTodayAcrossDecks,
+  getAllActiveDeckIds,
+  loadStudyData,
+} from "../lib/studyLoad";
 import {
   getTodayAnkiStats,
   loadAnkiSettings,
@@ -161,12 +164,19 @@ export function StudyBasic() {
   const { deckId } = useParams();
   const [searchParams] = useSearchParams();
   const cardsOnly = searchParams.get("only") === "cards";
+  const groupIdsParam = searchParams.get("ids");
+  const groupName = searchParams.get("name");
+  // Studying a parent pools every deck in its subtree, Anki-style.
+  const deckIds = deckId
+    ? [deckId]
+    : (groupIdsParam ?? "").split(",").filter(Boolean);
+  const deckScopeKey = deckIds.join(",");
   const { user } = useAuth();
   const { studyMode, setStudyMode } = useStudyMode();
   const navigate = useNavigate();
 
-  const [cards, setCards] = useState<Card[] | null>(null);
-  const [sheets, setSheets] = useState<OcclusionSheet[] | null>(null);
+  const [cards, setCards] = useState<(Card & { deckId: string })[] | null>(null);
+  const [sheets, setSheets] = useState<(OcclusionSheet & { deckId: string })[] | null>(null);
   const [srsMap, setSrsMap] = useState<Map<string, SrsState> | null>(null);
   const [ankiSettings, setAnkiSettings] = useState<AnkiSettings>(loadAnkiSettings);
   const [quizletSettings, setQuizletSettings] =
@@ -196,16 +206,21 @@ export function StudyBasic() {
     desiredRetention: (ankiSettings.desiredRetentionPct || 90) / 100,
   };
 
+  const reloadData = useCallback(async () => {
+    if (!user || deckIds.length === 0) return;
+    const data = await loadStudyData(user.uid, deckIds);
+    setCards(data.cards);
+    setSheets(data.sheets);
+    setSrsMap(data.srs);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, deckScopeKey]);
+
   useEffect(() => {
-    if (!user || !deckId) return;
-    const u1 = watchCards(user.uid, deckId, setCards);
-    const u2 = watchOcclusions(user.uid, deckId, setSheets);
-    getSrsMap(user.uid, deckId).then(setSrsMap);
-    return () => {
-      u1();
-      u2();
-    };
-  }, [user, deckId]);
+    setCards(null);
+    setSheets(null);
+    setSrsMap(null);
+    reloadData();
+  }, [reloadData]);
 
   // Build the session queue once everything is loaded (and rebuild when the
   // study mode toggles — the queues are fundamentally different).
@@ -226,51 +241,74 @@ export function StudyBasic() {
       setTotal(items.length);
       setNextDueMs(null);
     } else {
-      const now = Date.now();
-      const dayStart = startOfStudyDay(now);
-      let newToday = 0;
-      let reviewsToday = 0;
-      for (const s of srsMap.values()) {
-        if ((s.firstSeen ?? 0) >= dayStart) newToday++;
-        if ((s.lastReviewed ?? 0) >= dayStart && s.phase === "review") reviewsToday++;
-      }
+      let cancelled = false;
+      (async () => {
+        const now = Date.now();
+        const dayStart = startOfStudyDay(now);
+        // Daily counters: normally counted over the decks in this session.
+        // With "Limits start from top", studying anywhere eats the same shared
+        // budget, so count across ALL decks (one preset, one budget — Anki-style).
+        let newToday = 0;
+        let reviewsToday = 0;
+        if (ankiSettings.limitsStartFromTop && user) {
+          const allIds = await getAllActiveDeckIds(user.uid);
+          const counts = await countTodayAcrossDecks(user.uid, allIds, dayStart);
+          newToday = counts.newToday;
+          reviewsToday = counts.reviewsToday;
+        } else {
+          for (const s of srsMap.values()) {
+            if ((s.firstSeen ?? 0) >= dayStart) newToday++;
+            if ((s.lastReviewed ?? 0) >= dayStart && s.phase === "review") reviewsToday++;
+          }
+        }
+        if (cancelled) return;
 
-      const available = all.filter((it) => !isExcluded(srsMap.get(it.key), now));
-      const learning = available.filter((it) => {
-        const s = srsMap.get(it.key);
-        return s && !isNew(s) && s.phase !== "review" && isDue(s, now);
-      });
-      const reviews = available.filter((it) => {
-        const s = srsMap.get(it.key);
-        return s && !isNew(s) && s.phase === "review" && isDue(s, now);
-      });
-      const fresh = available.filter((it) => isNew(srsMap.get(it.key)));
-
-      reviews.sort(
-        (a, b) => (srsMap.get(a.key)?.due ?? 0) - (srsMap.get(b.key)?.due ?? 0)
-      );
-      const reviewAllowance = Math.max(
-        0,
-        ankiSettings.maxReviewsPerDay - reviewsToday
-      );
-      const cappedReviews = reviews.slice(0, reviewAllowance);
-
-      let newAllowance = Math.max(0, ankiSettings.newPerDay - newToday);
-      if (!ankiSettings.newIgnoreReviewLimit) {
-        newAllowance = Math.min(
-          newAllowance,
-          Math.max(0, reviewAllowance - cappedReviews.length)
+        const available = all.filter(
+          (it) => !isExcluded(srsMap.get(combinedKey(it)), now)
         );
-      }
-      const cappedNew = shuffle(fresh).slice(0, newAllowance);
+        const learning = available.filter((it) => {
+          const s = srsMap.get(combinedKey(it));
+          return s && !isNew(s) && s.phase !== "review" && isDue(s, now);
+        });
+        const reviews = available.filter((it) => {
+          const s = srsMap.get(combinedKey(it));
+          return s && !isNew(s) && s.phase === "review" && isDue(s, now);
+        });
+        // Gathered in deck order, insertion order — Anki's "ascending position".
+        const fresh = available.filter((it) => isNew(srsMap.get(combinedKey(it))));
 
-      const items = [...learning, ...cappedReviews, ...cappedNew];
-      setQueue(items);
-      setTotal(items.length);
-      const future = all
-        .map((it) => srsMap.get(it.key)?.due)
-        .filter((d): d is number => typeof d === "number" && d > now);
-      setNextDueMs(future.length ? Math.min(...future) - now : null);
+        reviews.sort(
+          (a, b) =>
+            (srsMap.get(combinedKey(a))?.due ?? 0) -
+            (srsMap.get(combinedKey(b))?.due ?? 0)
+        );
+        const reviewAllowance = Math.max(
+          0,
+          ankiSettings.maxReviewsPerDay - reviewsToday
+        );
+        const cappedReviews = reviews.slice(0, reviewAllowance);
+
+        let newAllowance = Math.max(0, ankiSettings.newPerDay - newToday);
+        if (!ankiSettings.newIgnoreReviewLimit) {
+          newAllowance = Math.min(
+            newAllowance,
+            Math.max(0, reviewAllowance - cappedReviews.length)
+          );
+        }
+        const cappedNew = fresh.slice(0, newAllowance);
+
+        const items = [...learning, ...cappedReviews, ...cappedNew];
+        if (cancelled) return;
+        setQueue(items);
+        setTotal(items.length);
+        const future = all
+          .map((it) => srsMap.get(combinedKey(it))?.due)
+          .filter((d): d is number => typeof d === "number" && d > now);
+        setNextDueMs(future.length ? Math.min(...future) - now : null);
+      })();
+      return () => {
+        cancelled = true;
+      };
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
@@ -344,11 +382,10 @@ export function StudyBasic() {
 
   function recordStats(item: StudyItem, correct: boolean) {
     if (item.kind !== "text" || !user || !deckId) return;
-    const stats = cards!.find((c) => c.id === item.cardId)?.stats ?? {
-      correct: 0,
-      incorrect: 0,
-    };
-    recordCardResult(user.uid, deckId, item.cardId, correct, stats).catch(() => {});
+    const stats =
+      cards!.find((c) => c.deckId === item.deckId && c.id === item.cardId)?.stats ??
+      { correct: 0, incorrect: 0 };
+    recordCardResult(user.uid, item.deckId, item.cardId, correct, stats).catch(() => {});
   }
 
   /** Quizlet flashcards mode: adaptive by speed + accuracy. */
@@ -397,14 +434,14 @@ export function StudyBasic() {
   /** Anki mode: grade → SM-2 schedule persisted; learning steps stay in session. */
   function gradeSrs(rating: Rating) {
     if (!current || !user || !deckId) return;
-    const prev = srsMap?.get(current.key) ?? null;
-    pushHistory(current.key, prev);
+    const prev = srsMap?.get(combinedKey(current)) ?? null;
+    pushHistory(current, prev);
     recordAnkiReview(Date.now() - shownAtRef.current);
     const next = rate(prev, rating, Date.now(), srsConfig);
-    setSrsState(user.uid, deckId, current.key, next).catch(() => {});
+    setSrsState(user.uid, current.deckId, current.key, next).catch(() => {});
     setSrsMap((m) => {
       const copy = new Map(m);
-      copy.set(current.key, next);
+      copy.set(combinedKey(current), next);
       return copy;
     });
     recordStats(current, rating !== "again");
@@ -431,11 +468,16 @@ export function StudyBasic() {
   const [moreOpen, setMoreOpen] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
   const historyRef = useRef<
-    { queue: StudyItem[]; key?: string; prevSrs?: SrsState | null }[]
+    { queue: StudyItem[]; deckId?: string; key?: string; prevSrs?: SrsState | null }[]
   >([]);
 
-  function pushHistory(key?: string, prevSrs?: SrsState | null) {
-    historyRef.current.push({ queue, key, prevSrs });
+  function pushHistory(item?: StudyItem, prevSrs?: SrsState | null) {
+    historyRef.current.push({
+      queue,
+      deckId: item?.deckId,
+      key: item?.key,
+      prevSrs,
+    });
     if (historyRef.current.length > 25) historyRef.current.shift();
   }
 
@@ -443,20 +485,21 @@ export function StudyBasic() {
     if (item.kind === "occlusion") {
       return buildUnits(item.sheet.shapes).map((u) => `${item.sheet.id}-${u.key}`);
     }
-    const card = cards?.find((c) => c.id === item.cardId);
+    const card = cards?.find((c) => c.deckId === item.deckId && c.id === item.cardId);
     if (!card) return [item.key];
     if (card.data.type === "basic") return [card.id];
     return findClozeNumbers(card.data.text).map((n) => `${card.id}-c${n}`);
   }
 
-  function updateMeta(keys: string[], patch: Partial<SrsState>) {
-    if (!user || !deckId) return;
+  function updateMeta(deckIdFor: string, keys: string[], patch: Partial<SrsState>) {
+    if (!user) return;
     setSrsMap((m) => {
       const copy = new Map(m);
       for (const key of keys) {
-        const next = { ...(copy.get(key) ?? newSrsState()), ...patch };
-        copy.set(key, next);
-        setSrsState(user.uid, deckId, key, next).catch(() => {});
+        const ck = `${deckIdFor}|${key}`;
+        const next = { ...(copy.get(ck) ?? newSrsState()), ...patch };
+        copy.set(ck, next);
+        setSrsState(user.uid, deckIdFor, key, next).catch(() => {});
       }
       return copy;
     });
@@ -471,41 +514,41 @@ export function StudyBasic() {
   const actions = {
     flag(color: FlagColor | null) {
       if (!current) return;
-      updateMeta([current.key], { flag: color });
+      updateMeta(current.deckId, [current.key], { flag: color });
     },
     buryCard() {
       if (!current) return;
       pushHistory();
-      updateMeta([current.key], { buriedUntil: nextDayStart() });
+      updateMeta(current.deckId, [current.key], { buriedUntil: nextDayStart() });
       dropFromQueue([current.key]);
     },
     buryNote() {
       if (!current) return;
       pushHistory();
       const keys = siblingKeys(current);
-      updateMeta(keys, { buriedUntil: nextDayStart() });
+      updateMeta(current.deckId, keys, { buriedUntil: nextDayStart() });
       dropFromQueue(keys);
     },
     suspendCard() {
       if (!current) return;
       pushHistory();
-      updateMeta([current.key], { suspended: true });
+      updateMeta(current.deckId, [current.key], { suspended: true });
       dropFromQueue([current.key]);
     },
     suspendNote() {
       if (!current) return;
       pushHistory();
       const keys = siblingKeys(current);
-      updateMeta(keys, { suspended: true });
+      updateMeta(current.deckId, keys, { suspended: true });
       dropFromQueue(keys);
     },
     resetCard() {
       if (!current || !user || !deckId) return;
       if (!confirm("Reset this card? Its schedule is erased and it becomes a new card.")) return;
-      deleteSrsState(user.uid, deckId, current.key).catch(() => {});
+      deleteSrsState(user.uid, current.deckId, current.key).catch(() => {});
       setSrsMap((m) => {
         const copy = new Map(m);
-        copy.delete(current.key);
+        copy.delete(combinedKey(current));
         return copy;
       });
     },
@@ -516,18 +559,18 @@ export function StudyBasic() {
       const days = Math.max(0, parseInt(raw, 10) || 0);
       const now = Date.now();
       pushHistory();
-      updateMeta([current.key], {
+      updateMeta(current.deckId, [current.key], {
         phase: "review",
         due: now + days * 86400000,
         ivl: Math.max(days, 1),
         stab: Math.max(days, 1),
-        reps: Math.max(srsMap?.get(current.key)?.reps ?? 0, 1),
+        reps: Math.max(srsMap?.get(combinedKey(current))?.reps ?? 0, 1),
       });
       if (days > 0) dropFromQueue([current.key]);
     },
     cardInfo() {
       if (!current) return;
-      const s = srsMap?.get(current.key);
+      const s = srsMap?.get(combinedKey(current));
       if (!s || isNew(s)) {
         alert("Card info\n\nState: New (never studied in Anki mode)");
         return;
@@ -550,15 +593,16 @@ export function StudyBasic() {
       const last = historyRef.current.pop();
       if (!last || !user || !deckId) return;
       setQueue(last.queue);
-      if (last.key !== undefined) {
+      if (last.key !== undefined && last.deckId !== undefined) {
         setSrsMap((m) => {
           const copy = new Map(m);
+          const ck = `${last.deckId}|${last.key}`;
           if (last.prevSrs) {
-            copy.set(last.key!, last.prevSrs);
-            setSrsState(user.uid, deckId, last.key!, last.prevSrs).catch(() => {});
+            copy.set(ck, last.prevSrs);
+            setSrsState(user.uid, last.deckId!, last.key!, last.prevSrs).catch(() => {});
           } else {
-            copy.delete(last.key!);
-            deleteSrsState(user.uid, deckId, last.key!).catch(() => {});
+            copy.delete(ck);
+            deleteSrsState(user.uid, last.deckId!, last.key!).catch(() => {});
           }
           return copy;
         });
@@ -568,7 +612,7 @@ export function StudyBasic() {
     markNote() {
       if (!current) return;
       const marked = !srsMap?.get(current.key)?.marked;
-      updateMeta(siblingKeys(current), { marked });
+      updateMeta(current.deckId, siblingKeys(current), { marked });
     },
     async createCopy() {
       if (!current || !user || !deckId) return;
@@ -576,9 +620,9 @@ export function StudyBasic() {
         alert("Copying an occlusion card isn't supported yet — duplicate the sheet from the deck page instead.");
         return;
       }
-      const card = cards?.find((c) => c.id === current.cardId);
+      const card = cards?.find((c) => c.deckId === current.deckId && c.id === current.cardId);
       if (card) {
-        await createCard(user.uid, deckId, card.data);
+        await createCard(user.uid, current.deckId, card.data);
         alert("Copy created — find it on the deck page to edit.");
       }
     },
@@ -587,10 +631,10 @@ export function StudyBasic() {
       const keys = siblingKeys(current);
       if (current.kind === "text") {
         if (!confirm("Delete this note and all its cards? This can't be undone.")) return;
-        await deleteCard(user.uid, deckId, current.cardId);
+        await deleteCard(user.uid, current.deckId, current.cardId);
       } else {
         if (!confirm(`Delete the occlusion sheet "${current.sheet.title}" and all its masks?`)) return;
-        await deleteOcclusionSheet(user.uid, deckId, current.sheet.id, current.sheet.imagePath);
+        await deleteOcclusionSheet(user.uid, current.deckId, current.sheet.id, current.sheet.imagePath);
       }
       dropFromQueue(keys);
     },
@@ -662,7 +706,7 @@ export function StudyBasic() {
     return (
       <Layout>
         <div className="mb-4 flex items-center justify-between">
-          <BackLink deckId={deckId!} navigate={navigate} inline />
+          <BackLink deckId={deckId} navigate={navigate} inline />
           {settingsButton}
         </div>
         {studyMode === "anki" ? (
@@ -709,7 +753,7 @@ export function StudyBasic() {
     );
   }
 
-  const currentSrs = current ? srsMap.get(current.key) ?? null : null;
+  const currentSrs = current ? srsMap.get(combinedKey(current)) ?? null : null;
   const answer = current ? itemAnswer(current) : "";
   const retypeSatisfied =
     !quizletSettings.retypeCorrect || gradeAnswer(retyped, answer, "moderate");
@@ -743,9 +787,15 @@ export function StudyBasic() {
   return (
     <Layout>
       <div className="mb-2 flex items-center justify-between">
-        <BackLink deckId={deckId!} navigate={navigate} inline />
+        <BackLink deckId={deckId} navigate={navigate} inline />
         {settingsButton}
       </div>
+
+      {groupName && (
+        <p className="mb-2 text-center text-sm font-semibold text-slate-500">
+          Studying {groupName} — {deckIds.length} decks pooled
+        </p>
+      )}
 
       <div className="mb-4 flex items-center justify-between">
         <div className="h-2 flex-1 overflow-hidden rounded-full bg-slate-200">
@@ -789,7 +839,7 @@ export function StudyBasic() {
 
       {studyMode === "anki" && current && (
         <div className="mb-4 flex flex-wrap items-center justify-center gap-2 text-sm">
-          {srsMap.get(current.key)?.flag && (
+          {currentSrs?.flag && (
             <Flag
               size={14}
               fill="currentColor"
@@ -799,17 +849,17 @@ export function StudyBasic() {
                   orange: "text-orange-500",
                   green: "text-emerald-500",
                   blue: "text-sky-500",
-                }[srsMap.get(current.key)!.flag!]
+                }[currentSrs!.flag!]
               }
             />
           )}
-          {srsMap.get(current.key)?.marked && (
+          {currentSrs?.marked && (
             <Star size={14} fill="currentColor" className="text-amber-400" />
           )}
           <button
             onClick={() => {
               if (current.kind === "text") setShowEdit(true);
-              else navigate(`/deck/${deckId}/occlusion/${current.sheet.id}/edit`);
+              else navigate(`/deck/${current.deckId}/occlusion/${current.sheet.id}/edit`);
             }}
             className="flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 font-medium text-slate-700 hover:bg-slate-50"
           >
@@ -846,7 +896,7 @@ export function StudyBasic() {
                       onClick={() => actions.flag(c)}
                       className={`h-4 w-4 rounded-full ${
                         { red: "bg-red-500", orange: "bg-orange-500", green: "bg-emerald-500", blue: "bg-sky-500" }[c]
-                      } ${srsMap.get(current.key)?.flag === c ? "ring-2 ring-slate-700 ring-offset-1" : ""}`}
+                      } ${currentSrs?.flag === c ? "ring-2 ring-slate-700 ring-offset-1" : ""}`}
                     />
                   ))}
                   <button
@@ -864,7 +914,7 @@ export function StudyBasic() {
                 <MoreItem onClick={actions.previousCard}>Previous Card</MoreItem>
                 <div className="my-1 border-t border-slate-100" />
                 <MoreItem onClick={actions.markNote}>
-                  {srsMap.get(current.key)?.marked ? "Unmark Note" : "Mark Note"}
+                  {currentSrs?.marked ? "Unmark Note" : "Mark Note"}
                 </MoreItem>
                 <MoreItem onClick={actions.buryNote}>Bury Note</MoreItem>
                 <MoreItem onClick={actions.suspendNote}>Suspend Note</MoreItem>
@@ -1173,11 +1223,12 @@ export function StudyBasic() {
       )}
       {showEdit && current?.kind === "text" && (
         <CardEditorModal
-          initial={cards.find((c) => c.id === current.cardId)}
+          initial={cards.find((c) => c.deckId === current.deckId && c.id === current.cardId)}
           uid={user?.uid}
-          deckId={deckId}
+          deckId={current.deckId}
           onSave={async (data) => {
-            if (user && deckId) await updateCard(user.uid, deckId, current.cardId, data);
+            if (user) await updateCard(user.uid, current.deckId, current.cardId, data);
+            await reloadData();
             restart();
           }}
           onClose={() => setShowEdit(false)}
@@ -1219,13 +1270,13 @@ function BackLink({
   navigate,
   inline,
 }: {
-  deckId: string;
+  deckId?: string;
   navigate: ReturnType<typeof useNavigate>;
   inline?: boolean;
 }) {
   return (
     <button
-      onClick={() => navigate(`/deck/${deckId}`)}
+      onClick={() => navigate(deckId ? `/deck/${deckId}` : "/")}
       className={`flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-800 ${
         inline ? "" : "mb-4"
       }`}

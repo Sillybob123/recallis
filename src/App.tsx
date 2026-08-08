@@ -20,6 +20,7 @@ export default function App() {
         <Routes>
           <Route path="/login" element={<Login />} />
           <Route path="/signup" element={<Signup />} />
+          <Route path="/study-group" element={<ProtectedRoute><StudyBasic /></ProtectedRoute>} />
           <Route path="/notes" element={<ProtectedRoute><NotesPage /></ProtectedRoute>} />
           <Route path="/notes/:noteId" element={<ProtectedRoute><NoteEditorPage /></ProtectedRoute>} />
           <Route path="/"             element={

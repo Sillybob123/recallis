@@ -28,7 +28,10 @@ export async function computeDeckCounts(
   const now = Date.now();
   const dayStart = startOfStudyDay(now);
 
-  const items = [...buildTextItems(cards), ...buildOcclusionItems(sheets)];
+  const items = [
+    ...buildTextItems(cards.map((c) => ({ ...c, deckId }))),
+    ...buildOcclusionItems(sheets.map((sh) => ({ ...sh, deckId }))),
+  ];
 
   let newRaw = 0;
   let learnCount = 0;
