@@ -35,3 +35,6 @@ example of decks/
 # Personal study materials and local assets not meant for the public repo
 AnatomyExample.txt
 /Logo.png
+
+# Keep project docs local only — do not publish the README to GitHub
+README.md
