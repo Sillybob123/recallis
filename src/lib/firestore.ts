@@ -46,6 +46,8 @@ function deckFromDoc(d: { id: string; data: () => Record<string, unknown> }): De
     createdAt: toMillis(data.createdAt),
     updatedAt: toMillis(data.updatedAt),
     deletedAt: typeof data.deletedAt === "number" ? data.deletedAt : null,
+    hiddenInQuizlet: Boolean(data.hiddenInQuizlet),
+    hiddenInAnki: Boolean(data.hiddenInAnki),
   };
 }
 
@@ -173,12 +175,50 @@ export async function ensureDeckPath(
 export async function updateDeck(
   uid: string,
   deckId: string,
-  patch: Partial<Pick<Deck, "name" | "subject" | "color">>
+  patch: Partial<
+    Pick<Deck, "name" | "subject" | "color" | "hiddenInQuizlet" | "hiddenInAnki">
+  >
 ) {
   await updateDoc(doc(db, "users", uid, "decks", deckId), {
     ...patch,
     updatedAt: serverTimestamp(),
   });
+}
+
+/**
+ * Copies a deck's cards into a new deck. Occlusion sheets are linked to the
+ * same images rather than duplicated, so a copy costs no extra storage.
+ */
+export async function duplicateDeck(
+  uid: string,
+  deckId: string,
+  newName: string,
+  color: string
+): Promise<string> {
+  const [cards, sheets] = await Promise.all([
+    getCardsOnce(uid, deckId),
+    getOcclusionsOnce(uid, deckId),
+  ]);
+  const targetId = await createDeck(uid, newName, "", color);
+  if (cards.length) {
+    await createCardsBulk(
+      uid,
+      targetId,
+      cards.map((c) => c.data)
+    );
+  }
+  for (const sheet of sheets) {
+    await createOcclusionSheet(uid, targetId, {
+      title: sheet.title,
+      imagePath: sheet.imagePath,
+      imageUrl: sheet.imageUrl,
+      imageWidth: sheet.imageWidth,
+      imageHeight: sheet.imageHeight,
+      shapes: sheet.shapes,
+      linkedImage: true,
+    });
+  }
+  return targetId;
 }
 
 export async function deleteDeck(uid: string, deckId: string) {
@@ -438,7 +478,7 @@ export async function uploadNoteSlide(
     ? blob.type
     : "image/png";
   const ext = contentType.split("/")[1]?.split("+")[0] || "png";
-  const path = `users/${uid}/notes/${noteId}/slides/${crypto.randomUUID()}.${ext}`;
+  const path = `users/${uid}/notes/${noteId}/slides/${newId()}.${ext}`;
   const storageRef = ref(storage, path);
   await uploadBytes(storageRef, blob, { contentType });
   const url = await getDownloadURL(storageRef);
@@ -451,6 +491,7 @@ export async function uploadNoteSlide(
 // Quizlet-mode cramming never disturbs the schedule.
 
 import type { SrsState } from "./srs";
+import { uid as newId } from "./uid";
 
 function srsKeyToDocId(itemKey: string): string {
   return itemKey.replace(/[/]/g, "_");
@@ -571,7 +612,7 @@ export async function uploadDeckMedia(
     throw new Error(`Unsupported media type: ${filename}`);
   }
   const ext = filename.split(".").pop() || "png";
-  const path = `users/${uid}/decks/${deckId}/media/${crypto.randomUUID()}.${ext}`;
+  const path = `users/${uid}/decks/${deckId}/media/${newId()}.${ext}`;
   const storageRef = ref(storage, path);
   const buf = new Uint8Array(bytes).buffer as ArrayBuffer;
   await uploadBytes(storageRef, buf, { contentType });
@@ -585,7 +626,7 @@ export async function uploadOcclusionImage(
   file: File
 ): Promise<{ path: string; url: string }> {
   const ext = file.name.split(".").pop() || "png";
-  const path = `users/${uid}/decks/${deckId}/occlusions/${crypto.randomUUID()}.${ext}`;
+  const path = `users/${uid}/decks/${deckId}/occlusions/${newId()}.${ext}`;
   const storageRef = ref(storage, path);
   await uploadBytes(storageRef, file, { contentType: file.type });
   const url = await getDownloadURL(storageRef);

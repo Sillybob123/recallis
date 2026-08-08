@@ -3,18 +3,20 @@ import { createPortal } from "react-dom";
 import { Link } from "react-router-dom";
 import {
   ChevronDown,
+  Copy,
   Download,
   MoreVertical,
   Pencil,
   Plus,
+  Repeat,
   SlidersHorizontal,
   Trash2,
+  Zap,
 } from "lucide-react";
 import {
+  duplicateDeck,
   getCardsOnce,
   getOcclusionsOnce,
-  trashDeck,
-  TRASH_RETENTION_DAYS,
   updateDeck,
 } from "../lib/firestore";
 import { exportDeckToAnki, downloadBlob } from "../lib/ankiExport";
@@ -31,6 +33,7 @@ export function DeckRows({
   onToggle,
   onOptions,
   onAddChild,
+  onDelete,
   decks,
 }: {
   node: DeckNode;
@@ -40,6 +43,7 @@ export function DeckRows({
   onToggle: (path: string) => void;
   onOptions: () => void;
   onAddChild: (parentPath: string) => void;
+  onDelete: (node: DeckNode) => void;
   decks: Deck[];
 }) {
   const isOpen = !collapsed.has(node.path);
@@ -163,6 +167,7 @@ export function DeckRows({
           decks={decks}
           onOptions={onOptions}
           onAddChild={onAddChild}
+          onDelete={onDelete}
         />
       </li>
 
@@ -177,6 +182,7 @@ export function DeckRows({
             onToggle={onToggle}
             onOptions={onOptions}
             onAddChild={onAddChild}
+            onDelete={onDelete}
             decks={decks}
           />
         ))}
@@ -190,18 +196,25 @@ function DeckRowMenu({
   decks,
   onOptions,
   onAddChild,
+  onDelete,
 }: {
   node: DeckNode;
   uid: string;
   decks: Deck[];
   onOptions: () => void;
   onAddChild: (parentPath: string) => void;
+  onDelete: (node: DeckNode) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const deck = node.deck;
+  const descendants = collectDecks(node);
+  const hiddenInAnki =
+    descendants.length > 0 && descendants.every((d) => d.hiddenInAnki);
+  const hiddenInQuizlet =
+    descendants.length > 0 && descendants.every((d) => d.hiddenInQuizlet);
 
   // The deck list clips its children, so the menu lives on <body> and is
   // positioned against the button, flipping upward near the bottom edge.
@@ -274,14 +287,33 @@ function DeckRowMenu({
 
   async function handleDelete() {
     setOpen(false);
-    const all = collectDecks(node);
-    if (
-      confirm(
-        `Move ${all.length === 1 ? `"${node.name}"` : `"${node.name}" and its ${all.length - 1} subdeck(s)`} to the trash?\n\nThey stay recoverable for ${TRASH_RETENTION_DAYS} days, then are permanently deleted.`
-      )
-    ) {
-      for (const d of all) await trashDeck(uid, d.id);
+    onDelete(node);
+  }
+
+  async function handleDuplicate() {
+    setOpen(false);
+    if (!deck) return;
+    const name = prompt(
+      "Name for the copy — use :: to place it under another deck",
+      `${normalizeDeckPath(deck.name)} copy`
+    );
+    if (!name || !name.trim()) return;
+    setBusy(true);
+    try {
+      await duplicateDeck(uid, deck.id, normalizeDeckPath(name), deck.color);
+    } catch (err) {
+      alert("Couldn't duplicate that deck: " + (err as Error).message);
+    } finally {
+      setBusy(false);
     }
+  }
+
+  async function toggleVisibility(mode: "anki" | "quizlet") {
+    setOpen(false);
+    const all = collectDecks(node);
+    const key = mode === "anki" ? "hiddenInAnki" : "hiddenInQuizlet";
+    const hiding = !all.every((d) => d[key]);
+    for (const d of all) await updateDeck(uid, d.id, { [key]: hiding });
   }
 
   return (
@@ -325,6 +357,23 @@ function DeckRowMenu({
               }}
             >
               Options
+            </MenuItem>
+            {deck && (
+              <MenuItem icon={<Copy size={14} />} onClick={handleDuplicate}>
+                {busy ? "Working…" : "Duplicate…"}
+              </MenuItem>
+            )}
+            <MenuItem
+              icon={<Repeat size={14} />}
+              onClick={() => toggleVisibility("anki")}
+            >
+              {hiddenInAnki ? "Add back to Anki" : "Remove from Anki"}
+            </MenuItem>
+            <MenuItem
+              icon={<Zap size={14} />}
+              onClick={() => toggleVisibility("quizlet")}
+            >
+              {hiddenInQuizlet ? "Add back to Quizlet" : "Remove from Quizlet"}
             </MenuItem>
             {deck && (
               <MenuItem icon={<Download size={14} />} onClick={handleExport}>

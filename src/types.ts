@@ -7,6 +7,10 @@ export interface Deck {
   updatedAt: number;
   /** set when the deck is in the trash; hard-deleted 30 days later */
   deletedAt?: number | null;
+  /** removed from Quizlet's lists but still scheduled in Anki */
+  hiddenInQuizlet?: boolean;
+  /** removed from Anki's lists but still available to cram in Quizlet */
+  hiddenInAnki?: boolean;
   cardCount?: number;
   occlusionCount?: number;
 }

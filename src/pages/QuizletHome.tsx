@@ -61,7 +61,7 @@ export function QuizletHome() {
     () =>
       recents
         .map((r) => byId.get(r.deckId))
-        .filter((d): d is Deck => Boolean(d))
+        .filter((d): d is Deck => Boolean(d) && !d!.hiddenInQuizlet)
         .slice(0, 4),
     [recents, byId]
   );
@@ -70,6 +70,7 @@ export function QuizletHome() {
   const needsPractice = useMemo(() => {
     if (!decks) return [];
     return decks
+      .filter((d) => !d.hiddenInQuizlet)
       .map((deck) => ({ deck, p: counts.get(deck.id)?.practice }))
       .filter((x) => x.p && x.p.total > 0 && (x.p.shaky > 0 || (x.p.accuracy ?? 1) < 0.8))
       .sort((a, b) => (a.p!.accuracy ?? 1) - (b.p!.accuracy ?? 1))
@@ -80,7 +81,7 @@ export function QuizletHome() {
    *  a hierarchy instead of repeating "A::B::C" on every row. */
   const grouped = useMemo(() => {
     const withCards = (decks ?? []).filter(
-      (d) => (counts.get(d.id)?.practice.total ?? 0) > 0
+      (d) => !d.hiddenInQuizlet && (counts.get(d.id)?.practice.total ?? 0) > 0
     );
     const map = new Map<string, Deck[]>();
     for (const deck of withCards) {

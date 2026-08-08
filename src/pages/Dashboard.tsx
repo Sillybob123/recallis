@@ -16,6 +16,7 @@ import { useStudyMode } from "../contexts/StudyModeContext";
 import { Layout } from "../components/Layout";
 import { ImportAnkiModal } from "../components/ImportAnkiModal";
 import { StudySettingsModal } from "../components/StudySettingsModal";
+import { DeleteDeckModal } from "../components/DeleteDeckModal";
 import {
   deleteDeck,
   ensureDeckPath,
@@ -35,6 +36,7 @@ import {
   joinDeckPath,
   normalizeDeckPath,
   splitDeckPath,
+  type DeckNode,
 } from "../lib/deckPath";
 import { DeckRows, MenuItem } from "../components/DeckTree";
 import type { Deck } from "../types";
@@ -52,6 +54,7 @@ export function Dashboard() {
   const [showImport, setShowImport] = useState(false);
   const [showTrash, setShowTrash] = useState(false);
   const [showOptions, setShowOptions] = useState(false);
+  const [deleting, setDeleting] = useState<DeckNode | null>(null);
   const [moreOpen, setMoreOpen] = useState(false);
   const [backingUp, setBackingUp] = useState(false);
   const [restoring, setRestoring] = useState(false);
@@ -252,6 +255,7 @@ export function Dashboard() {
                 onToggle={toggleCollapse}
                 onOptions={() => setShowOptions(true)}
                 onAddChild={(parent) => setNewDeck({ parent, isClass: false })}
+                onDelete={setDeleting}
                 decks={decks}
               />
             ))}
@@ -273,6 +277,13 @@ export function Dashboard() {
       )}
       {showTrash && (
         <TrashModal uid={user!.uid} trashed={trashed} onClose={() => setShowTrash(false)} />
+      )}
+      {deleting && (
+        <DeleteDeckModal
+          uid={user!.uid}
+          node={deleting}
+          onClose={() => setDeleting(null)}
+        />
       )}
       {showOptions && (
         <StudySettingsModal
@@ -440,7 +451,7 @@ function TrashModal({
   trashed: Deck[];
   onClose: () => void;
 }) {
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState<string | null>(null);
 
   function daysLeft(deletedAt: number): number {
     const expiry = deletedAt + TRASH_RETENTION_DAYS * 24 * 60 * 60 * 1000;
@@ -450,93 +461,145 @@ function TrashModal({
   async function emptyTrash() {
     if (
       !confirm(
-        `Permanently delete ${trashed.length} deck${trashed.length === 1 ? "" : "s"} and all their cards, images, and schedules? This cannot be undone.`
+        `Permanently delete ${trashed.length} deck${trashed.length === 1 ? "" : "s"}?\n\n` +
+          `Every card, image, and schedule inside them is erased from storage. ` +
+          `This frees the space they were costing you and cannot be undone.`
       )
     ) {
       return;
     }
-    setBusy(true);
+    setBusy("all");
     try {
       await purgeExpiredTrash(uid, true);
+    } catch (err) {
+      alert("Couldn't empty the trash: " + (err as Error).message);
     } finally {
-      setBusy(false);
+      setBusy(null);
     }
   }
 
   async function deleteForever(deck: Deck) {
-    if (!confirm(`Permanently delete "${deck.name}" right now? This cannot be undone.`)) {
+    if (
+      !confirm(
+        `Permanently delete "${normalizeDeckPath(deck.name)}" and everything in it? This cannot be undone.`
+      )
+    ) {
       return;
     }
-    setBusy(true);
+    setBusy(deck.id);
     try {
       await deleteDeck(uid, deck.id);
+    } catch (err) {
+      alert("Couldn't delete that deck: " + (err as Error).message);
     } finally {
-      setBusy(false);
+      setBusy(null);
     }
   }
 
+  const expiringSoon = trashed.filter((d) => daysLeft(d.deletedAt!) <= 3).length;
+
   return (
-    <div className="fixed inset-0 z-30 flex items-center justify-center bg-slate-900/40 p-4">
-      <div className="flex max-h-[85vh] w-full max-w-md flex-col overflow-y-auto rounded-2xl bg-white p-6 shadow-xl">
-        <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-lg font-bold text-slate-900">Trash</h2>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-600">
+    <div className="fixed inset-0 z-40 flex items-center justify-center bg-slate-900/45 p-4">
+      <div className="flex max-h-[85vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+        <div className="flex shrink-0 items-start justify-between border-b border-slate-200 px-6 py-4">
+          <div>
+            <h2 className="text-lg font-bold text-slate-900">Trash</h2>
+            <p className="text-xs text-slate-500">
+              Deleted decks wait {TRASH_RETENTION_DAYS} days here, then their
+              cards, images, and schedules are erased from storage for good.
+            </p>
+          </div>
+          <button
+            onClick={onClose}
+            className="rounded-lg p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
+          >
             <X size={20} />
           </button>
         </div>
-        <p className="mb-4 text-xs text-slate-500">
-          Deleted decks are kept for {TRASH_RETENTION_DAYS} days, then removed
-          permanently (cards, images, and schedules — freeing storage).
-        </p>
-        {trashed.length === 0 ? (
-          <p className="py-10 text-center text-sm text-slate-400">Trash is empty.</p>
-        ) : (
-          <>
-            <ul className="mb-4 space-y-2">
-              {trashed.map((deck) => (
-                <li
-                  key={deck.id}
-                  className="flex items-center gap-2 rounded-xl border border-slate-200 px-3 py-2"
-                >
-                  <span
-                    className="h-3 w-3 shrink-0 rounded-full"
-                    style={{ backgroundColor: deck.color }}
-                  />
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-sm font-medium text-slate-800">
-                      {normalizeDeckPath(deck.name)}
-                    </p>
-                    <p className="text-xs text-slate-400">
-                      {daysLeft(deck.deletedAt!)} day
-                      {daysLeft(deck.deletedAt!) === 1 ? "" : "s"} until permanent
-                      deletion
-                    </p>
-                  </div>
-                  <button
-                    onClick={() => restoreDeckFromTrash(uid, deck.id)}
-                    disabled={busy}
-                    className="flex items-center gap-1 rounded-lg border border-slate-300 px-2 py-1 text-xs font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-50"
-                  >
-                    <Undo2 size={12} /> Restore
-                  </button>
-                  <button
-                    onClick={() => deleteForever(deck)}
-                    disabled={busy}
-                    className="rounded-lg border border-red-200 px-2 py-1 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-50"
-                  >
-                    Delete now
-                  </button>
-                </li>
-              ))}
-            </ul>
+
+        <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4">
+          {trashed.length === 0 ? (
+            <div className="py-14 text-center">
+              <Trash2 className="mx-auto mb-3 text-slate-200" size={38} />
+              <p className="text-sm font-medium text-slate-600">Trash is empty</p>
+              <p className="mt-1 text-xs text-slate-400">
+                Nothing is taking up storage here.
+              </p>
+            </div>
+          ) : (
+            <>
+              {expiringSoon > 0 && (
+                <p className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                  {expiringSoon} deck{expiringSoon === 1 ? "" : "s"} will be
+                  permanently deleted within 3 days. Restore anything you still
+                  want.
+                </p>
+              )}
+              <ul className="divide-y divide-slate-100">
+                {trashed.map((deck) => {
+                  const left = daysLeft(deck.deletedAt!);
+                  return (
+                    <li key={deck.id} className="flex items-center gap-3 py-2.5">
+                      <span
+                        className="h-2.5 w-2.5 shrink-0 rounded-full"
+                        style={{ backgroundColor: deck.color }}
+                      />
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-medium text-slate-800">
+                          {normalizeDeckPath(deck.name)}
+                        </p>
+                        <p
+                          className={`text-xs ${left <= 3 ? "text-amber-600" : "text-slate-400"}`}
+                        >
+                          {left === 0
+                            ? "Deleting today"
+                            : `${left} day${left === 1 ? "" : "s"} left`}
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => restoreDeckFromTrash(uid, deck.id)}
+                        disabled={busy !== null}
+                        className="flex shrink-0 items-center gap-1 rounded-lg border border-slate-300 px-2.5 py-1.5 text-xs font-medium text-slate-600 transition hover:bg-slate-50 disabled:opacity-50"
+                      >
+                        <Undo2 size={12} /> Restore
+                      </button>
+                      <button
+                        onClick={() => deleteForever(deck)}
+                        disabled={busy !== null}
+                        className="shrink-0 rounded-lg border border-red-200 px-2.5 py-1.5 text-xs font-medium text-red-600 transition hover:bg-red-50 disabled:opacity-50"
+                      >
+                        {busy === deck.id ? "Deleting…" : "Delete now"}
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            </>
+          )}
+        </div>
+
+        {trashed.length > 0 && (
+          <div className="flex shrink-0 items-center gap-3 border-t border-slate-200 bg-slate-50 px-6 py-4">
+            <p className="mr-auto text-xs text-slate-500">
+              Emptying the trash frees the storage these decks are still using.
+            </p>
+            <button
+              onClick={onClose}
+              className="rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm font-medium text-slate-600 transition hover:bg-slate-100"
+            >
+              Close
+            </button>
             <button
               onClick={emptyTrash}
-              disabled={busy}
-              className="w-full rounded-lg border border-red-200 bg-red-50 py-2.5 text-sm font-semibold text-red-600 transition hover:bg-red-100 disabled:opacity-50"
+              disabled={busy !== null}
+              className="flex items-center gap-1.5 rounded-lg bg-red-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-red-700 disabled:opacity-50"
             >
-              {busy ? "Deleting…" : "Empty trash now"}
+              <Trash2 size={15} />
+              {busy === "all"
+                ? "Deleting everything…"
+                : `Delete all ${trashed.length} permanently`}
             </button>
-          </>
+          </div>
         )}
       </div>
     </div>

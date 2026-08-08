@@ -6,6 +6,7 @@ import JSZip from "jszip";
 import { decompress as zstdDecompress } from "fzstd";
 import type { Database, SqlJsStatic } from "sql.js";
 import type { CardData, OcclusionShape } from "../types";
+import { uid } from "./uid";
 
 export interface ParsedSheet {
   title: string;
@@ -181,7 +182,7 @@ function shapeFromSvgTag(
   H: number,
   groupId?: string
 ): OcclusionShape | null {
-  const id = crypto.randomUUID();
+  const id = uid();
   if (tagName === "rect") {
     const x = parseFloat(attrs.x ?? "0") / W;
     const y = parseFloat(attrs.y ?? "0") / H;
@@ -270,7 +271,7 @@ export function parseIoeOriginalSvg(svgText: string): {
     if (groupShapes.length === 1) {
       shapes.push(groupShapes[0]);
     } else if (groupShapes.length > 1) {
-      const gid = crypto.randomUUID();
+      const gid = uid();
       for (const s of groupShapes) shapes.push({ ...s, groupId: gid });
     }
   }
@@ -312,7 +313,7 @@ export function parseNativeOcclusionField(field: string): {
     }
 
     let shape: OcclusionShape | null = null;
-    const id = crypto.randomUUID();
+    const id = uid();
     if (kind === "rect" || kind === "ellipse") {
       let x: number, y: number, w: number, h: number;
       if (props.rx !== undefined) {
@@ -369,7 +370,7 @@ export function parseNativeOcclusionField(field: string): {
 
   for (const members of clozeGroups.values()) {
     if (members.length > 1) {
-      const gid = crypto.randomUUID();
+      const gid = uid();
       for (const s of members) shapes.push({ ...s, groupId: gid });
     } else if (members.length === 1) {
       shapes.push(members[0]);

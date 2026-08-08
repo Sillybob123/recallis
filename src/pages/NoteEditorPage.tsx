@@ -33,6 +33,7 @@ import {
   normalizeDeckPath,
   splitDeckPath,
 } from "../lib/deckPath";
+import { uid } from "../lib/uid";
 
 type SaveState = "saved" | "saving" | "dirty" | "offline";
 
@@ -162,7 +163,7 @@ export function NoteEditorPage() {
         setSlideProgress(`Uploading slide ${i + 1}/${blobs.length}…`);
         const { path, url } = await uploadNoteSlide(user.uid, noteId, blobs[i]);
         newSlides.push({
-          id: crypto.randomUUID(),
+          id: uid(),
           imagePath: path,
           imageUrl: url,
           note: "",

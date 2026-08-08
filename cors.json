@@ -9,8 +9,22 @@
       "http://localhost:5173",
       "http://localhost:4173"
     ],
-    "method": ["GET", "HEAD"],
-    "responseHeader": ["Content-Type", "Content-Length", "Content-Range", "Range"],
+    "method": ["GET", "HEAD", "PUT", "POST", "DELETE", "PATCH"],
+    "responseHeader": [
+      "Content-Type",
+      "Content-Length",
+      "Content-Range",
+      "Content-Encoding",
+      "Content-Disposition",
+      "Range",
+      "Authorization",
+      "X-Goog-Upload-URL",
+      "X-Goog-Upload-Status",
+      "X-Goog-Upload-Size-Received",
+      "X-Goog-Upload-Chunk-Granularity",
+      "x-goog-resumable",
+      "ETag"
+    ],
     "maxAgeSeconds": 3600
   }
 ]

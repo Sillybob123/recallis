@@ -22,6 +22,7 @@ import {
 } from "../lib/firestore";
 import { DEFAULT_MASK_COLOR, polygonBounds, shapeColor, shapeKind, shapeOpacity, translateShape } from "../lib/shapes";
 import type { OcclusionShape, ShapeKind } from "../types";
+import { uid } from "../lib/uid";
 
 const MASK_COLORS = [DEFAULT_MASK_COLOR, "#ef4444", "#10b981", "#f59e0b", "#a855f7", "#ec4899", "#334155"];
 
@@ -138,11 +139,11 @@ export function OcclusionEditor() {
       if (!selectedIds.has(s.id)) continue;
       let groupId = s.groupId;
       if (groupId) {
-        if (!groupRemap.has(groupId)) groupRemap.set(groupId, crypto.randomUUID());
+        if (!groupRemap.has(groupId)) groupRemap.set(groupId, uid());
         groupId = groupRemap.get(groupId);
       }
       clones.push(
-        translateShape({ ...s, id: crypto.randomUUID(), groupId }, 0.03, 0.03)
+        translateShape({ ...s, id: uid(), groupId }, 0.03, 0.03)
       );
     }
     if (clones.length) {
@@ -153,7 +154,7 @@ export function OcclusionEditor() {
 
   function groupSelected() {
     if (selectedIds.size < 2) return;
-    const gid = crypto.randomUUID();
+    const gid = uid();
     setShapes((prev) =>
       prev.map((s) => (selectedIds.has(s.id) ? { ...s, groupId: gid } : s))
     );
@@ -217,7 +218,7 @@ export function OcclusionEditor() {
   function commitPolygon() {
     if (polyDraft.length >= 3) {
       const b = polygonBounds(polyDraft);
-      const id = crypto.randomUUID();
+      const id = uid();
       setShapes((prev) => [
         ...prev,
         {
@@ -383,7 +384,7 @@ export function OcclusionEditor() {
         const w = Math.abs(pos.x - drag!.startX);
         const h = Math.abs(pos.y - drag!.startY);
         if (w > 0.01 && h > 0.01) {
-          const id = crypto.randomUUID();
+          const id = uid();
           setShapes((prev) => [
             ...prev,
             {

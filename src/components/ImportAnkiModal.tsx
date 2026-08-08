@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { FileUp, X } from "lucide-react";
 import { importAnkiText, ankiDeckToName, type AnkiImportResult } from "../lib/ankiImport";
 import { createCardsBulk, createDeck } from "../lib/firestore";
@@ -26,6 +26,7 @@ export function ImportAnkiModal({
   const [progress, setProgress] = useState<ApkgImportProgress | null>(null);
   const [done, setDone] = useState<string | null>(null);
   const [warnings, setWarnings] = useState<string[]>([]);
+  const abortRef = useRef<AbortController | null>(null);
 
   async function handleFile(f: File) {
     setFileName(f.name);
@@ -77,11 +78,13 @@ export function ImportAnkiModal({
     setParseError("");
     try {
       if (pkgResult) {
+        abortRef.current = new AbortController();
         const outcome = await importParsedApkg(uid, pkgResult, {
           split,
           singleDeckName: singleName.trim() || "Imported deck",
           importSchedule,
           onProgress: setProgress,
+          signal: abortRef.current.signal,
         });
         setWarnings(outcome.warnings);
         setDone(
@@ -116,10 +119,16 @@ export function ImportAnkiModal({
         );
       }
     } catch (err) {
-      setParseError("Import failed: " + (err as Error).message);
+      const message = (err as Error).message;
+      setParseError(
+        /cancel/i.test(message)
+          ? "Import cancelled. Anything already imported was kept — you can delete those decks or re-import to finish."
+          : "Import failed: " + message
+      );
     } finally {
       setBusy(false);
       setProgress(null);
+      abortRef.current = null;
     }
   }
 
@@ -137,14 +146,23 @@ export function ImportAnkiModal({
   const ready = Boolean(pkgResult || txtResult);
 
   return (
-    <div className="fixed inset-0 z-30 flex items-center justify-center bg-slate-900/40 p-4">
-      <div className="flex max-h-[90vh] w-full max-w-lg flex-col overflow-y-auto rounded-2xl bg-white p-6 shadow-xl">
-        <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-lg font-bold text-slate-900">Import from Anki</h2>
-          <button onClick={onClose} className="text-slate-400 hover:text-slate-600">
+    <div className="fixed inset-0 z-40 flex items-center justify-center bg-slate-900/45 p-4">
+      <div className="flex max-h-[88vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
+        <div className="flex shrink-0 items-start justify-between border-b border-slate-200 px-6 py-4">
+          <div>
+            <h2 className="text-lg font-bold text-slate-900">Import from Anki</h2>
+            <p className="text-xs text-slate-500">
+              Cards, images, occlusion masks, and review history come across.
+            </p>
+          </div>
+          <button
+            onClick={onClose}
+            className="rounded-lg p-1.5 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
+          >
             <X size={20} />
           </button>
         </div>
+        <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5">
 
         {done ? (
           <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4">
@@ -170,12 +188,12 @@ export function ImportAnkiModal({
           </div>
         ) : (
           <>
-            <label className="mb-3 flex cursor-pointer flex-col items-center justify-center gap-1.5 rounded-xl border-2 border-dashed border-slate-300 bg-slate-50 py-8 text-slate-500 transition hover:border-indigo-400 hover:bg-indigo-50">
+            <label className="mb-4 flex cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed border-slate-300 bg-slate-50 py-10 text-slate-500 transition hover:border-indigo-400 hover:bg-indigo-50">
               <FileUp size={22} />
-              <span className="text-sm font-medium">
+              <span className="text-sm font-semibold text-slate-700">
                 {parsing ? "Reading…" : fileName || "Choose an Anki export"}
               </span>
-              <span className="px-4 text-center text-xs">
+              <span className="max-w-md px-4 text-center text-xs leading-relaxed">
                 Best: a <b>.apkg</b> deck package (File → Export → Anki Deck Package,
                 "Include media" checked) — brings images and occlusion masks.
                 Also accepts .colpkg and plain .txt exports.
@@ -195,26 +213,37 @@ export function ImportAnkiModal({
             )}
 
             {pkgResult && pkgStats && (
-              <div className="mb-3 rounded-xl border border-slate-200 bg-slate-50 p-3 text-sm text-slate-700">
-                <p className="font-semibold">Package contents</p>
-                <ul className="mt-1 space-y-0.5 text-xs text-slate-500">
-                  <li>{pkgResult.stats.cloze} cloze cards + {pkgResult.stats.basic} basic cards</li>
-                  <li>
-                    {pkgResult.stats.sheets} image-occlusion sheets with {pkgResult.stats.masks}{" "}
-                    masks — converted to native, editable occlusion sheets (groups preserved)
-                  </li>
-                  <li>Card images upload to your Firebase storage automatically</li>
-                  {pkgResult.stats.scheduled > 0 && (
-                    <li className="text-emerald-600">
-                      {pkgResult.stats.scheduled} cards carry review history
-                    </li>
-                  )}
-                  {pkgResult.stats.skippedNotes > 0 && (
-                    <li className="text-amber-600">
-                      {pkgResult.stats.skippedNotes} notes skipped (empty or unreadable)
-                    </li>
-                  )}
-                </ul>
+              <div className="mb-4">
+                <p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-400">
+                  Package contents
+                </p>
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                  <Tile
+                    value={pkgResult.stats.cloze + pkgResult.stats.basic}
+                    label="cards"
+                    hint={`${pkgResult.stats.cloze} cloze · ${pkgResult.stats.basic} basic`}
+                  />
+                  <Tile
+                    value={pkgResult.stats.sheets}
+                    label="image sheets"
+                    hint={`${pkgResult.stats.masks} masks`}
+                  />
+                  <Tile
+                    value={pkgResult.stats.scheduled}
+                    label="with history"
+                    hint={pkgResult.stats.scheduled > 0 ? "schedules kept" : "all new"}
+                    accent={pkgResult.stats.scheduled > 0}
+                  />
+                  <Tile
+                    value={pkgResult.decks.length}
+                    label="decks"
+                    hint={pkgResult.stats.skippedNotes > 0 ? `${pkgResult.stats.skippedNotes} skipped` : "ready"}
+                  />
+                </div>
+                <p className="mt-2 text-xs text-slate-500">
+                  Occlusion notes become native, editable sheets with their mask
+                  groups intact, and every image uploads to your own storage.
+                </p>
               </div>
             )}
 
@@ -285,10 +314,10 @@ export function ImportAnkiModal({
                 )}
 
                 {busy && progress && (
-                  <div>
-                    <div className="mb-1 flex justify-between text-xs text-slate-500">
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+                    <div className="mb-1.5 flex justify-between text-xs text-slate-600">
                       <span className="truncate pr-2">{progress.stage}</span>
-                      <span>
+                      <span className="shrink-0 font-medium">
                         {progress.done}/{progress.total}
                       </span>
                     </div>
@@ -300,21 +329,67 @@ export function ImportAnkiModal({
                         }}
                       />
                     </div>
+                    <p className="mt-2 text-[11px] text-slate-400">
+                      Keep this tab open. Slow uploads are retried automatically,
+                      and anything that fails is reported at the end.
+                    </p>
                   </div>
                 )}
-
-                <button
-                  onClick={handleImport}
-                  disabled={busy}
-                  className="w-full rounded-lg bg-indigo-600 py-2.5 text-sm font-semibold text-white transition hover:bg-indigo-700 disabled:opacity-50"
-                >
-                  {busy ? "Importing… (keep this tab open)" : "Import"}
-                </button>
               </div>
             )}
           </>
         )}
+        </div>
+
+        {!done && ready && (
+          <div className="flex shrink-0 items-center justify-end gap-2 border-t border-slate-200 bg-slate-50 px-6 py-4">
+            <button
+              onClick={() => {
+                if (busy) abortRef.current?.abort();
+                else onClose();
+              }}
+              className="rounded-lg border border-slate-300 bg-white px-4 py-2.5 text-sm font-medium text-slate-600 transition hover:bg-slate-100"
+            >
+              {busy ? "Cancel import" : "Cancel"}
+            </button>
+            <button
+              onClick={handleImport}
+              disabled={busy}
+              className="rounded-lg bg-indigo-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-700 disabled:opacity-50"
+            >
+              {busy ? "Importing…" : "Import"}
+            </button>
+          </div>
+        )}
       </div>
+    </div>
+  );
+}
+
+function Tile({
+  value,
+  label,
+  hint,
+  accent,
+}: {
+  value: number;
+  label: string;
+  hint: string;
+  accent?: boolean;
+}) {
+  return (
+    <div
+      className={`rounded-xl border px-3 py-2.5 ${
+        accent ? "border-emerald-200 bg-emerald-50" : "border-slate-200 bg-white"
+      }`}
+    >
+      <p
+        className={`text-xl font-bold ${accent ? "text-emerald-700" : "text-slate-800"}`}
+      >
+        {value}
+      </p>
+      <p className="text-[11px] font-medium text-slate-500">{label}</p>
+      <p className="truncate text-[10px] text-slate-400">{hint}</p>
     </div>
   );
 }

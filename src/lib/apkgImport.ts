@@ -7,6 +7,7 @@ import {
   type ParsedSheet,
 } from "./apkgParse";
 import { findClozeNumbers } from "./cloze";
+import { retry } from "./netRetry";
 import { newSrsState, type SrsState } from "./srs";
 import {
   contentTypeForFilename,
@@ -143,6 +144,7 @@ export async function importParsedApkg(
     /** carry over Anki's due dates and intervals when the package has them */
     importSchedule: boolean;
     onProgress?: (p: ApkgImportProgress) => void;
+    signal?: AbortSignal;
   }
 ): Promise<ApkgImportOutcome> {
   const warnings = [...parsed.stats.warnings];
@@ -191,7 +193,10 @@ export async function importParsedApkg(
     try {
       const bytes = await readMediaBytes(parsed, name);
       if (bytes && contentTypeForFilename(name)) {
-        const up = await uploadDeckMedia(uid, target.deckId, name, bytes);
+        const up = await retry(
+          () => uploadDeckMedia(uid, target.deckId, name, bytes),
+          { signal: opts.signal }
+        );
         url = up.url;
         mediaUploaded++;
       } else if (bytes) {
@@ -251,20 +256,28 @@ export async function importParsedApkg(
     const type = contentTypeForFilename(sheet.imageName) ?? "image/png";
     const buf = new Uint8Array(bytes).buffer as ArrayBuffer;
     const asFile = new File([buf], `import.${ext}`, { type });
-    const { path, url } = await uploadOcclusionImage(uid, target.deckId, asFile);
-    await createOcclusionSheet(uid, target.deckId, {
-      title: sheet.title,
-      imagePath: path,
-      imageUrl: url,
-      imageWidth: Math.round(width),
-      imageHeight: Math.round(height),
-      shapes,
-    });
+    const { path, url } = await retry(
+      () => uploadOcclusionImage(uid, target.deckId, asFile),
+      { signal: opts.signal }
+    );
+    await retry(
+      () =>
+        createOcclusionSheet(uid, target.deckId, {
+          title: sheet.title,
+          imagePath: path,
+          imageUrl: url,
+          imageWidth: Math.round(width),
+          imageHeight: Math.round(height),
+          shapes,
+        }),
+      { signal: opts.signal }
+    );
     sheetsCreated++;
     masksCreated += shapes.length;
   }
 
   for (const deck of parsed.decks) {
+    if (opts.signal?.aborted) throw new Error("Import cancelled");
     let target: TargetDeck;
     if (opts.split) {
       target = await makeDeck(deck.name);
@@ -279,6 +292,7 @@ export async function importParsedApkg(
     const rewritten: CardData[] = [];
     const schedules: (Map<number, ImportedSchedule> | undefined)[] = [];
     for (const card of deck.cards) {
+      if (opts.signal?.aborted) throw new Error("Import cancelled");
       progress(`Uploading card images (${deck.name})`);
       const data = card.data;
       if (data.type === "basic") {
@@ -300,7 +314,9 @@ export async function importParsedApkg(
     if (rewritten.length) {
       progress(`Saving cards (${deck.name})`);
       try {
-        const ids = await createCardsBulk(uid, target.deckId, rewritten);
+        const ids = await retry(() => createCardsBulk(uid, target.deckId, rewritten), {
+          signal: opts.signal,
+        });
         cardsCreated += rewritten.length;
 
         if (opts.importSchedule) {
@@ -316,11 +332,9 @@ export async function importParsedApkg(
               if (!entry) continue;
               const itemKey = data.type === "cloze" ? `${ids[i]}-c${num}` : ids[i];
               try {
-                await setSrsState(
-                  uid,
-                  target.deckId,
-                  itemKey,
-                  srsFromAnki(entry)
+                await retry(
+                  () => setSrsState(uid, target.deckId, itemKey, srsFromAnki(entry)),
+                  { attempts: 2, timeoutMs: 20000, signal: opts.signal }
                 );
                 schedulesRestored++;
               } catch {
@@ -337,6 +351,7 @@ export async function importParsedApkg(
     }
 
     for (const sheet of deck.sheets) {
+      if (opts.signal?.aborted) throw new Error("Import cancelled");
       progress(`Building occlusion sheet: ${sheet.title}`);
       try {
         await importSheet(target, sheet);

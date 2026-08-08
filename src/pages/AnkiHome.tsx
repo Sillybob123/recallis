@@ -6,10 +6,11 @@ import { useStudyMode } from "../contexts/StudyModeContext";
 import { Layout } from "../components/Layout";
 import { DeckRows } from "../components/DeckTree";
 import { StudySettingsModal } from "../components/StudySettingsModal";
+import { DeleteDeckModal } from "../components/DeleteDeckModal";
 import { watchDecks } from "../lib/firestore";
 import { computeAllDeckCounts, type DeckCounts } from "../lib/deckCounts";
 import { getTodayAnkiStats, loadAnkiSettings, loadQuizletSettings } from "../lib/settings";
-import { buildDeckTree } from "../lib/deckPath";
+import { buildDeckTree, type DeckNode } from "../lib/deckPath";
 import type { Deck } from "../types";
 
 export function AnkiHome() {
@@ -18,6 +19,7 @@ export function AnkiHome() {
   const [decks, setDecks] = useState<Deck[] | null>(null);
   const [counts, setCounts] = useState<Map<string, DeckCounts>>(new Map());
   const [showOptions, setShowOptions] = useState(false);
+  const [deleting, setDeleting] = useState<DeckNode | null>(null);
   const [collapsed, setCollapsed] = useState<Set<string>>(() => {
     try {
       return new Set(JSON.parse(localStorage.getItem("collapsedDecks") ?? "[]"));
@@ -69,7 +71,11 @@ export function AnkiHome() {
     };
   }, [user, decks, countsNonce]);
 
-  const tree = useMemo(() => buildDeckTree(decks ?? []), [decks]);
+  const visible = useMemo(
+    () => (decks ?? []).filter((d) => !d.hiddenInAnki),
+    [decks]
+  );
+  const tree = useMemo(() => buildDeckTree(visible), [visible]);
 
   const totals = useMemo(() => {
     let newRaw = 0;
@@ -199,6 +205,7 @@ export function AnkiHome() {
                 onToggle={toggleCollapse}
                 onOptions={() => setShowOptions(true)}
                 onAddChild={() => {}}
+                onDelete={setDeleting}
                 decks={decks}
               />
             ))}
@@ -206,6 +213,13 @@ export function AnkiHome() {
         </div>
       )}
 
+      {deleting && (
+        <DeleteDeckModal
+          uid={user!.uid}
+          node={deleting}
+          onClose={() => setDeleting(null)}
+        />
+      )}
       {showOptions && (
         <StudySettingsModal
           studyMode="anki"
