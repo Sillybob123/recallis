@@ -764,6 +764,38 @@ export async function deleteCramProgress(uid: string, id: string) {
   await deleteDoc(cramDoc(uid, id));
 }
 
+/**
+ * The cards a finished run left you struggling with. Outlives the session it
+ * came from — that's the point — but it's only a list of ids, so it costs
+ * almost nothing, and it's deleted as soon as you clear them.
+ */
+function troubleDoc(uid: string, id: string) {
+  return doc(db, "users", uid, "cramReview", id);
+}
+
+export async function saveTroubleList(uid: string, id: string, keys: string[]) {
+  await setDoc(troubleDoc(uid, id), {
+    keys,
+    savedAt: Date.now(),
+    updatedAt: serverTimestamp(),
+  });
+}
+
+export async function fetchTroubleList(
+  uid: string,
+  id: string
+): Promise<{ keys: string[]; savedAt: number } | null> {
+  const snap = await getDoc(troubleDoc(uid, id));
+  if (!snap.exists()) return null;
+  const data = snap.data() as { keys?: string[]; savedAt?: number };
+  if (!Array.isArray(data.keys) || data.keys.length === 0) return null;
+  return { keys: data.keys, savedAt: data.savedAt ?? 0 };
+}
+
+export async function deleteTroubleList(uid: string, id: string) {
+  await deleteDoc(troubleDoc(uid, id));
+}
+
 // ---------- User settings (cross-device) ----------
 
 export async function fetchUserSettings(

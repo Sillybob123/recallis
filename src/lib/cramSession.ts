@@ -187,3 +187,82 @@ export function clearCramSession(uid: string | null, scope: string) {
     .then(({ deleteCramProgress }) => deleteCramProgress(uid, cramScopeId(scope)))
     .catch(() => {});
 }
+
+// ---------- "still learning" ----------
+// The cards a finished run kept tripping you on. A session is deleted when
+// you complete the deck; this list deliberately isn't, so the next sitting can
+// start with just the ones that gave you trouble. It holds item keys only.
+
+const TROUBLE_PREFIX = "cramTrouble:";
+
+/** Misses that mark a card as still learning. */
+export const STILL_LEARNING_MISSES = 2;
+
+function troubleKey(scope: string): string {
+  return TROUBLE_PREFIX + scope;
+}
+
+export function saveTroubleList(
+  uid: string | null,
+  scope: string,
+  keys: string[]
+) {
+  if (keys.length === 0) {
+    clearTroubleList(uid, scope);
+    return;
+  }
+  try {
+    localStorage.setItem(
+      troubleKey(scope),
+      JSON.stringify({ keys, savedAt: Date.now() })
+    );
+  } catch {
+    /* best effort */
+  }
+  if (!uid) return;
+  import("./firestore")
+    .then(({ saveTroubleList: save }) => save(uid, cramScopeId(scope), keys))
+    .catch(() => {});
+}
+
+export async function loadTroubleList(
+  uid: string | null,
+  scope: string,
+  timeoutMs = 2500
+): Promise<string[]> {
+  let local: { keys: string[]; savedAt: number } | null = null;
+  try {
+    const raw = localStorage.getItem(troubleKey(scope));
+    if (raw) local = JSON.parse(raw);
+  } catch {
+    /* ignore */
+  }
+  if (!uid) return local?.keys ?? [];
+
+  let remote: { keys: string[]; savedAt: number } | null = null;
+  try {
+    remote = await Promise.race([
+      import("./firestore").then(({ fetchTroubleList }) =>
+        fetchTroubleList(uid, cramScopeId(scope))
+      ),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), timeoutMs)),
+    ]);
+  } catch {
+    /* offline */
+  }
+  if (!remote) return local?.keys ?? [];
+  if (!local) return remote.keys;
+  return remote.savedAt > local.savedAt ? remote.keys : local.keys;
+}
+
+export function clearTroubleList(uid: string | null, scope: string) {
+  try {
+    localStorage.removeItem(troubleKey(scope));
+  } catch {
+    /* ignore */
+  }
+  if (!uid) return;
+  import("./firestore")
+    .then(({ deleteTroubleList }) => deleteTroubleList(uid, cramScopeId(scope)))
+    .catch(() => {});
+}

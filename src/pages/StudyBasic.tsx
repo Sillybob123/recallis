@@ -7,12 +7,13 @@ import {
   Check,
   ChevronDown,
   CloudOff,
-  Loader2,
   Flag,
+  Loader2,
   PartyPopper,
   Pencil,
   RotateCcw,
   Settings,
+  Sparkles,
   Star,
 } from "lucide-react";
 import { useAuth } from "../contexts/AuthContext";
@@ -82,9 +83,13 @@ import {
 } from "../lib/siblings";
 import {
   clearCramSession,
+  clearTroubleList,
   flushCramSession,
   loadCramSession,
+  loadTroubleList,
   saveCramSession,
+  saveTroubleList,
+  STILL_LEARNING_MISSES,
 } from "../lib/cramSession";
 
 /**
@@ -245,7 +250,12 @@ export function StudyBasic() {
   const deckScopeKey = deckIds.join(",");
   // Deck order depends on how you got here, but it's the same session either
   // way, so the scope is sorted.
-  const cramScope = `${[...deckIds].sort().join(",")}:${cardsOnly ? "cards" : "all"}`;
+  const baseScope = `${[...deckIds].sort().join(",")}:${cardsOnly ? "cards" : "all"}`;
+  // Reviewing the hard cards is a separate run under its own key, so starting
+  // one doesn't disturb the full pass you may be part-way through.
+  const [reviewOnly, setReviewOnly] = useState(false);
+  const [troubleKeys, setTroubleKeys] = useState<string[]>([]);
+  const cramScope = reviewOnly ? `${baseScope}:review` : baseScope;
   const { user } = useAuth();
   const { studyMode, setStudyMode } = useStudyMode();
   const navigate = useNavigate();
@@ -365,10 +375,27 @@ export function StudyBasic() {
       (async () => {
         // Resume an unfinished cram run rather than reshuffling from scratch —
         // from this device, or from wherever it was last touched.
-        const saved = await loadCramSession(user?.uid ?? null, cramScope);
+        const [saved, trouble] = await Promise.all([
+          loadCramSession(user?.uid ?? null, cramScope),
+          loadTroubleList(user?.uid ?? null, baseScope),
+        ]);
         if (cancelled) return;
+        setTroubleKeys(trouble);
+        const troubleSet = new Set(trouble);
+        let pool = all;
+        if (reviewOnly) {
+          pool = all.filter((it) => troubleSet.has(it.key));
+          // Those cards can have been edited or deleted since. Rather than
+          // strand the session on an empty deck, forget the stale list.
+          if (pool.length === 0) {
+            clearTroubleList(user?.uid ?? null, baseScope);
+            setTroubleKeys([]);
+            setReviewOnly(false);
+            pool = all;
+          }
+        }
         if (saved) {
-          const byKey = new Map(all.map((it) => [combinedKey(it), it]));
+          const byKey = new Map(pool.map((it) => [combinedKey(it), it]));
           const restored = saved.order
             .map((k) => byKey.get(k))
             .filter((it): it is StudyItem => Boolean(it));
@@ -383,7 +410,7 @@ export function StudyBasic() {
           }
           clearCramSession(user?.uid ?? null, cramScope);
         }
-        const items = spreadSiblings(shuffle(all), ankiSettings.siblingGap);
+        const items = spreadSiblings(shuffle(pool), ankiSettings.siblingGap);
         setQueue(items);
         setTotal(items.length);
         setNextDueMs(null);
@@ -474,6 +501,7 @@ export function StudyBasic() {
     studyMode,
     cardsOnly,
     sessionNonce,
+    reviewOnly,
     quizletSettings.answerWith,
   ]);
 
@@ -608,8 +636,13 @@ export function StudyBasic() {
   function commitCramQueue(next: StudyItem[], sessionTotal: number) {
     setQueue(next);
     if (next.length === 0) {
-      // Finished — the run has served its purpose, so it stops costing
-      // storage here and in Firestore.
+      // Finished. Which cards fought back is worth keeping — it's the whole
+      // basis for the next sitting — even though the run itself is not.
+      const stillLearning = [...missesRef.current.entries()]
+        .filter(([, misses]) => misses >= STILL_LEARNING_MISSES)
+        .map(([key]) => key);
+      saveTroubleList(user?.uid ?? null, baseScope, stillLearning);
+      setTroubleKeys(stillLearning);
       clearCramSession(user?.uid ?? null, cramScope);
     } else {
       saveCramSession(user?.uid ?? null, cramScope, {
@@ -753,8 +786,16 @@ export function StudyBasic() {
     setChecked(gradeAnswer(typed, itemAnswer(current), quizletSettings.grading));
   }
 
-  function restart() {
-    clearCramSession(user?.uid ?? null, cramScope);
+  /**
+   * Starts a run over. `review` picks the still-learning cards only; the full
+   * pass keeps its own saved progress either way, so switching costs nothing.
+   */
+  function startSession(review: boolean) {
+    clearCramSession(
+      user?.uid ?? null,
+      review ? `${baseScope}:review` : baseScope
+    );
+    setReviewOnly(review);
     setSessionNonce((n) => n + 1);
     resetCardUI();
   }
@@ -1273,13 +1314,35 @@ export function StudyBasic() {
               .
             </p>
           )}
-          <div className="flex justify-center gap-3">
+          {studyMode === "quizlet" && troubleKeys.length > 0 && (
+            <p className="mx-auto mb-5 max-w-md text-sm text-emerald-700">
+              <b>{troubleKeys.length}</b> card
+              {troubleKeys.length === 1 ? "" : "s"} gave you trouble — you
+              missed {troubleKeys.length === 1 ? "it" : "them"}{" "}
+              {STILL_LEARNING_MISSES} or more times. Go again with just those,
+              or reset and take the whole deck from the top.
+            </p>
+          )}
+          <div className="flex flex-wrap justify-center gap-3">
+            {studyMode === "quizlet" && troubleKeys.length > 0 && (
+              <button
+                onClick={() => startSession(true)}
+                className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700"
+              >
+                <Sparkles size={14} /> Study {troubleKeys.length} still learning
+              </button>
+            )}
             {studyMode === "quizlet" && (
               <button
-                onClick={restart}
-                className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700"
+                onClick={() => startSession(false)}
+                className={`flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-semibold ${
+                  troubleKeys.length > 0
+                    ? "border border-slate-300 bg-white text-slate-600 hover:bg-slate-50"
+                    : "bg-indigo-600 text-white hover:bg-indigo-700"
+                }`}
               >
-                <RotateCcw size={14} /> Study again
+                <RotateCcw size={14} />{" "}
+                {troubleKeys.length > 0 ? "Reset progress — study all" : "Study again"}
               </button>
             )}
             <button
@@ -1515,6 +1578,48 @@ export function StudyBasic() {
               )}
               <AnswerButtons />
             </div>
+          )}
+        </div>
+      )}
+
+      {studyMode === "quizlet" && current && troubleKeys.length > 0 && (
+        <div className="mx-auto mb-3 flex max-w-3xl flex-wrap items-center justify-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-800">
+          {reviewOnly ? (
+            <>
+              <span>
+                Reviewing the <b>{troubleKeys.length}</b> card
+                {troubleKeys.length === 1 ? "" : "s"} you were still learning.
+              </span>
+              <button
+                onClick={() => startSession(false)}
+                className="rounded-lg border border-amber-300 bg-white px-2 py-1 font-semibold text-amber-800 hover:bg-amber-100"
+              >
+                Study the whole deck
+              </button>
+            </>
+          ) : (
+            <>
+              <span>
+                <b>{troubleKeys.length}</b> card
+                {troubleKeys.length === 1 ? "" : "s"} still learning from last
+                time.
+              </span>
+              <button
+                onClick={() => startSession(true)}
+                className="rounded-lg border border-amber-300 bg-white px-2 py-1 font-semibold text-amber-800 hover:bg-amber-100"
+              >
+                Study just those
+              </button>
+              <button
+                onClick={() => {
+                  clearTroubleList(user?.uid ?? null, baseScope);
+                  setTroubleKeys([]);
+                }}
+                className="rounded-lg px-2 py-1 font-medium text-amber-700 underline-offset-2 hover:underline"
+              >
+                Clear
+              </button>
+            </>
           )}
         </div>
       )}
