@@ -30,6 +30,7 @@ import {
   deleteSrsState,
   logReview,
   recordCardResult,
+  setItemStarred,
   setItemTags,
   updateCard,
 } from "../lib/firestore";
@@ -315,6 +316,8 @@ export function StudyBasic() {
   const strengthRef = useRef<Map<string, number>>(new Map());
   const missesRef = useRef<Map<string, number>>(new Map());
   const answerLockRef = useRef(false);
+  /** every item this scope can study, for sizing the extra-review pool */
+  const allItemsRef = useRef<StudyItem[]>([]);
   /** set when a rebuild must keep the session (an edit, a settings change) */
   const preserveRef = useRef(false);
   const [celebrate, setCelebrate] = useState(false);
@@ -382,9 +385,20 @@ export function StudyBasic() {
         if (cancelled) return;
         setTroubleKeys(trouble);
         const troubleSet = new Set(trouble);
+        // Extra review = what kept beating you, plus whatever you starred.
+        const starredCards = new Set(cards.filter((c) => c.starred).map((c) => c.id));
+        const starredSheets = new Set(
+          sheets.filter((sh) => sh.starred).map((sh) => sh.id)
+        );
+        const wantsReview = (it: StudyItem) =>
+          troubleSet.has(it.key) ||
+          (it.kind === "text"
+            ? starredCards.has(it.cardId)
+            : starredSheets.has(it.sheet.id));
+        allItemsRef.current = all;
         let pool = all;
         if (reviewOnly) {
-          pool = all.filter((it) => troubleSet.has(it.key));
+          pool = all.filter(wantsReview);
           // Those cards can have been edited or deleted since. Rather than
           // strand the session on an empty deck, forget the stale list.
           if (pool.length === 0) {
@@ -523,6 +537,57 @@ export function StudyBasic() {
 
   const current = queue[0];
   const showMaskToggle = current?.kind === "occlusion";
+
+  // Stars live on the note, so they're read straight off the loaded cards
+  // rather than tracked per session.
+  const starredCardIds = useMemo(
+    () => new Set((cards ?? []).filter((c) => c.starred).map((c) => c.id)),
+    [cards]
+  );
+  const starredSheetIds = useMemo(
+    () => new Set((sheets ?? []).filter((sh) => sh.starred).map((sh) => sh.id)),
+    [sheets]
+  );
+  const isStarred = useCallback(
+    (item: StudyItem) =>
+      item.kind === "text"
+        ? starredCardIds.has(item.cardId)
+        : starredSheetIds.has(item.sheet.id),
+    [starredCardIds, starredSheetIds]
+  );
+
+  // Recomputed as you star things mid-session, so the offer to review is
+  // always current.
+  const reviewCount = useMemo(() => {
+    const troubleSet = new Set(troubleKeys);
+    return allItemsRef.current.filter(
+      (it) => troubleSet.has(it.key) || isStarred(it)
+    ).length;
+  }, [troubleKeys, isStarred]);
+
+  /** Stars the note behind the card on screen, for extra review later. */
+  function toggleStar() {
+    if (!current || !user) return;
+    const next = !isStarred(current);
+    if (current.kind === "text") {
+      setCards((prev) =>
+        (prev ?? []).map((c) =>
+          c.id === current.cardId ? { ...c, starred: next } : c
+        )
+      );
+      setItemStarred(user.uid, current.deckId, "card", current.cardId, next).catch(
+        () => {}
+      );
+    } else {
+      const sheetId = current.sheet.id;
+      setSheets((prev) =>
+        (prev ?? []).map((sh) => (sh.id === sheetId ? { ...sh, starred: next } : sh))
+      );
+      setItemStarred(user.uid, current.deckId, "sheet", sheetId, next).catch(
+        () => {}
+      );
+    }
+  }
 
   // Restart the answer timer whenever a new card is shown.
   useEffect(() => {
@@ -1066,6 +1131,11 @@ export function StudyBasic() {
         openEditor();
         return;
       }
+      if ((e.key === "s" || e.key === "S") && studyMode === "quizlet") {
+        e.preventDefault();
+        toggleStar();
+        return;
+      }
       if (!isFlashcardContext) return;
       if (e.key === " " || e.code === "Space") {
         e.preventDefault();
@@ -1125,6 +1195,25 @@ export function StudyBasic() {
       </Layout>
     );
   }
+
+  const starButton = current && studyMode === "quizlet" && (
+    <button
+      onClick={toggleStar}
+      title={
+        isStarred(current)
+          ? "Starred — it'll be in extra review (S)"
+          : "Star this note for extra review (S)"
+      }
+      aria-pressed={isStarred(current)}
+      className={`rounded-full border p-1.5 transition ${
+        isStarred(current)
+          ? "border-amber-300 bg-amber-50 text-amber-500"
+          : "border-slate-200 bg-white text-slate-400 hover:bg-slate-50"
+      }`}
+    >
+      <Star size={14} fill={isStarred(current) ? "currentColor" : "none"} />
+    </button>
+  );
 
   const settingsButton = (
     <button
@@ -1281,6 +1370,7 @@ export function StudyBasic() {
           )}
         </span>
         <span className="shrink-0">{studyMode === "anki" && <SaveBadge status={saveStatus} />}</span>
+        {starButton}
         {settingsButton}
       </div>
 
@@ -1314,35 +1404,34 @@ export function StudyBasic() {
               .
             </p>
           )}
-          {studyMode === "quizlet" && troubleKeys.length > 0 && (
+          {studyMode === "quizlet" && reviewCount > 0 && (
             <p className="mx-auto mb-5 max-w-md text-sm text-emerald-700">
-              <b>{troubleKeys.length}</b> card
-              {troubleKeys.length === 1 ? "" : "s"} gave you trouble — you
-              missed {troubleKeys.length === 1 ? "it" : "them"}{" "}
-              {STILL_LEARNING_MISSES} or more times. Go again with just those,
+              <b>{reviewCount}</b> card{reviewCount === 1 ? "" : "s"} set aside
+              for extra review — the ones you missed {STILL_LEARNING_MISSES} or
+              more times, plus anything you starred. Go again with just those,
               or reset and take the whole deck from the top.
             </p>
           )}
           <div className="flex flex-wrap justify-center gap-3">
-            {studyMode === "quizlet" && troubleKeys.length > 0 && (
+            {studyMode === "quizlet" && reviewCount > 0 && (
               <button
                 onClick={() => startSession(true)}
                 className="flex items-center gap-1.5 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-700"
               >
-                <Sparkles size={14} /> Study {troubleKeys.length} still learning
+                <Sparkles size={14} /> Extra review ({reviewCount})
               </button>
             )}
             {studyMode === "quizlet" && (
               <button
                 onClick={() => startSession(false)}
                 className={`flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-semibold ${
-                  troubleKeys.length > 0
+                  reviewCount > 0
                     ? "border border-slate-300 bg-white text-slate-600 hover:bg-slate-50"
                     : "bg-indigo-600 text-white hover:bg-indigo-700"
                 }`}
               >
                 <RotateCcw size={14} />{" "}
-                {troubleKeys.length > 0 ? "Reset progress — study all" : "Study again"}
+                {reviewCount > 0 ? "Reset progress — study all" : "Study again"}
               </button>
             )}
             <button
@@ -1582,13 +1671,13 @@ export function StudyBasic() {
         </div>
       )}
 
-      {studyMode === "quizlet" && current && troubleKeys.length > 0 && (
+      {studyMode === "quizlet" && current && reviewCount > 0 && (
         <div className="mx-auto mb-3 flex max-w-3xl flex-wrap items-center justify-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-800">
           {reviewOnly ? (
             <>
               <span>
-                Reviewing the <b>{troubleKeys.length}</b> card
-                {troubleKeys.length === 1 ? "" : "s"} you were still learning.
+                Extra review: <b>{total}</b> card{total === 1 ? "" : "s"} you
+                missed or starred.
               </span>
               <button
                 onClick={() => startSession(false)}
@@ -1600,9 +1689,8 @@ export function StudyBasic() {
           ) : (
             <>
               <span>
-                <b>{troubleKeys.length}</b> card
-                {troubleKeys.length === 1 ? "" : "s"} still learning from last
-                time.
+                <b>{reviewCount}</b> card{reviewCount === 1 ? "" : "s"} set
+                aside for extra review.
               </span>
               <button
                 onClick={() => startSession(true)}
@@ -1610,15 +1698,18 @@ export function StudyBasic() {
               >
                 Study just those
               </button>
-              <button
-                onClick={() => {
-                  clearTroubleList(user?.uid ?? null, baseScope);
-                  setTroubleKeys([]);
-                }}
-                className="rounded-lg px-2 py-1 font-medium text-amber-700 underline-offset-2 hover:underline"
-              >
-                Clear
-              </button>
+              {troubleKeys.length > 0 && (
+                <button
+                  onClick={() => {
+                    clearTroubleList(user?.uid ?? null, baseScope);
+                    setTroubleKeys([]);
+                  }}
+                  title="Forget the misses. Starred notes stay starred."
+                  className="rounded-lg px-2 py-1 font-medium text-amber-700 underline-offset-2 hover:underline"
+                >
+                  Clear misses
+                </button>
+              )}
             </>
           )}
         </div>
@@ -1629,16 +1720,16 @@ export function StudyBasic() {
           Smart shuffle: a quick first-try "Got it" retires a card outright;
           otherwise it comes back once more. Misses return within a few cards,
           then again much later, and each one adds a correct answer before the
-          card can leave. ⌘Z undoes the last answer. Your Anki-mode schedule is
-          untouched.
+          card can leave. <b>S</b> stars a note for extra review, ⌘Z undoes the last
+          answer. Your Anki-mode schedule is untouched.
         </p>
       )}
       {studyMode === "quizlet" && current && mode === "learn" && (
         <p className="mt-6 text-center text-xs text-slate-400">
           Learn: multiple choice until you get a card right, then written —
           two correct answers master a card, so both formats get asked. Each
-          miss adds one more and brings it back later. ⌘Z undoes the last
-          answer.
+          miss adds one more and brings it back later. <b>S</b> stars a note for
+          extra review, ⌘Z undoes the last answer.
         </p>
       )}
 

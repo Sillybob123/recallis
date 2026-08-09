@@ -381,6 +381,7 @@ export function watchCards(
         return {
           id: d.id,
           tags: (data.tags as string[] | undefined) ?? [],
+          starred: Boolean(data.starred),
           createdAt: toMillis(data.createdAt),
           updatedAt: toMillis(data.updatedAt),
           stats: data.stats ?? { correct: 0, incorrect: 0 },
@@ -401,6 +402,7 @@ export async function getCardsOnce(uid: string, deckId: string): Promise<Card[]>
       id: d.id,
       importId: data.importId as string | undefined,
       tags: (data.tags as string[] | undefined) ?? [],
+      starred: Boolean(data.starred),
       createdAt: toMillis(data.createdAt),
       updatedAt: toMillis(data.updatedAt),
       stats: data.stats ?? { correct: 0, incorrect: 0 },
@@ -420,6 +422,7 @@ export async function getOcclusionsOnce(
       id: d.id,
       importId: data.importId as string | undefined,
       tags: (data.tags as string[] | undefined) ?? [],
+      starred: Boolean(data.starred),
       title: data.title ?? "Untitled",
       imagePath: data.imagePath,
       imageUrl: data.imageUrl,
@@ -702,6 +705,25 @@ export async function countItemsWithoutImportId(
   return missing;
 }
 
+/**
+ * Stars (or unstars) a card or sheet. It lives on the note itself rather than
+ * on a study session, so a note starred while cramming one deck is still
+ * starred when you study its subdeck on another device.
+ */
+export async function setItemStarred(
+  uid: string,
+  deckId: string,
+  kind: "card" | "sheet",
+  itemId: string,
+  starred: boolean
+) {
+  const col = kind === "card" ? "cards" : "occlusions";
+  await updateDoc(doc(db, "users", uid, "decks", deckId, col, itemId), {
+    starred,
+    updatedAt: serverTimestamp(),
+  });
+}
+
 /** Replaces a card's or sheet's tag list. */
 export async function setItemTags(
   uid: string,
@@ -933,6 +955,7 @@ export function watchOcclusions(
         return {
           id: d.id,
           tags: (data.tags as string[] | undefined) ?? [],
+          starred: Boolean(data.starred),
           title: data.title ?? "Untitled",
           imagePath: data.imagePath,
           imageUrl: data.imageUrl,

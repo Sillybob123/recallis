@@ -35,6 +35,8 @@ export interface Card {
   id: string;
   /** Anki-style tags, stored normalized (no spaces inside a tag) */
   tags?: string[];
+  /** starred in Quizlet mode — pulls the note into extra review */
+  starred?: boolean;
   /**
    * Identity of the source note this came from (e.g. "anki:1785861078053").
    * Re-importing the same package matches on this so existing cards are
@@ -72,6 +74,8 @@ export interface OcclusionShape {
 }
 
 export interface OcclusionSheet {
+  /** starred in Quizlet mode — pulls the sheet into extra review */
+  starred?: boolean;
   /**
    * True when imagePath points at a file owned by something else (a note's
    * slide). Deleting the sheet or its deck must not remove that file.

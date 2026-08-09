@@ -136,5 +136,60 @@ console.log("\nbuilding the review queue:");
   );
 }
 
+// ---------- stars join the same pool ----------
+console.log("\nstarred notes:");
+{
+  type Item =
+    | { kind: "text"; key: string; cardId: string }
+    | { kind: "occlusion"; key: string; sheetId: string };
+
+  const items: Item[] = [
+    { kind: "text", key: "c1-c1", cardId: "c1" },
+    { kind: "text", key: "c1-c2", cardId: "c1" }, // same note, two deletions
+    { kind: "text", key: "c2", cardId: "c2" },
+    { kind: "text", key: "c3", cardId: "c3" },
+    { kind: "occlusion", key: "s1-m1", sheetId: "s1" },
+    { kind: "occlusion", key: "s1-m2", sheetId: "s1" },
+  ];
+
+  const trouble = new Set(["c2"]);
+  const starredCards = new Set(["c1"]);
+  const starredSheets = new Set<string>();
+  const wants = (it: Item) =>
+    trouble.has(it.key) ||
+    (it.kind === "text"
+      ? starredCards.has(it.cardId)
+      : starredSheets.has(it.sheetId));
+
+  const pool = items.filter(wants);
+  check(
+    "extra review = missed cards plus starred notes",
+    pool.length === 3,
+    pool.map((i) => i.key).join(", ")
+  );
+  check(
+    "starring a note takes all of its cloze deletions",
+    pool.filter((i) => i.key.startsWith("c1-")).length === 2
+  );
+  check("an unrelated card stays out", !pool.some((i) => i.key === "c3"));
+
+  // Starring a sheet brings every mask on it.
+  starredSheets.add("s1");
+  const withSheet = items.filter(wants);
+  check(
+    "starring an occlusion sheet takes all of its masks",
+    withSheet.filter((i) => i.kind === "occlusion").length === 2,
+    `${withSheet.length} items total`
+  );
+
+  // Clearing the misses must not touch the stars.
+  trouble.clear();
+  const afterClear = items.filter(wants);
+  check(
+    "clearing misses leaves starred notes in the pool",
+    afterClear.length === 4 && !afterClear.some((i) => i.key === "c2")
+  );
+}
+
 console.log(failures === 0 ? "\nAll cases passed." : `\n${failures} failing.`);
 process.exit(failures === 0 ? 0 : 1);
