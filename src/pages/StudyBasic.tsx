@@ -1094,7 +1094,7 @@ export function StudyBasic() {
                     setMcPicked(i);
                     setChecked(isAnswer);
                   }}
-                  className={`rounded-xl border p-3 text-left text-sm transition ${cls}`}
+                  className={`whitespace-pre-line rounded-xl border p-3 text-left text-sm transition ${cls}`}
                 >
                   {opt}
                 </button>
@@ -1151,7 +1151,7 @@ export function StudyBasic() {
                 {checked ? "Correct!" : "Not quite"}
               </p>
               <p className="text-slate-700">
-                Answer: <b>{answer}</b>
+                Answer: <b className="whitespace-pre-line">{answer}</b>
               </p>
               {!checked && quizletSettings.retypeCorrect && (
                 <input

@@ -48,6 +48,7 @@ import {
 } from "../lib/srs";
 import { startOfStudyDay } from "../lib/settings";
 import type { Deck } from "../types";
+import { stripHtmlInline } from "../lib/text";
 
 type CardState = "new" | "learning" | "review" | "suspended" | "buried";
 type TodayFilter =
@@ -142,9 +143,7 @@ function dueText(row: Row): string {
 }
 
 function plain(html: string): string {
-  const div = document.createElement("div");
-  div.innerHTML = html;
-  return (div.textContent ?? "").replace(/\s+/g, " ").trim();
+  return stripHtmlInline(html);
 }
 
 export function BrowsePage() {

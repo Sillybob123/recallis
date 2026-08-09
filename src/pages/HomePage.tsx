@@ -19,6 +19,7 @@ import { computeAllDeckCounts, type DeckCounts } from "../lib/deckCounts";
 import { getTodayAnkiStats } from "../lib/settings";
 import { normalizeDeckPath } from "../lib/deckPath";
 import type { Deck, Note } from "../types";
+import { stripHtmlInline } from "../lib/text";
 
 function greeting(): string {
   const h = new Date().getHours();
@@ -28,9 +29,7 @@ function greeting(): string {
 }
 
 function plainText(html: string): string {
-  const d = document.createElement("div");
-  d.innerHTML = html;
-  return (d.textContent ?? "").replace(/\s+/g, " ").trim();
+  return stripHtmlInline(html);
 }
 
 export function HomePage() {

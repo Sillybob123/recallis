@@ -477,7 +477,13 @@ export async function openApkg(
       // Unusual archive layout — fall back to the full reader below.
     }
   }
-  const zip = await JSZip.loadAsync(source);
+  // JSZip only unwraps a Blob when it can see a FileReader, which hides this
+  // branch from any non-browser test. Converting here makes the fallback
+  // behave the same everywhere — and costs nothing, since JSZip's own path
+  // reads the blob into an ArrayBuffer too.
+  const zip = await JSZip.loadAsync(
+    source instanceof Blob ? await source.arrayBuffer() : source
+  );
   return {
     readEntry: async (name) => {
       const file = zip.file(name);

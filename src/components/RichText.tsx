@@ -1,5 +1,6 @@
 import DOMPurify from "dompurify";
 import { useMemo } from "react";
+import { makeColorsReadable } from "../lib/readableColor";
 
 export function RichText({
   html,
@@ -8,9 +9,13 @@ export function RichText({
   html: string;
   className?: string;
 }) {
+  // Colours are fixed before sanitizing, so DOMPurify still has the last word
+  // on everything that reaches the DOM. Doing it at render rather than at
+  // import means decks imported earlier are readable too, and the original
+  // markup is never overwritten.
   const clean = useMemo(
     () =>
-      DOMPurify.sanitize(html, {
+      DOMPurify.sanitize(makeColorsReadable(html), {
         ALLOWED_TAGS: [
           "b",
           "strong",

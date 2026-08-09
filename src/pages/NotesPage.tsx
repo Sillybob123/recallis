@@ -16,13 +16,12 @@ import { useAuth } from "../contexts/AuthContext";
 import { Layout } from "../components/Layout";
 import { createNote, deleteNote, updateNote, watchNotes } from "../lib/firestore";
 import type { Note } from "../types";
+import { stripHtmlInline } from "../lib/text";
 
 const UNFILED = "__unfiled__";
 
 function plainText(html: string): string {
-  const d = document.createElement("div");
-  d.innerHTML = html;
-  return (d.textContent ?? "").replace(/\s+/g, " ").trim();
+  return stripHtmlInline(html);
 }
 
 function relativeDay(ms: number): string {

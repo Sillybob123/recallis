@@ -1,14 +1,136 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { AlertTriangle, History, Layers, PenLine, Sparkles, Zap } from "lucide-react";
+import {
+  AlertTriangle,
+  ChevronDown,
+  History,
+  Layers,
+  PenLine,
+  Sparkles,
+  Zap,
+} from "lucide-react";
 import { useAuth } from "../contexts/AuthContext";
 import { useStudyMode } from "../contexts/StudyModeContext";
 import { Layout } from "../components/Layout";
 import { watchDecks } from "../lib/firestore";
 import { computeAllDeckCounts, type DeckCounts } from "../lib/deckCounts";
 import { loadRecentDecks } from "../lib/recents";
-import { deckLeafName, deckParentPath, splitDeckPath } from "../lib/deckPath";
+import {
+  buildDeckTree,
+  collectDecks,
+  deckLeafName,
+  deckParentPath,
+  splitDeckPath,
+  type DeckNode,
+} from "../lib/deckPath";
 import type { Deck } from "../types";
+
+/**
+ * One deck row and its subdecks. A row studies everything beneath it, so the
+ * parent of three subdecks offers all their cards in one session while each
+ * subdeck keeps its own buttons.
+ */
+function DeckStudyRows({
+  node,
+  counts,
+  collapsed,
+  onToggle,
+}: {
+  node: DeckNode;
+  counts: Map<string, DeckCounts>;
+  collapsed: Set<string>;
+  onToggle: (path: string) => void;
+}) {
+  const isOpen = !collapsed.has(node.path);
+  const descendants = collectDecks(node);
+  const total = descendants.reduce(
+    (n, d) => n + (counts.get(d.id)?.practice.total ?? 0),
+    0
+  );
+  const hasChildren = node.children.length > 0;
+  // A parent with cards of its own still pools the subtree — that's the whole
+  // point — so the single-deck case is the only one that links to a deck.
+  const studyTo = (format: string) =>
+    descendants.length === 1 && node.deck
+      ? `/deck/${node.deck.id}/study?format=${format}`
+      : `/study-group?ids=${descendants.map((d) => d.id).join(",")}` +
+        `&name=${encodeURIComponent(node.path)}&format=${format}`;
+
+  if (total === 0) return null;
+
+  return (
+    <>
+      <li className="flex flex-wrap items-center gap-3 border-b border-slate-100 px-4 py-2.5 last:border-b-0 hover:bg-slate-50">
+        <div
+          className="flex min-w-0 flex-1 items-center gap-1.5"
+          style={{ paddingLeft: `${node.depth * 18}px` }}
+        >
+          {hasChildren ? (
+            <button
+              onClick={() => onToggle(node.path)}
+              className="shrink-0 rounded p-0.5 text-slate-400 hover:bg-slate-200 hover:text-slate-600"
+              title={isOpen ? "Collapse" : "Expand"}
+            >
+              <ChevronDown
+                size={15}
+                className={`transition-transform ${isOpen ? "" : "-rotate-90"}`}
+              />
+            </button>
+          ) : (
+            <span className="w-[22px] shrink-0" />
+          )}
+          {node.deck ? (
+            <Link
+              to={`/deck/${node.deck.id}`}
+              className="min-w-0 truncate text-sm font-medium text-slate-800 hover:text-red-600"
+            >
+              {node.name}
+            </Link>
+          ) : (
+            <span
+              className="min-w-0 truncate text-sm font-medium text-slate-800"
+              title="No cards of its own — studies the decks beneath it"
+            >
+              {node.name}
+            </span>
+          )}
+          {hasChildren && (
+            <span className="shrink-0 text-xs text-slate-400">
+              {descendants.length} deck{descendants.length === 1 ? "" : "s"}
+            </span>
+          )}
+        </div>
+        <span className="shrink-0 text-xs text-slate-400">{total} cards</span>
+        <div className="flex shrink-0 gap-1">
+          {FORMATS.map(({ id, label, icon: Icon }) => (
+            <Link
+              key={id}
+              to={studyTo(id)}
+              title={
+                descendants.length > 1
+                  ? `${label} — all ${descendants.length} decks under ${node.name} together`
+                  : `${label} — ${node.name}`
+              }
+              className="flex items-center gap-1 rounded-lg border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-600 transition hover:border-red-400 hover:bg-red-50 hover:text-red-700"
+            >
+              <Icon size={12} /> {label}
+            </Link>
+          ))}
+        </div>
+      </li>
+      {isOpen &&
+        node.children.map((child) => (
+          <DeckStudyRows
+            key={child.path}
+            node={child}
+            counts={counts}
+            collapsed={collapsed}
+            onToggle={onToggle}
+          />
+        ))}
+    </>
+  );
+}
 
 /** The three ways a Quizlet-mode session can ask you a deck. */
 const FORMATS = [
@@ -77,23 +199,27 @@ export function QuizletHome() {
       .slice(0, 5);
   }, [decks, counts]);
 
-  /** Decks with cards, grouped under their parent path so the list reads as
-   *  a hierarchy instead of repeating "A::B::C" on every row. */
-  const grouped = useMemo(() => {
+  /** Decks with cards, as a tree — a parent is studyable as the sum of
+   *  everything beneath it, and each subdeck stays studyable on its own. */
+  const tree = useMemo(() => {
     const withCards = (decks ?? []).filter(
       (d) => !d.hiddenInQuizlet && (counts.get(d.id)?.practice.total ?? 0) > 0
     );
-    const map = new Map<string, Deck[]>();
-    for (const deck of withCards) {
-      const key = deckParentPath(deck.name);
-      const list = map.get(key) ?? [];
-      list.push(deck);
-      map.set(key, list);
-    }
-    return [...map.entries()].sort(([a], [b]) => a.localeCompare(b));
+    return buildDeckTree(withCards);
   }, [decks, counts]);
 
-  const studyableCount = grouped.reduce((n, [, list]) => n + list.length, 0);
+  const studyableCount = useMemo(
+    () => tree.reduce((n, node) => n + collectDecks(node).length, 0),
+    [tree]
+  );
+
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const toggle = (path: string) =>
+    setCollapsed((prev) => {
+      const next = new Set(prev);
+      next.has(path) ? next.delete(path) : next.add(path);
+      return next;
+    });
 
   return (
     <Layout>
@@ -194,44 +320,14 @@ export function QuizletHome() {
               </p>
             ) : (
               <ul>
-                {grouped.map(([parent, list]) => (
-                  <li key={parent || "__root"}>
-                    {parent && (
-                      <p className="border-b border-slate-100 bg-slate-50/70 px-4 py-1.5 text-[11px] font-bold uppercase tracking-wide text-slate-400">
-                        {splitDeckPath(parent).join(" › ")}
-                      </p>
-                    )}
-                    <ul>
-                      {list.map((deck) => (
-                  <li
-                    key={deck.id}
-                    className="flex flex-wrap items-center gap-3 border-b border-slate-100 px-4 py-2.5 last:border-b-0 hover:bg-slate-50"
-                  >
-                    <Link
-                      to={`/deck/${deck.id}`}
-                      className="min-w-0 flex-1 truncate text-sm font-medium text-slate-800 hover:text-red-600"
-                      style={{ paddingLeft: parent ? "0.75rem" : 0 }}
-                    >
-                      {deckLeafName(deck.name)}
-                    </Link>
-                    <span className="shrink-0 text-xs text-slate-400">
-                      {counts.get(deck.id)?.practice.total ?? 0} cards
-                    </span>
-                    <div className="flex shrink-0 gap-1">
-                      {FORMATS.map(({ id, label, icon: Icon }) => (
-                        <Link
-                          key={id}
-                          to={`/deck/${deck.id}/study?format=${id}`}
-                          className="flex items-center gap-1 rounded-lg border border-slate-300 px-2.5 py-1 text-xs font-medium text-slate-600 transition hover:border-red-400 hover:bg-red-50 hover:text-red-700"
-                        >
-                          <Icon size={12} /> {label}
-                        </Link>
-                      ))}
-                    </div>
-                  </li>
-                      ))}
-                    </ul>
-                  </li>
+                {tree.map((node) => (
+                  <DeckStudyRows
+                    key={node.path}
+                    node={node}
+                    counts={counts}
+                    collapsed={collapsed}
+                    onToggle={toggle}
+                  />
                 ))}
               </ul>
             )}

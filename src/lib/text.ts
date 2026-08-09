@@ -1,7 +1,41 @@
-export function stripHtml(html: string): string {
+// Anki notes are HTML, and a lot of them put the heading, the term and the
+// definition in separate blocks. textContent alone glues those together —
+// "Directionality" + "Medial is…" comes out as "DirectionalityMedial is…" —
+// so block boundaries have to become real whitespace before the text is read.
+const BLOCK_TAGS =
+  "p|div|li|tr|td|th|h[1-6]|blockquote|section|article|header|footer|figure|figcaption|dd|dt|dl|ul|ol|table|thead|tbody|tfoot|pre|main|aside|nav|address|fieldset|form";
+
+/**
+ * HTML to text, preserving the line structure the card actually shows.
+ * Returns newline-separated lines; use `stripHtmlInline` where a single line
+ * is wanted.
+ */
+export function htmlToText(html: string): string {
+  const spaced = html
+    // Void elements can be swapped for the break outright.
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<hr\s*\/?>/gi, "\n")
+    // For the rest, add the break around the tag rather than replacing it, so
+    // the parser still sees well-formed markup and can't reorder anything.
+    .replace(new RegExp(`<(${BLOCK_TAGS})(\\s|>)`, "gi"), "\n<$1$2")
+    .replace(new RegExp(`</(${BLOCK_TAGS})>`, "gi"), "\n</$1>");
+
   const div = document.createElement("div");
-  div.innerHTML = html;
-  return (div.textContent || div.innerText || "").trim();
+  div.innerHTML = spaced;
+  return (div.textContent ?? "")
+    .replace(/[ \t ]+/g, " ")
+    .replace(/ *\n */g, "\n")
+    .replace(/\n{2,}/g, "\n")
+    .trim();
+}
+
+/** Same conversion, flattened to one line — for list previews and search. */
+export function stripHtmlInline(html: string): string {
+  return htmlToText(html).replace(/\n/g, " ").replace(/ {2,}/g, " ").trim();
+}
+
+export function stripHtml(html: string): string {
+  return htmlToText(html);
 }
 
 export function normalizeForCompare(s: string): string {

@@ -36,6 +36,7 @@ import {
   splitDeckPath,
 } from "../lib/deckPath";
 import { uid } from "../lib/uid";
+import { htmlToText } from "../lib/text";
 
 type SaveState = "saved" | "saving" | "dirty" | "offline";
 
@@ -724,9 +725,7 @@ function MakeCardModal({
   ).size;
 
   function plain(html: string) {
-    const d = document.createElement("div");
-    d.innerHTML = html;
-    return (d.textContent ?? "").trim();
+    return htmlToText(html);
   }
 
   async function handleSave(keepOpen: boolean) {
