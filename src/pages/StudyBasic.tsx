@@ -1444,15 +1444,16 @@ export function StudyBasic() {
 
       {studyMode === "quizlet" && current && mode !== "learn" && (
         <p className="mt-6 text-center text-xs text-slate-400">
-          Smart shuffle: misses come back within a few cards, slow answers
-          return near the end, fast answers leave the session. Your Anki-mode
-          schedule is untouched.
+          Smart shuffle: misses come back within a few cards, then return
+          much later to be sure. Each miss adds a correct answer before a card
+          can leave. Your Anki-mode schedule is untouched.
         </p>
       )}
       {studyMode === "quizlet" && current && mode === "learn" && (
         <p className="mt-6 text-center text-xs text-slate-400">
           Learn: multiple choice until you get a card right, then written.
-          Two correct answers = mastered. Misses reset a card to not-learned.
+          Two correct answers master a card; each miss adds one more and
+          brings it back later.
         </p>
       )}
 
