@@ -4,6 +4,7 @@ import { storage } from "../firebase";
 import type { Card, OcclusionSheet, OcclusionShape } from "../types";
 import { serializeAnkiFile } from "./ankiTsv";
 import { buildUnits, fillShapeOnCanvas } from "./shapes";
+import { formatTagString } from "./tags";
 
 function loadImageFromBlob(blob: Blob): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
@@ -133,10 +134,11 @@ export async function exportDeckToAnki(
   const rows: string[][] = [];
 
   for (const card of cards) {
+    const tags = formatTagString(card.tags);
     if (card.data.type === "basic") {
-      rows.push(["Basic", deckName, card.data.front, card.data.back]);
+      rows.push(["Basic", deckName, card.data.front, card.data.back, tags]);
     } else {
-      rows.push(["Cloze", deckName, card.data.text, card.data.extra ?? ""]);
+      rows.push(["Cloze", deckName, card.data.text, card.data.extra ?? "", tags]);
     }
   }
 
@@ -173,6 +175,7 @@ export async function exportDeckToAnki(
           deckName,
           `<img src="${qName}">`,
           `${answerLabel ? `<b>${answerLabel}</b><br>` : ""}<img src="${answerName}">`,
+          formatTagString(sheet.tags),
         ]);
       }
     } catch {
@@ -185,6 +188,8 @@ export async function exportDeckToAnki(
   const txt = serializeAnkiFile(rows, {
     notetypeColumn: 1,
     deckColumn: 2,
+    // Fields are columns 3-4; tags ride in column 5 so Anki restores them.
+    tagsColumn: 5,
     html: true,
   });
   const safeName = deckName.replace(/[^a-z0-9 _·-]/gi, "").trim() || "deck";

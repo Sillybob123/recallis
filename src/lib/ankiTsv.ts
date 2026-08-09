@@ -132,11 +132,17 @@ function quoteField(value: string, sep: string): string {
 /** Serializes rows into Anki's header-directive TSV format (Text2Anki style). */
 export function serializeAnkiFile(
   rows: string[][],
-  opts: { notetypeColumn?: number; deckColumn?: number; html?: boolean } = {}
+  opts: {
+    notetypeColumn?: number;
+    deckColumn?: number;
+    tagsColumn?: number;
+    html?: boolean;
+  } = {}
 ): string {
   const lines: string[] = ["#separator:tab", `#html:${opts.html !== false}`];
   if (opts.notetypeColumn) lines.push(`#notetype column:${opts.notetypeColumn}`);
   if (opts.deckColumn) lines.push(`#deck column:${opts.deckColumn}`);
+  if (opts.tagsColumn) lines.push(`#tags column:${opts.tagsColumn}`);
   for (const row of rows) {
     lines.push(row.map((f) => quoteField(f, "\t")).join("\t"));
   }

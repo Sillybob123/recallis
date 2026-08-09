@@ -96,6 +96,11 @@ export function ImportAnkiModal({
               ? `, creating ${outcome.decksCreated} new deck${outcome.decksCreated === 1 ? "" : "s"}.`
               : "."),
         ];
+        if (outcome.tagsUpdated > 0) {
+          parts.push(
+            `Tags updated on ${outcome.tagsUpdated} existing note${outcome.tagsUpdated === 1 ? "" : "s"}.`
+          );
+        }
         if (outcome.duplicatesSkipped > 0) {
           parts.push(
             `Skipped ${outcome.duplicatesSkipped} note${outcome.duplicatesSkipped === 1 ? "" : "s"} you already had — no duplicates were created.`
@@ -117,7 +122,13 @@ export function ImportAnkiModal({
               "Imported from Anki",
               COLORS[colorIdx++ % COLORS.length]
             );
-            await createCardsBulk(uid, deckId, group.cards);
+            await createCardsBulk(
+              uid,
+              deckId,
+              group.cards.map((c) => c.data),
+              undefined,
+              group.cards.map((c) => c.tags)
+            );
           }
         } else {
           const deckId = await createDeck(
@@ -126,7 +137,14 @@ export function ImportAnkiModal({
             "Imported from Anki",
             COLORS[0]
           );
-          await createCardsBulk(uid, deckId, txtResult.groups.flatMap((g) => g.cards));
+          const all = txtResult.groups.flatMap((g) => g.cards);
+          await createCardsBulk(
+            uid,
+            deckId,
+            all.map((c) => c.data),
+            undefined,
+            all.map((c) => c.tags)
+          );
         }
         setDone(
           `Imported ${txtResult.totalBasic + txtResult.totalCloze} cards (${txtResult.totalCloze} cloze, ${txtResult.totalBasic} basic).`

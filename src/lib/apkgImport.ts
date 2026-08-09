@@ -14,6 +14,7 @@ import { startOfStudyDay } from "./settings";
 import {
   contentTypeForFilename,
   createCardsBulk,
+  setItemTags,
   listDecksOnce,
   getCardsOnce,
   getOcclusionsOnce,
@@ -25,6 +26,7 @@ import {
 } from "./firestore";
 import type { CardData, Deck } from "../types";
 import { findDeckByPath } from "./deckPath";
+import { addTags, normalizeTags } from "./tags";
 
 const DECK_COLORS = ["#6366f1", "#0ea5e9", "#10b981", "#f59e0b", "#ef4444", "#a855f7", "#ec4899"];
 
@@ -63,6 +65,8 @@ export interface ApkgImportOutcome {
   schedulesRestored: number;
   /** notes already present, skipped instead of duplicated */
   duplicatesSkipped: number;
+  /** existing notes that gained tags from the package */
+  tagsUpdated: number;
   warnings: string[];
 }
 
@@ -199,6 +203,7 @@ export async function importParsedApkg(
   let mediaUploaded = 0;
   let schedulesRestored = 0;
   let duplicatesSkipped = 0;
+  let tagsUpdated = 0;
 
   const totalWork = parsed.decks.reduce(
     (n, d) => n + d.cards.length + d.sheets.length,
@@ -213,6 +218,8 @@ export async function importParsedApkg(
     mediaUrlCache: Map<string, string | null>;
     /** existing cards in this deck, by importId and by content */
     cardIndex: Map<string, string>;
+    /** current tags of existing cards, so re-imports can union rather than wipe */
+    cardTagsById: Map<string, string[]>;
     sheetIndex: Map<string, string>;
     indexed: boolean;
   }
@@ -232,6 +239,7 @@ export async function importParsedApkg(
         deckId: existing.id,
         mediaUrlCache: new Map(),
         cardIndex: new Map(),
+        cardTagsById: new Map(),
         sheetIndex: new Map(),
         indexed: false,
       };
@@ -256,6 +264,7 @@ export async function importParsedApkg(
       deckId,
       mediaUrlCache: new Map(),
       cardIndex: new Map(),
+      cardTagsById: new Map(),
       sheetIndex: new Map(),
       indexed: false,
     };
@@ -276,6 +285,7 @@ export async function importParsedApkg(
       for (const card of existingCards) {
         if (card.importId) target.cardIndex.set(card.importId, card.id);
         target.cardIndex.set(`content:${contentKey(card.data)}`, card.id);
+        target.cardTagsById.set(card.id, card.tags ?? []);
       }
       for (const sheet of existingSheets) {
         if (sheet.importId) target.sheetIndex.set(sheet.importId, sheet.id);
@@ -406,6 +416,7 @@ export async function importParsedApkg(
           imageHeight: Math.round(height),
           shapes,
           importId: sheet.importId,
+          tags: normalizeTags(sheet.tags ?? []),
         }),
       { signal: opts.signal }
     );
@@ -457,6 +468,7 @@ export async function importParsedApkg(
     const rewritten: CardData[] = [];
     const schedules: (Map<number, ImportedSchedule> | undefined)[] = [];
     const importIds: (string | undefined)[] = [];
+    const cardTags: string[][] = [];
     // Cards already in the deck: keep their id so their schedule can refresh.
     const existingHits: { cardId: string; card: (typeof deck.cards)[number] }[] = [];
 
@@ -493,6 +505,7 @@ export async function importParsedApkg(
       rewritten.push(prepared);
       schedules.push(card.schedule);
       importIds.push(card.importId);
+      cardTags.push(normalizeTags(card.tags ?? []));
       // Guard against the same note appearing twice in one package.
       target.cardIndex.set(card.importId, "pending");
       target.cardIndex.set(`content:${contentKey(prepared)}`, "pending");
@@ -526,7 +539,7 @@ export async function importParsedApkg(
       progress(`Saving cards (${deck.name})`);
       try {
         const ids = await retry(
-          () => createCardsBulk(uid, target.deckId, rewritten, importIds),
+          () => createCardsBulk(uid, target.deckId, rewritten, importIds, cardTags),
           { signal: opts.signal }
         );
         cardsCreated += rewritten.length;
@@ -541,12 +554,26 @@ export async function importParsedApkg(
       }
     }
 
-    // Cards that were already here still get the newest due dates.
-    if (existingHits.length && opts.importSchedule) {
-      progress(`Updating schedules (${deck.name})`);
+    // Cards that were already here still get the newest due dates and tags.
+    if (existingHits.length) {
+      progress(`Updating existing cards (${deck.name})`);
       for (const hit of existingHits) {
         if (hit.cardId === "pending") continue;
-        await applySchedule(hit.cardId, hit.card.data, hit.card.schedule);
+        if (opts.importSchedule) {
+          await applySchedule(hit.cardId, hit.card.data, hit.card.schedule);
+        }
+        const incoming = normalizeTags(hit.card.tags ?? []);
+        if (incoming.length === 0) continue;
+        const current = target.cardTagsById.get(hit.cardId) ?? [];
+        const merged = addTags(current, incoming);
+        // Tags you added here are kept; Anki's are added on top.
+        if (merged.length !== current.length) {
+          await setItemTags(uid, target.deckId, "card", hit.cardId, merged).catch(
+            () => {}
+          );
+          target.cardTagsById.set(hit.cardId, merged);
+          tagsUpdated++;
+        }
       }
     }
 
@@ -573,6 +600,7 @@ export async function importParsedApkg(
     mediaUploaded,
     schedulesRestored,
     duplicatesSkipped,
+    tagsUpdated,
     warnings,
   };
 }

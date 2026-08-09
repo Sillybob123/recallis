@@ -1,10 +1,17 @@
 import { parseAnkiFile } from "./ankiTsv";
 import type { CardData } from "../types";
+import { parseTagString } from "./tags";
+
+export interface ImportedNote {
+  data: CardData;
+  /** tags from the file's tags column, normalized */
+  tags: string[];
+}
 
 export interface ImportedDeckGroup {
   /** Full Anki deck name, e.g. "Anatomy::Lab00::Positions" ("" if no deck column). */
   ankiDeck: string;
-  cards: CardData[];
+  cards: ImportedNote[];
 }
 
 export interface AnkiImportResult {
@@ -48,7 +55,7 @@ export function importAnkiText(text: string): AnkiImportResult {
     ].filter((n): n is number => typeof n === "number" && n > 0)
   );
 
-  const groupsByDeck = new Map<string, CardData[]>();
+  const groupsByDeck = new Map<string, ImportedNote[]>();
   let totalBasic = 0;
   let totalCloze = 0;
   let skippedImageOcclusion = 0;
@@ -61,6 +68,9 @@ export function importAnkiText(text: string): AnkiImportResult {
     const ankiDeck = headers.deckColumn
       ? (row[headers.deckColumn - 1] ?? "").trim()
       : "";
+    const tags = headers.tagsColumn
+      ? parseTagString(row[headers.tagsColumn - 1] ?? "")
+      : [];
 
     if (isImageOcclusionNotetype(notetype)) {
       skippedImageOcclusion++;
@@ -113,7 +123,7 @@ export function importAnkiText(text: string): AnkiImportResult {
     }
 
     const list = groupsByDeck.get(ankiDeck) ?? [];
-    list.push(card);
+    list.push({ data: card, tags });
     groupsByDeck.set(ankiDeck, list);
   }
 

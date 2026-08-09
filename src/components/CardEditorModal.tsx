@@ -3,6 +3,7 @@ import { X } from "lucide-react";
 import type { Card, CardData } from "../types";
 import { RichTextEditor } from "./RichTextEditor";
 import { uploadDeckMedia } from "../lib/firestore";
+import { formatTagString, parseTagString } from "../lib/tags";
 
 export function CardEditorModal({
   initial,
@@ -14,7 +15,7 @@ export function CardEditorModal({
   initial?: Card;
   uid?: string;
   deckId?: string;
-  onSave: (data: CardData) => Promise<void>;
+  onSave: (data: CardData, tags: string[]) => Promise<void>;
   onClose: () => void;
 }) {
   const [type, setType] = useState<"basic" | "cloze">(initial?.data.type ?? "basic");
@@ -29,6 +30,9 @@ export function CardEditorModal({
   );
   const [extra, setExtra] = useState(
     initial?.data.type === "cloze" ? initial.data.extra ?? "" : ""
+  );
+  const [tagText, setTagText] = useState(
+    formatTagString(initial?.tags)
   );
   const [busy, setBusy] = useState(false);
 
@@ -53,7 +57,7 @@ export function CardEditorModal({
     try {
       if (type === "basic") {
         if (isEmptyHtml(front) || isEmptyHtml(back)) return;
-        await onSave({ type: "basic", front, back });
+        await onSave({ type: "basic", front, back }, parseTagString(tagText));
       } else {
         if (isEmptyHtml(clozeText) || !/\{\{c\d+::/.test(clozeText)) {
           alert(
@@ -61,11 +65,14 @@ export function CardEditorModal({
           );
           return;
         }
-        await onSave({
-          type: "cloze",
-          text: clozeText,
-          extra: isEmptyHtml(extra) ? undefined : extra,
-        });
+        await onSave(
+          {
+            type: "cloze",
+            text: clozeText,
+            extra: isEmptyHtml(extra) ? undefined : extra,
+          },
+          parseTagString(tagText)
+        );
       }
       onClose();
     } finally {
@@ -163,6 +170,20 @@ export function CardEditorModal({
               </div>
             </>
           )}
+          <label className="block">
+            <span className="mb-1 block text-xs font-medium text-slate-500">
+              Tags{" "}
+              <span className="font-normal text-slate-400">
+                — space-separated, :: for hierarchy (anatomy::thorax)
+              </span>
+            </span>
+            <input
+              value={tagText}
+              onChange={(e) => setTagText(e.target.value)}
+              placeholder="anatomy thorax"
+              className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
+            />
+          </label>
           <button
             type="submit"
             disabled={busy}

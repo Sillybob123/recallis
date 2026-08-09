@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import {
+  ArrowLeft,
   ArrowRightLeft,
   Check,
   ChevronDown,
@@ -14,6 +15,7 @@ import {
   ScanEye,
   Search,
   Star,
+  Tag as TagIcon,
   Trash2,
   X,
 } from "lucide-react";
@@ -27,6 +29,7 @@ import {
   getTodayRevlog,
   moveCardsToDeck,
   moveSheetsToDeck,
+  setItemTags,
   setSrsState,
   updateCard,
   watchDecks,
@@ -35,6 +38,7 @@ import { loadStudyData, type StudyData } from "../lib/studyLoad";
 import type { ReviewLogEntry } from "../lib/firestore";
 import type { StudyItem } from "../lib/studyItems";
 import { normalizeDeckPath, splitDeckPath } from "../lib/deckPath";
+import { addTags, normalizeTags, removeTags, tagMatches } from "../lib/tags";
 import {
   formatDelay,
   newSrsState,
@@ -107,6 +111,7 @@ interface Row {
   srs: SrsState | undefined;
   state: CardState;
   createdAt: number;
+  tags: string[];
   /** queue position among the deck's new cards, like Anki's "New #12" */
   newPos?: number;
 }
@@ -158,6 +163,8 @@ export function BrowsePage() {
   });
   const [kindFilter, setKindFilter] = useState<NoteKind | null>(null);
   const [flagFilter, setFlagFilter] = useState<FlagColor | "marked" | null>(null);
+  const [tagFilter, setTagFilter] = useState<string | null>(null);
+  const [tagSearch, setTagSearch] = useState("");
   const [todayFilter, setTodayFilter] = useState<TodayFilter | null>(null);
   const [sort, setSort] = useState<{ col: SortCol; dir: 1 | -1 }>({
     col: "deck",
@@ -224,6 +231,7 @@ export function BrowsePage() {
           srs,
           state: stateOf(srs),
           createdAt: card.createdAt,
+          tags: card.tags ?? [],
         });
       } else {
         const nums = [
@@ -255,6 +263,7 @@ export function BrowsePage() {
             srs,
             state: stateOf(srs),
             createdAt: card.createdAt,
+            tags: card.tags ?? [],
           });
         }
       }
@@ -292,6 +301,7 @@ export function BrowsePage() {
               srs,
               state: stateOf(srs),
               createdAt: sheet.createdAt,
+              tags: sheet.tags ?? [],
             });
       }
     }
@@ -346,10 +356,17 @@ export function BrowsePage() {
       if (flagFilter === "marked" && !row.srs?.marked) return false;
       if (flagFilter && flagFilter !== "marked" && row.srs?.flag !== flagFilter)
         return false;
-      if (q && !row.preview.toLowerCase().includes(q)) return false;
+      if (tagFilter && !row.tags.some((t) => tagMatches(t, tagFilter))) return false;
+      if (
+        q &&
+        !row.preview.toLowerCase().includes(q) &&
+        !row.tags.some((t) => t.toLowerCase().includes(q))
+      ) {
+        return false;
+      }
       return true;
     });
-  }, [allRows, search, stateFilter, deckFilter, kindFilter, flagFilter, todayFilter, revlog]);
+  }, [allRows, search, stateFilter, deckFilter, kindFilter, flagFilter, todayFilter, tagFilter, revlog]);
 
   const sorted = useMemo(() => {
     const rows = [...filtered];
@@ -426,6 +443,44 @@ export function BrowsePage() {
     return counts;
   }, [allRows]);
 
+  /**
+   * Tag tree. Collections use "::" hierarchies with hundreds of leaves, so the
+   * sidebar shows one level at a time and a parent's count includes everything
+   * beneath it.
+   */
+  const tagTree = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const row of allRows) {
+      const seen = new Set<string>();
+      for (const tag of row.tags) {
+        // Count each ancestor once per card.
+        const parts = tag.split("::");
+        for (let i = 1; i <= parts.length; i++) {
+          const prefix = parts.slice(0, i).join("::");
+          if (!seen.has(prefix)) {
+            seen.add(prefix);
+            counts.set(prefix, (counts.get(prefix) ?? 0) + 1);
+          }
+        }
+      }
+    }
+    return counts;
+  }, [allRows]);
+
+  /** Children of the tag currently drilled into (or top level). */
+  const visibleTags = useMemo(() => {
+    const parent = tagFilter ? `${tagFilter}::` : "";
+    const depth = parent ? parent.split("::").length - 1 : 0;
+    const out: [string, number][] = [];
+    for (const [tag, count] of tagTree) {
+      if (!tag.startsWith(parent)) continue;
+      if (tag.split("::").length !== depth + 1) continue;
+      if (tagSearch && !tag.toLowerCase().includes(tagSearch.toLowerCase())) continue;
+      out.push([tag, count]);
+    }
+    return out.sort(([a], [b]) => a.localeCompare(b));
+  }, [tagTree, tagFilter, tagSearch]);
+
   const selectedRows = useMemo(
     () => filtered.filter((r) => selected.has(r.key)),
     [filtered, selected]
@@ -473,6 +528,43 @@ export function BrowsePage() {
   }
 
   const anySuspended = selectedRows.some((r) => r.srs?.suspended);
+
+  /**
+   * Tags live on the note, so bulk edits apply once per note even when
+   * several of its cards are selected.
+   */
+  async function applyTags(mode: "add" | "remove") {
+    if (!user) return;
+    const label = mode === "add" ? "Tags to add" : "Tags to remove";
+    const raw = prompt(`${label} (space-separated; use :: for hierarchy):`);
+    if (raw === null) return;
+    const tags = normalizeTags(raw.split(/\s+/));
+    if (tags.length === 0) return;
+
+    const notes = new Map<string, Row>();
+    for (const row of selectedRows) {
+      notes.set(`${row.item.deckId}|${row.noteId}`, row);
+    }
+    setBusy("tags");
+    try {
+      for (const row of notes.values()) {
+        const next =
+          mode === "add" ? addTags(row.tags, tags) : removeTags(row.tags, tags);
+        await setItemTags(
+          user.uid,
+          row.item.deckId,
+          row.item.kind === "text" ? "card" : "sheet",
+          row.noteId,
+          next
+        );
+      }
+      await reload();
+    } catch (err) {
+      alert("Couldn't update tags: " + (err as Error).message);
+    } finally {
+      setBusy(null);
+    }
+  }
 
   async function handleDelete() {
     if (!user) return;
@@ -620,6 +712,22 @@ export function BrowsePage() {
             </option>
           ))}
         </select>
+        {tagTree.size > 0 && (
+          <select
+            value={tagFilter ?? ""}
+            onChange={(e) => setTagFilter(e.target.value || null)}
+            className="min-w-0 shrink rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs outline-none"
+          >
+            <option value="">All tags</option>
+            {[...tagTree.entries()]
+              .sort(([a], [b]) => a.localeCompare(b))
+              .map(([tag, count]) => (
+                <option key={tag} value={tag}>
+                  {tag} ({count})
+                </option>
+              ))}
+          </select>
+        )}
         <select
           value={todayFilter ?? ""}
           onChange={(e) => setTodayFilter((e.target.value || null) as TodayFilter | null)}
@@ -684,6 +792,60 @@ export function BrowsePage() {
               </span>
             </SidebarRow>
           </SidebarSection>
+
+          {tagTree.size > 0 && (
+            <SidebarSection title="Tags">
+              <input
+                value={tagSearch}
+                onChange={(e) => setTagSearch(e.target.value)}
+                placeholder="Filter tags…"
+                className="mb-1 w-full rounded-lg border border-slate-200 px-2 py-1 text-xs outline-none focus:border-indigo-400"
+              />
+              {tagFilter && (
+                <button
+                  onClick={() => {
+                    const parts = tagFilter.split("::");
+                    setTagFilter(
+                      parts.length > 1 ? parts.slice(0, -1).join("::") : null
+                    );
+                  }}
+                  className="mb-1 flex w-full items-center gap-1 rounded-lg bg-indigo-100 px-2 py-1 text-left text-xs font-medium text-indigo-800"
+                  title="Back up a level"
+                >
+                  <ArrowLeft size={11} />
+                  <span className="truncate">{tagFilter}</span>
+                </button>
+              )}
+              {visibleTags.length === 0 ? (
+                <p className="px-2 py-1 text-xs text-slate-400">
+                  {tagFilter ? "No sub-tags." : "No matches."}
+                </p>
+              ) : (
+                visibleTags.map(([tag, count]) => {
+                  const hasChildren = [...tagTree.keys()].some((t) =>
+                    t.startsWith(tag + "::")
+                  );
+                  return (
+                    <SidebarRow
+                      key={tag}
+                      active={tagFilter === tag}
+                      onClick={() => setTagFilter(tagFilter === tag ? null : tag)}
+                      right={count}
+                    >
+                      <span className="flex min-w-0 items-center gap-1">
+                        <span className="truncate" title={tag}>
+                          {tag.split("::").pop()}
+                        </span>
+                        {hasChildren && (
+                          <ChevronDown size={11} className="shrink-0 -rotate-90 text-slate-300" />
+                        )}
+                      </span>
+                    </SidebarRow>
+                  );
+                })
+              )}
+            </SidebarSection>
+          )}
 
           <SidebarSection title="Note type">
             {(["cloze", "basic", "occlusion"] as NoteKind[]).map((k) => (
@@ -786,6 +948,12 @@ export function BrowsePage() {
                   clear
                 </button>
               </span>
+              <BulkButton onClick={() => applyTags("add")} busy={busy === "tags"}>
+                <TagIcon size={13} /> Tag
+              </BulkButton>
+              <BulkButton onClick={() => applyTags("remove")}>
+                <TagIcon size={13} /> Untag
+              </BulkButton>
               <BulkButton onClick={() => setShowReplace(true)}>
                 <Replace size={13} /> Find & replace
               </BulkButton>
@@ -866,6 +1034,24 @@ export function BrowsePage() {
                         <Star size={11} className="shrink-0" fill="#f59e0b" color="#f59e0b" />
                       )}
                       <span className="truncate text-slate-800">{row.preview || "(empty)"}</span>
+                      {row.tags.slice(0, 3).map((tag) => (
+                        <span
+                          key={tag}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setTagFilter(tag);
+                          }}
+                          className="shrink-0 rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-500 hover:bg-indigo-100 hover:text-indigo-700"
+                          title={`Filter by ${tag}`}
+                        >
+                          {tag}
+                        </span>
+                      ))}
+                      {row.tags.length > 3 && (
+                        <span className="shrink-0 text-[10px] text-slate-400">
+                          +{row.tags.length - 3}
+                        </span>
+                      )}
                     </span>
                     <span className="text-xs text-slate-500">{noteTypeLabel(row, siblings)}</span>
                     <span
@@ -906,6 +1092,17 @@ export function BrowsePage() {
           {singleTextRow && (
             <InlineEditor
               key={singleTextRow.key}
+              tags={singleTextRow.tags}
+              onSaveTags={async (tags) => {
+                await setItemTags(
+                  user.uid,
+                  singleTextRow.item.deckId,
+                  "card",
+                  singleTextRow.noteId,
+                  tags
+                );
+                await reload();
+              }}
               onSave={async (front, back) => {
                 const card = data.cards.find(
                   (c) => c.deckId === singleTextRow.item.deckId && c.id === singleTextRow.noteId
@@ -929,7 +1126,23 @@ export function BrowsePage() {
             />
           )}
           {singleOccRow && singleOccRow.item.kind === "occlusion" && (
-            <div className="mt-3 flex items-center justify-between rounded-xl border border-slate-200 bg-white px-4 py-3">
+            <div className="mt-3 rounded-xl border border-slate-200 bg-white px-4 py-3">
+              <div className="mb-2">
+                <TagEditor
+                  tags={singleOccRow.tags}
+                  onChange={async (next) => {
+                    await setItemTags(
+                      user.uid,
+                      singleOccRow.item.deckId,
+                      "sheet",
+                      singleOccRow.noteId,
+                      next
+                    );
+                    await reload();
+                  }}
+                />
+              </div>
+              <div className="flex items-center justify-between">
               <p className="text-sm text-slate-600">
                 Occlusion mask on <b>{singleOccRow.item.sheet.title}</b>
               </p>
@@ -939,6 +1152,7 @@ export function BrowsePage() {
               >
                 <ScanEye size={13} /> Open mask editor
               </Link>
+              </div>
             </div>
           )}
         </div>
@@ -1109,10 +1323,14 @@ function BulkButton({
 
 function InlineEditor({
   cardData,
+  tags,
   onSave,
+  onSaveTags,
 }: {
   cardData?: { type: "basic"; front: string; back: string } | { type: "cloze"; text: string; extra?: string };
+  tags: string[];
   onSave: (front: string, back: string) => Promise<void>;
+  onSaveTags: (tags: string[]) => Promise<void>;
 }) {
   const isCloze = cardData?.type === "cloze";
   const [front, setFront] = useState(
@@ -1159,6 +1377,7 @@ function InlineEditor({
           placeholder={isCloze ? "Extra (optional)" : "Back"}
           minHeightClass="min-h-12"
         />
+        <TagEditor tags={tags} onChange={onSaveTags} />
         <div className="flex justify-end">
           <button
             onClick={async () => {
@@ -1177,6 +1396,72 @@ function InlineEditor({
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+/** Chip list with an inline "add tag" input; changes save immediately. */
+function TagEditor({
+  tags,
+  onChange,
+}: {
+  tags: string[];
+  onChange: (tags: string[]) => Promise<void>;
+}) {
+  const [adding, setAdding] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  async function commit(next: string[]) {
+    setBusy(true);
+    try {
+      await onChange(next);
+    } catch (err) {
+      alert("Couldn't update tags: " + (err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      <span className="flex items-center gap-1 text-xs font-semibold text-slate-400">
+        <TagIcon size={12} /> Tags
+      </span>
+      {tags.map((tag) => (
+        <span
+          key={tag}
+          className="flex items-center gap-1 rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600"
+        >
+          {tag}
+          <button
+            onClick={() => commit(removeTags(tags, [tag]))}
+            disabled={busy}
+            className="text-slate-400 hover:text-red-500"
+            title={`Remove ${tag}`}
+          >
+            <X size={11} />
+          </button>
+        </span>
+      ))}
+      <input
+        value={adding}
+        onChange={(e) => setAdding(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && adding.trim()) {
+            e.preventDefault();
+            commit(addTags(tags, adding.split(/\s+/)));
+            setAdding("");
+          }
+        }}
+        onBlur={() => {
+          if (adding.trim()) {
+            commit(addTags(tags, adding.split(/\s+/)));
+            setAdding("");
+          }
+        }}
+        placeholder="add tag…"
+        className="min-w-[6rem] flex-1 rounded border border-transparent px-1 py-0.5 text-xs outline-none hover:border-slate-200 focus:border-indigo-400"
+      />
     </div>
   );
 }

@@ -23,6 +23,7 @@ import {
   deleteCard,
   deleteOcclusionSheet,
   getDeck,
+  setItemTags,
   updateCard,
   watchCards,
   watchOcclusions,
@@ -56,12 +57,13 @@ export function DeckPage() {
     };
   }, [user, deckId]);
 
-  async function handleSaveCard(data: CardData) {
+  async function handleSaveCard(data: CardData, tags: string[]) {
     if (!user || !deckId) return;
     if (editingCard) {
       await updateCard(user.uid, deckId, editingCard.id, data);
+      await setItemTags(user.uid, deckId, "card", editingCard.id, tags);
     } else {
-      await createCard(user.uid, deckId, data);
+      await createCard(user.uid, deckId, data, tags);
     }
   }
 

@@ -7,8 +7,11 @@ import { decompress as zstdDecompress } from "fzstd";
 import type { Database, SqlJsStatic } from "sql.js";
 import type { CardData, OcclusionShape } from "../types";
 import { uid } from "./uid";
+import { normalizeTags, parseTagString } from "./tags";
 
 export interface ParsedSheet {
+  /** the note's Anki tags, normalized */
+  tags: string[];
   /** "anki:<note id>" (native IO) or "anki-ioe:<shared prefix>" */
   importId: string;
   title: string;
@@ -44,6 +47,8 @@ export interface ImportedSchedule {
 
 export interface ParsedCard {
   data: CardData;
+  /** the note's Anki tags, normalized */
+  tags: string[];
   /** "anki:<note id>" — stable across exports of the same collection */
   importId: string;
   /** keyed by cloze number (1-based); basic cards use 1 */
@@ -600,11 +605,13 @@ export async function parseApkg(
       ntInfo: NoteTypeInfo;
       fields: string[];
       deckName: string;
+      /** Anki stores these space-separated and space-padded */
+      tags: string[];
     }
     const rawNotes: RawNote[] = [];
     {
-      const res = db.exec("SELECT id, mid, flds FROM notes");
-      for (const [id, mid, flds] of res[0]?.values ?? []) {
+      const res = db.exec("SELECT id, mid, flds, tags FROM notes");
+      for (const [id, mid, flds, tags] of res[0]?.values ?? []) {
         const ntInfo = notetypes.get(Number(mid));
         if (!ntInfo) continue;
         const did = noteDeck.get(Number(id));
@@ -613,6 +620,7 @@ export async function parseApkg(
           ntInfo,
           fields: String(flds).split("\x1f"),
           deckName: (did !== undefined && deckNames.get(did)) || "Imported",
+          tags: parseTagString(String(tags ?? "")),
         });
       }
     }
@@ -677,6 +685,7 @@ export async function parseApkg(
           ? clozeOrder.map((num) => byOrd.get(num))
           : undefined;
         deckFor(note.deckName).sheets.push({
+          tags: note.tags,
           importId: `anki:${note.id}`,
           title: header.trim() || imageName,
           imageName,
@@ -703,6 +712,7 @@ export async function parseApkg(
         deckFor(note.deckName).cards.push({
           data: { type: "cloze", text: first, extra: second || undefined },
           schedule,
+          tags: note.tags,
           importId: `anki:${note.id}`,
         });
         stats.cloze++;
@@ -710,6 +720,7 @@ export async function parseApkg(
         deckFor(note.deckName).cards.push({
           data: { type: "basic", front: first, back: second },
           schedule,
+          tags: note.tags,
           importId: `anki:${note.id}`,
         });
         stats.basic++;
@@ -755,6 +766,8 @@ export async function parseApkg(
       const unitSchedules = parsed.maskOrder.map((oa) => scheduleByOa.get(oa));
 
       deckFor(sample.deckName).sheets.push({
+        // An IOE sheet spans several notes; union their tags.
+        tags: normalizeTags(notes.flatMap((n) => n.tags)),
         importId: `anki-ioe:${prefix}`,
         title: header || imageName.replace(/\.[^.]+$/, ""),
         imageName,

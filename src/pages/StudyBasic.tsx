@@ -28,6 +28,7 @@ import {
   deleteSrsState,
   logReview,
   recordCardResult,
+  setItemTags,
   updateCard,
 } from "../lib/firestore";
 import { CardEditorModal } from "../components/CardEditorModal";
@@ -1476,8 +1477,17 @@ export function StudyBasic() {
           initial={cards.find((c) => c.deckId === current.deckId && c.id === current.cardId)}
           uid={user?.uid}
           deckId={current.deckId}
-          onSave={async (data) => {
-            if (user) await updateCard(user.uid, current.deckId, current.cardId, data);
+          onSave={async (data, tags) => {
+            if (user) {
+              await updateCard(user.uid, current.deckId, current.cardId, data);
+              await setItemTags(
+                user.uid,
+                current.deckId,
+                "card",
+                current.cardId,
+                tags
+              );
+            }
             await reloadData();
             restart();
           }}

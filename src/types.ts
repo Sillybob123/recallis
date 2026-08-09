@@ -33,6 +33,8 @@ export type CardData = BasicCardData | ClozeCardData;
 
 export interface Card {
   id: string;
+  /** Anki-style tags, stored normalized (no spaces inside a tag) */
+  tags?: string[];
   /**
    * Identity of the source note this came from (e.g. "anki:1785861078053").
    * Re-importing the same package matches on this so existing cards are
@@ -76,6 +78,8 @@ export interface OcclusionSheet {
    */
   linkedImage?: boolean;
   id: string;
+  /** Anki-style tags, as on Card */
+  tags?: string[];
   /** source-note identity, as on Card — used to merge re-imports */
   importId?: string;
   title: string;

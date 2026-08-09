@@ -213,6 +213,8 @@ export async function moveCardsToDeck(
     const newRef = doc(cardsCol(uid, toDeckId));
     await setDoc(newRef, {
       data: card.data,
+      tags: card.tags ?? [],
+      importId: card.importId ?? null,
       stats: card.stats,
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
@@ -247,6 +249,8 @@ export async function moveSheetsToDeck(
   for (const sheet of sheets) {
     if (!wanted.has(sheet.id)) continue;
     const newId = await createOcclusionSheet(uid, toDeckId, {
+      tags: sheet.tags ?? [],
+      importId: sheet.importId,
       title: sheet.title,
       imagePath: sheet.imagePath,
       imageUrl: sheet.imageUrl,
@@ -289,11 +293,14 @@ export async function duplicateDeck(
     await createCardsBulk(
       uid,
       targetId,
-      cards.map((c) => c.data)
+      cards.map((c) => c.data),
+      undefined,
+      cards.map((c) => c.tags ?? [])
     );
   }
   for (const sheet of sheets) {
     await createOcclusionSheet(uid, targetId, {
+      tags: sheet.tags ?? [],
       title: sheet.title,
       imagePath: sheet.imagePath,
       imageUrl: sheet.imageUrl,
@@ -371,6 +378,7 @@ export function watchCards(
         const data = d.data();
         return {
           id: d.id,
+          tags: (data.tags as string[] | undefined) ?? [],
           createdAt: toMillis(data.createdAt),
           updatedAt: toMillis(data.updatedAt),
           stats: data.stats ?? { correct: 0, incorrect: 0 },
@@ -388,6 +396,7 @@ export async function getCardsOnce(uid: string, deckId: string): Promise<Card[]>
     return {
       id: d.id,
       importId: data.importId as string | undefined,
+      tags: (data.tags as string[] | undefined) ?? [],
       createdAt: toMillis(data.createdAt),
       updatedAt: toMillis(data.updatedAt),
       stats: data.stats ?? { correct: 0, incorrect: 0 },
@@ -406,6 +415,7 @@ export async function getOcclusionsOnce(
     return {
       id: d.id,
       importId: data.importId as string | undefined,
+      tags: (data.tags as string[] | undefined) ?? [],
       title: data.title ?? "Untitled",
       imagePath: data.imagePath,
       imageUrl: data.imageUrl,
@@ -419,9 +429,15 @@ export async function getOcclusionsOnce(
   });
 }
 
-export async function createCard(uid: string, deckId: string, data: CardData) {
+export async function createCard(
+  uid: string,
+  deckId: string,
+  data: CardData,
+  tags: string[] = []
+) {
   await addDoc(cardsCol(uid, deckId), {
     data,
+    tags,
     stats: { correct: 0, incorrect: 0 },
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
@@ -434,7 +450,8 @@ export async function createCardsBulk(
   uid: string,
   deckId: string,
   items: CardData[],
-  importIds?: (string | undefined)[]
+  importIds?: (string | undefined)[],
+  tagsPerItem?: (string[] | undefined)[]
 ): Promise<string[]> {
   // Firestore hard-limits a batch to 500 operations, so commit in chunks.
   const col = cardsCol(uid, deckId);
@@ -448,6 +465,7 @@ export async function createCardsBulk(
       batch.set(ref, {
         data,
         importId: importIds?.[i + j] ?? null,
+        tags: tagsPerItem?.[i + j] ?? [],
         stats: { correct: 0, incorrect: 0 },
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
@@ -607,6 +625,21 @@ export async function uploadNoteSlide(
   return { path, url };
 }
 
+/** Replaces a card's or sheet's tag list. */
+export async function setItemTags(
+  uid: string,
+  deckId: string,
+  kind: "card" | "sheet",
+  itemId: string,
+  tags: string[]
+) {
+  const col = kind === "card" ? "cards" : "occlusions";
+  await updateDoc(doc(db, "users", uid, "decks", deckId, col, itemId), {
+    tags,
+    updatedAt: serverTimestamp(),
+  });
+}
+
 // ---------- User settings (cross-device) ----------
 
 export async function fetchUserSettings(
@@ -743,6 +776,7 @@ export function watchOcclusions(
         const data = d.data();
         return {
           id: d.id,
+          tags: (data.tags as string[] | undefined) ?? [],
           title: data.title ?? "Untitled",
           imagePath: data.imagePath,
           imageUrl: data.imageUrl,
@@ -842,10 +876,12 @@ export async function createOcclusionSheet(
     shapes: OcclusionShape[];
     linkedImage?: boolean;
     importId?: string;
+    tags?: string[];
   }
 ) {
   const ref = await addDoc(occlusionsCol(uid, deckId), {
     ...sheet,
+    tags: sheet.tags ?? [],
     importId: sheet.importId ?? null,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
