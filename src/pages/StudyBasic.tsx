@@ -20,6 +20,7 @@ import { useStudyMode } from "../contexts/StudyModeContext";
 import { Layout } from "../components/Layout";
 import { RichText } from "../components/RichText";
 import { ShapeOverlay } from "../components/ShapeOverlay";
+import { ZoomPan } from "../components/ZoomPan";
 import { StudySettingsModal } from "../components/StudySettingsModal";
 import {
   createCard,
@@ -89,6 +90,16 @@ import {
 const FAST_ANSWER_MS = 7000;
 /** Correct answers a Quizlet card needs before it leaves the session. */
 const MASTERY = 2;
+/** Each miss adds a correct answer to that debt, up to this many. */
+const MAX_EXTRA_REPS = 2;
+/** Where a just-missed card goes back: soon, while the answer is fresh. */
+const RETRY_GAP = 3;
+/**
+ * Where a card you'd previously missed goes after you finally get it right.
+ * A dozen cards is a couple of minutes at a normal pace — long enough that
+ * answering it is recall rather than an echo of the card you just read.
+ */
+const SPACED_GAP = 12;
 
 const FORMAT_LABELS: Record<"flip" | "type" | "learn", string> = {
   flip: "Flashcards",
@@ -127,7 +138,10 @@ function OcclusionCard({
   }
   return (
     <div>
-      <div className="relative mx-auto w-full max-w-3xl overflow-hidden rounded-xl border border-slate-200 bg-white">
+      <ZoomPan
+        resetKey={item.key}
+        className="mx-auto w-full max-w-3xl rounded-xl border border-slate-200 bg-white"
+      >
         <img
           src={item.sheet.imageUrl}
           alt=""
@@ -140,7 +154,7 @@ function OcclusionCard({
           targetIds={targetIds}
           outlineIds={outlineIds}
         />
-      </div>
+      </ZoomPan>
       {item.unit.label && revealed && (
         <p className="mt-3 text-center text-lg font-semibold text-slate-900">
           {item.unit.label}
@@ -259,6 +273,9 @@ export function StudyBasic() {
 
   // Session-local memory for the smart Quizlet scheduler.
   const strengthRef = useRef<Map<string, number>>(new Map());
+  const missesRef = useRef<Map<string, number>>(new Map());
+  /** set when a rebuild must keep the session (an edit, a settings change) */
+  const preserveRef = useRef(false);
   const [celebrate, setCelebrate] = useState(false);
   const celebratedRef = useRef(false);
   const shownAtRef = useRef<number>(Date.now());
@@ -299,7 +316,9 @@ export function StudyBasic() {
   useEffect(() => {
     if (!cards || !sheets || !srsMap) return;
     setQueueReady(false);
-    setStats({ answers: 0, correct: 0, wrong: 0 });
+    // Rebuilding after an edit is the same session, so its tally stands.
+    if (preserveRef.current) preserveRef.current = false;
+    else setStats({ answers: 0, correct: 0, wrong: 0 });
     const all = [
       ...buildTextItems(cards, {
         answerWithTerm:
@@ -308,6 +327,7 @@ export function StudyBasic() {
       ...(cardsOnly ? [] : buildOcclusionItems(sheets)),
     ];
     strengthRef.current = new Map();
+    missesRef.current = new Map();
 
     if (studyMode === "quizlet") {
       let cancelled = false;
@@ -323,6 +343,7 @@ export function StudyBasic() {
             .filter((it): it is StudyItem => Boolean(it));
           if (restored.length > 0) {
             strengthRef.current = new Map(saved.strengths);
+            missesRef.current = new Map(saved.misses ?? []);
             setQueue(restored);
             setTotal(Math.max(saved.total, restored.length));
             setNextDueMs(null);
@@ -549,6 +570,7 @@ export function StudyBasic() {
       saveCramSession(user?.uid ?? null, cramScope, {
         order: next.map(combinedKey),
         strengths: [...strengthRef.current.entries()],
+        misses: [...missesRef.current.entries()],
         total: sessionTotal,
       });
     }
@@ -562,25 +584,49 @@ export function StudyBasic() {
     recordCardResult(user.uid, item.deckId, item.cardId, correct, stats).catch(() => {});
   }
 
+  /**
+   * Correct answers this card still owes. Every miss adds one, so a card you
+   * got wrong twice can't leave on a single lucky answer.
+   */
+  function requiredFor(key: string): number {
+    return MASTERY + Math.min(missesRef.current.get(key) ?? 0, MAX_EXTRA_REPS);
+  }
+
+  function recordMiss(key: string) {
+    missesRef.current.set(key, (missesRef.current.get(key) ?? 0) + 1);
+    strengthRef.current.set(key, 0);
+  }
+
   /** Quizlet flashcards mode: adaptive by speed + accuracy. */
   function markCram(correct: boolean) {
     if (!current) return;
     pushHistory();
     recordStats(current, correct);
     recordAnswer(correct);
-    const st = strengthRef.current.get(current.key) ?? 0;
+    const key = current.key;
+    const st = strengthRef.current.get(key) ?? 0;
+    const missed = (missesRef.current.get(key) ?? 0) > 0;
     let nextQueue: StudyItem[];
     if (!correct) {
-      strengthRef.current.set(current.key, 0);
-      nextQueue = reinsert(queue, current, 3);
+      recordMiss(key);
+      nextQueue = reinsert(queue, current, RETRY_GAP);
     } else {
-      const fast = guessMsRef.current > 0 && guessMsRef.current < FAST_ANSWER_MS;
+      // No speed bonus on a card you've already missed: answering quickly
+      // just after being shown the answer is recognition, not recall.
+      const fast =
+        !missed && guessMsRef.current > 0 && guessMsRef.current < FAST_ANSWER_MS;
       const strength = st + (fast ? 2 : 1);
-      strengthRef.current.set(current.key, strength);
+      strengthRef.current.set(key, strength);
       nextQueue =
-        strength >= MASTERY
+        strength >= requiredFor(key)
           ? queue.slice(1)
-          : reinsert(queue, current, Math.max(8, queue.length - 2));
+          : reinsert(
+              queue,
+              current,
+              missed
+                ? Math.max(SPACED_GAP, queue.length - 2)
+                : Math.max(8, queue.length - 2)
+            );
     }
     commitCramQueue(applySiblingPolicy(nextQueue, current), total);
     resetCardUI();
@@ -592,18 +638,26 @@ export function StudyBasic() {
     pushHistory();
     recordStats(current, correct);
     recordAnswer(correct);
-    const st = strengthRef.current.get(current.key) ?? 0;
+    const key = current.key;
+    const st = strengthRef.current.get(key) ?? 0;
+    const missed = (missesRef.current.get(key) ?? 0) > 0;
     let nextQueue: StudyItem[];
     if (!correct) {
-      strengthRef.current.set(current.key, 0);
-      nextQueue = reinsert(queue, current, 3);
+      recordMiss(key);
+      nextQueue = reinsert(queue, current, RETRY_GAP);
     } else {
       const strength = st + 1;
-      strengthRef.current.set(current.key, strength);
+      strengthRef.current.set(key, strength);
       nextQueue =
-        strength >= MASTERY
+        strength >= requiredFor(key)
           ? queue.slice(1)
-          : reinsert(queue, current, Math.min(6, queue.length));
+          : reinsert(
+              queue,
+              current,
+              missed
+                ? Math.max(SPACED_GAP, Math.floor(queue.length / 2))
+                : Math.min(6, queue.length)
+            );
     }
     commitCramQueue(applySiblingPolicy(nextQueue, current), total);
     resetCardUI();
@@ -654,6 +708,17 @@ export function StudyBasic() {
 
   function restart() {
     clearCramSession(user?.uid ?? null, cramScope);
+    setSessionNonce((n) => n + 1);
+    resetCardUI();
+  }
+
+  /**
+   * Rebuilds the queue against freshly loaded cards while keeping the run
+   * going. Editing a card used to call restart(), which threw away every
+   * card you'd already mastered.
+   */
+  function refreshQueue() {
+    preserveRef.current = true;
     setSessionNonce((n) => n + 1);
     resetCardUI();
   }
@@ -915,11 +980,16 @@ export function StudyBasic() {
     if (studyMode !== "quizlet") {
       return Math.round(((total - queue.length) / total) * 100);
     }
+    // Missing a card adds to what the session owes, so the bar dips rather
+    // than pretending the work didn't grow.
     let earned = 0;
-    for (const strength of strengthRef.current.values()) {
-      earned += Math.min(strength, MASTERY);
+    let needed = total * MASTERY;
+    for (const [key, strength] of strengthRef.current) {
+      const required = requiredFor(key);
+      needed += required - MASTERY;
+      earned += Math.min(strength, required);
     }
-    return Math.min(100, Math.round((earned / (total * MASTERY)) * 100));
+    return Math.min(100, Math.round((earned / Math.max(needed, 1)) * 100));
   })();
 
   if (!cards || !sheets || !srsMap || !queueReady) {
@@ -985,7 +1055,7 @@ export function StudyBasic() {
             onChange={(a, q) => {
               setAnkiSettings(a);
               setQuizletSettings(q);
-              restart();
+              refreshQueue();
             }}
             onClose={() => setShowSettings(false)}
           />
@@ -1524,7 +1594,9 @@ export function StudyBasic() {
           onChange={(a, q) => {
             setAnkiSettings(a);
             setQuizletSettings(q);
-            restart();
+            // Settings change how cards are asked, not which ones you've
+            // already got right, so the run survives this too.
+            refreshQueue();
           }}
           onClose={() => setShowSettings(false)}
         />
@@ -1546,7 +1618,7 @@ export function StudyBasic() {
               );
             }
             await reloadData();
-            restart();
+            refreshQueue();
           }}
           onClose={() => setShowEdit(false)}
         />

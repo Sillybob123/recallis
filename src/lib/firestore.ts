@@ -726,6 +726,7 @@ export async function setItemTags(
 export interface CramProgressDoc {
   order: string[];
   strengths: [string, number][];
+  misses?: [string, number][];
   total: number;
   savedAt: number;
 }
@@ -753,6 +754,7 @@ export async function fetchCramProgress(
   return {
     order: data.order,
     strengths: (data.strengths ?? []) as [string, number][],
+    misses: (data.misses ?? []) as [string, number][],
     total: data.total ?? data.order.length,
     savedAt: data.savedAt ?? 0,
   };

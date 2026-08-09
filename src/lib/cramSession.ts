@@ -16,6 +16,9 @@ export interface CramSession {
   order: string[];
   /** per-item "how well do you know it" counters */
   strengths: [string, number][];
+  /** how many times each item has been missed — it decides how much more
+   *  work the item owes before it can leave the session */
+  misses?: [string, number][];
   /** size the session started at, for the progress bar */
   total: number;
   savedAt: number;
@@ -93,6 +96,7 @@ async function pushPending() {
     await saveCramProgress(job.uid, cramScopeId(job.scope), {
       order: job.session.order,
       strengths: job.session.strengths,
+      misses: job.session.misses ?? [],
       total: job.session.total,
       savedAt: job.session.savedAt,
     });

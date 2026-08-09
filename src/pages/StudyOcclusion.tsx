@@ -4,6 +4,7 @@ import { ArrowLeft, PartyPopper, RotateCcw } from "lucide-react";
 import { useAuth } from "../contexts/AuthContext";
 import { Layout } from "../components/Layout";
 import { ShapeOverlay } from "../components/ShapeOverlay";
+import { ZoomPan } from "../components/ZoomPan";
 import { watchOcclusions } from "../lib/firestore";
 import { buildUnits, type ShapeUnit } from "../lib/shapes";
 import type { OcclusionSheet } from "../types";
@@ -206,7 +207,10 @@ export function StudyOcclusion() {
         </div>
       ) : (
         <div>
-          <div className="relative mx-auto w-full max-w-2xl overflow-hidden rounded-xl border border-slate-200 bg-white">
+          <ZoomPan
+            resetKey={current.key}
+            className="mx-auto w-full max-w-2xl rounded-xl border border-slate-200 bg-white"
+          >
             <img
               src={current.sheet.imageUrl}
               alt=""
@@ -219,7 +223,7 @@ export function StudyOcclusion() {
               targetIds={targetIds}
               outlineIds={outlineIds}
             />
-          </div>
+          </ZoomPan>
 
           {current.unit.label && revealed && (
             <p className="mt-3 text-center text-lg font-semibold text-slate-900">
