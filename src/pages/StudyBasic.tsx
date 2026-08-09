@@ -555,6 +555,7 @@ export function StudyBasic() {
 
   const current = queue[0];
   const showMaskToggle = current?.kind === "occlusion";
+  const anatomy = studyMode === "quizlet" && quizletSettings.anatomyMode;
 
   // Stars live on the note, so they're read straight off the loaded cards
   // rather than tracked per session.
@@ -1576,7 +1577,11 @@ export function StudyBasic() {
         <div className="mx-auto max-w-2xl">
           {current.kind === "text" ? (
             <div className="max-h-[46vh] overflow-y-auto rounded-2xl border border-slate-200 bg-white p-7 text-center shadow-sm">
-              <RichText html={current.frontHtml} className="text-lg text-slate-900" />
+              <RichText
+                anatomy={anatomy}
+                html={current.frontHtml}
+                className="text-lg text-slate-900"
+              />
             </div>
           ) : (
             <OcclusionCard item={current} occMode={occMode} revealed={mcPicked !== null} />
@@ -1623,7 +1628,11 @@ export function StudyBasic() {
         <div className="mx-auto max-w-2xl">
           {current.kind === "text" ? (
             <div className="max-h-[46vh] overflow-y-auto rounded-2xl border border-slate-200 bg-white p-7 text-center shadow-sm">
-              <RichText html={current.frontHtml} className="text-lg text-slate-900" />
+              <RichText
+                anatomy={anatomy}
+                html={current.frontHtml}
+                className="text-lg text-slate-900"
+              />
             </div>
           ) : (
             <OcclusionCard item={current} occMode={occMode} revealed={checked !== null} />
@@ -1714,6 +1723,7 @@ export function StudyBasic() {
               <div className="flip-card-face overflow-y-auto rounded-2xl border border-slate-200 bg-white p-8 shadow-sm">
                 <div className="flex min-h-full">
                   <RichText
+                    anatomy={anatomy}
                     html={current.kind === "text" ? current.frontHtml : ""}
                     className="m-auto max-w-full text-center text-xl leading-relaxed text-slate-900"
                   />
@@ -1722,6 +1732,7 @@ export function StudyBasic() {
               <div className="flip-card-face flip-card-back overflow-y-auto rounded-2xl border border-indigo-200 bg-indigo-50 p-8 shadow-sm">
                 <div className="flex min-h-full">
                   <RichText
+                    anatomy={anatomy}
                     html={current.kind === "text" ? current.backHtml : ""}
                     className="m-auto max-w-full text-center text-xl leading-relaxed text-slate-900"
                   />
@@ -1736,7 +1747,11 @@ export function StudyBasic() {
         <div className="mx-auto max-w-2xl">
           {current.kind === "text" ? (
             <div className="max-h-[52vh] overflow-y-auto rounded-2xl border border-slate-200 bg-white p-7 text-center shadow-sm">
-              <RichText html={current.frontHtml} className="text-lg text-slate-900" />
+              <RichText
+                anatomy={anatomy}
+                html={current.frontHtml}
+                className="text-lg text-slate-900"
+              />
             </div>
           ) : (
             <OcclusionCard item={current} occMode={occMode} revealed={checked !== null} />
@@ -1776,6 +1791,7 @@ export function StudyBasic() {
               </p>
               {current.kind === "text" ? (
                 <RichText
+                    anatomy={anatomy}
                   html={current.backHtml}
                   className="max-h-72 overflow-y-auto text-slate-700"
                 />

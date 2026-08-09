@@ -94,6 +94,8 @@ export interface QuizletSettings {
   retypeCorrect: boolean;
   /** answer with the definition (front→back) or the term (back→front) */
   answerWith: "definition" | "term";
+  /** gloss Latin/Greek word parts in card text on hover */
+  anatomyMode: boolean;
 }
 
 export const DEFAULT_QUIZLET_SETTINGS: QuizletSettings = {
@@ -102,6 +104,7 @@ export const DEFAULT_QUIZLET_SETTINGS: QuizletSettings = {
   grading: "moderate",
   retypeCorrect: true,
   answerWith: "definition",
+  anatomyMode: false,
 };
 
 function load<T>(key: string, defaults: T): T {

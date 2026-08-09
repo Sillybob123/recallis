@@ -178,6 +178,18 @@ body {
   color: inherit !important;
 }
 
+/* Anatomy mode: a quiet underline, not a highlighter. The text has to stay
+   readable when half the anatomical terms on a card are marked. */
+.anat-term {
+  border-bottom: 1px dotted currentColor;
+  cursor: help;
+  text-decoration: none;
+}
+.anat-term:hover {
+  background: rgba(59, 130, 246, 0.1);
+  border-radius: 2px;
+}
+
 /* Finishing a deck. Pieces start just above the viewport and drift down. */
 .confetti-bit {
   position: absolute;

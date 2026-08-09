@@ -242,6 +242,21 @@ export function StudySettingsModal({
                 </div>
               </Card>
 
+              <Card title="Anatomy mode" className="md:col-span-2">
+                <ToggleField
+                  label="Explain Latin and Greek word parts"
+                  checked={q.anatomyMode}
+                  onChange={(c) => setQ({ ...q, anatomyMode: c })}
+                />
+                <p className="mt-2 text-xs leading-snug text-slate-500">
+                  Underlines anatomical terms in card text. Hover or tap one to
+                  see what it's built from — <i>subcutaneous</i> as{" "}
+                  <b>sub-</b> under + <b>cutane-</b> skin. Only terms it can
+                  account for completely are marked, so ordinary words are left
+                  alone.
+                </p>
+              </Card>
+
               <ClozeColorSettings a={a} setA={setA} />
             </div>
           )}
