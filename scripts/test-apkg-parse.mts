@@ -26,9 +26,10 @@ console.log(`\nmedia fetch "${sheet.imageName}":`, bytes ? `${bytes.length} byte
 
 // Verify a card image reference resolves too
 const cardWithImg = parsed.decks.flatMap(d => d.cards).find(c =>
-  (c.type === "cloze" ? (c.extra ?? "") + c.text : c.front + c.back).includes("<img"));
+  (c.data.type === "cloze" ? (c.data.extra ?? "") + c.data.text : c.data.front + c.data.back).includes("<img"));
 if (cardWithImg) {
-  const html = cardWithImg.type === "cloze" ? (cardWithImg.extra ?? "") + cardWithImg.text : cardWithImg.front + cardWithImg.back;
+  const d = cardWithImg.data;
+  const html = d.type === "cloze" ? (d.extra ?? "") + d.text : d.front + d.back;
   const src = html.match(/<img[^>]*src="([^"]+)"/)?.[1];
   const b = src ? await readMediaBytes(parsed, src) : null;
   console.log(`card img "${src}":`, b ? `${b.length} bytes OK` : "MISSING");
