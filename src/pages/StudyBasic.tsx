@@ -87,7 +87,31 @@ import {
   saveCramSession,
 } from "../lib/cramSession";
 
-const FAST_ANSWER_MS = 7000;
+/**
+ * Base allowance for recognising a card, before reading time. A flat
+ * threshold punished long cards: seven seconds is quick for a two-line cloze
+ * and slow for three words, so a first-try answer on anything wordy never
+ * counted as fast and the card came back for no reason.
+ */
+const FAST_ANSWER_BASE_MS = 9000;
+/** However long the card, past this you were working it out. */
+const FAST_ANSWER_CAP_MS = 28000;
+/**
+ * Reading speed used to scale the allowance. Deliberately below prose pace:
+ * these cards are dense terminology, not sentences you skim.
+ */
+const READING_WPM = 160;
+
+/** How quick counts as "knew it straight away" for this particular card. */
+function fastThresholdMs(item: StudyItem): number {
+  const text =
+    item.kind === "text" ? item.frontPlain : item.unit.label ?? "";
+  const words = text.trim().split(/\s+/).filter(Boolean).length;
+  return Math.min(
+    FAST_ANSWER_CAP_MS,
+    FAST_ANSWER_BASE_MS + (words / READING_WPM) * 60000
+  );
+}
 /** Correct answers a Quizlet card needs before it leaves the session. */
 const MASTERY = 2;
 /** Each miss adds a correct answer to that debt, up to this many. */
@@ -635,7 +659,9 @@ export function StudyBasic() {
       // No speed bonus on a card you've already missed: answering quickly
       // just after being shown the answer is recognition, not recall.
       const fast =
-        !missed && guessMsRef.current > 0 && guessMsRef.current < FAST_ANSWER_MS;
+        !missed &&
+        guessMsRef.current > 0 &&
+        guessMsRef.current < fastThresholdMs(current);
       const strength = st + (fast ? 2 : 1);
       strengthRef.current.set(key, strength);
       nextQueue =
@@ -748,15 +774,32 @@ export function StudyBasic() {
   const [moreOpen, setMoreOpen] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
   const historyRef = useRef<
-    { queue: StudyItem[]; deckId?: string; key?: string; prevSrs?: SrsState | null }[]
+    {
+      queue: StudyItem[];
+      deckId?: string;
+      key?: string;
+      prevSrs?: SrsState | null;
+      /** the card that was answered, for rewinding Quizlet's counters */
+      cramKey?: string;
+      strength?: number;
+      misses?: number;
+      stats: { answers: number; correct: number; wrong: number };
+    }[]
   >([]);
 
   function pushHistory(item?: StudyItem, prevSrs?: SrsState | null) {
+    const cramKey = current?.key;
     historyRef.current.push({
       queue,
       deckId: item?.deckId,
       key: item?.key,
       prevSrs,
+      // Captured separately from the SRS fields: undoing a Quizlet answer
+      // must not touch the Anki schedule, and vice versa.
+      cramKey,
+      strength: cramKey ? strengthRef.current.get(cramKey) : undefined,
+      misses: cramKey ? missesRef.current.get(cramKey) : undefined,
+      stats,
     });
     if (historyRef.current.length > 25) historyRef.current.shift();
   }
@@ -879,9 +922,22 @@ export function StudyBasic() {
     },
     previousCard() {
       const last = historyRef.current.pop();
-      if (!last || !user) return;
-      setQueue(last.queue);
-      if (last.key !== undefined && last.deckId !== undefined) {
+      if (!last) return;
+      // Put the card back exactly as it was: position in the queue, how well
+      // it was known, how often it had been missed, and the session tally.
+      if (last.cramKey) {
+        const restore = (map: Map<string, number>, value: number | undefined) => {
+          if (value === undefined) map.delete(last.cramKey!);
+          else map.set(last.cramKey!, value);
+        };
+        restore(strengthRef.current, last.strength);
+        restore(missesRef.current, last.misses);
+      }
+      setStats(last.stats);
+      answerLockRef.current = false;
+      if (studyMode === "quizlet") commitCramQueue(last.queue, total);
+      else setQueue(last.queue);
+      if (user && last.key !== undefined && last.deckId !== undefined) {
         setSrsMap((m) => {
           const copy = new Map(m);
           const ck = `${last.deckId}|${last.key}`;
@@ -954,6 +1010,12 @@ export function StudyBasic() {
         target.isContentEditable ||
         target.closest("[role='dialog'], .fixed.inset-0")
       ) {
+        return;
+      }
+      // Undo before the modifier guard below, since it needs Cmd/Ctrl.
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && (e.key === "z" || e.key === "Z")) {
+        e.preventDefault();
+        actions.previousCard();
         return;
       }
       if (e.metaKey || e.ctrlKey || e.altKey) return;
@@ -1147,17 +1209,32 @@ export function StudyBasic() {
         </div>
         <span
           className="shrink-0 text-sm font-medium text-slate-500"
-          title={`${total - queue.length} of ${total} cards cleared from today's queue${
-            stats.answers > 0
-              ? ` · ${stats.correct}/${stats.answers} answers correct`
-              : ""
-          }`}
+          title={
+            studyMode === "quizlet"
+              ? `${total - queue.length} of ${total} cards fully mastered. The bar ` +
+                `also counts cards you've got right once but not yet twice, so it ` +
+                `runs ahead of this number.${
+                  stats.answers > 0
+                    ? ` ${stats.correct}/${stats.answers} answers correct.`
+                    : ""
+                }`
+              : `${total - queue.length} of ${total} cards cleared from today's queue${
+                  stats.answers > 0
+                    ? ` · ${stats.correct}/${stats.answers} answers correct`
+                    : ""
+                }`
+          }
         >
           {total - queue.length}/{total}
+          {studyMode === "quizlet" && (
+            <span className="hidden text-xs font-normal text-slate-400 sm:inline">
+              {" mastered"}
+            </span>
+          )}
           {stats.answers > 0 && (
-            <span className="ml-2 text-xs font-normal text-slate-400">
-              {/* separated, or "0/1" and "0%" read as one number */}
-              {"· "}
+            <span className="text-xs font-normal text-slate-400">
+              {/* spaces inside the string, or "0/1" and "0%" read as "0/10%" */}
+              {" · "}
               {Math.round((stats.correct / stats.answers) * 100)}% correct
             </span>
           )}
@@ -1444,16 +1521,19 @@ export function StudyBasic() {
 
       {studyMode === "quizlet" && current && mode !== "learn" && (
         <p className="mt-6 text-center text-xs text-slate-400">
-          Smart shuffle: misses come back within a few cards, then return
-          much later to be sure. Each miss adds a correct answer before a card
-          can leave. Your Anki-mode schedule is untouched.
+          Smart shuffle: a quick first-try "Got it" retires a card outright;
+          otherwise it comes back once more. Misses return within a few cards,
+          then again much later, and each one adds a correct answer before the
+          card can leave. ⌘Z undoes the last answer. Your Anki-mode schedule is
+          untouched.
         </p>
       )}
       {studyMode === "quizlet" && current && mode === "learn" && (
         <p className="mt-6 text-center text-xs text-slate-400">
-          Learn: multiple choice until you get a card right, then written.
-          Two correct answers master a card; each miss adds one more and
-          brings it back later.
+          Learn: multiple choice until you get a card right, then written —
+          two correct answers master a card, so both formats get asked. Each
+          miss adds one more and brings it back later. ⌘Z undoes the last
+          answer.
         </p>
       )}
 
