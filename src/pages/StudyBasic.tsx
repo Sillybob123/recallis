@@ -100,6 +100,12 @@ const RETRY_GAP = 3;
  * answering it is recall rather than an echo of the card you just read.
  */
 const SPACED_GAP = 12;
+/**
+ * How long an answer holds the card shut afterwards. Short enough to be
+ * invisible when you're deliberately answering, long enough to swallow a
+ * stuck key or a double-clicked button.
+ */
+const ANSWER_LOCK_MS = 300;
 
 const FORMAT_LABELS: Record<"flip" | "type" | "learn", string> = {
   flip: "Flashcards",
@@ -274,6 +280,7 @@ export function StudyBasic() {
   // Session-local memory for the smart Quizlet scheduler.
   const strengthRef = useRef<Map<string, number>>(new Map());
   const missesRef = useRef<Map<string, number>>(new Map());
+  const answerLockRef = useRef(false);
   /** set when a rebuild must keep the session (an edit, a settings change) */
   const preserveRef = useRef(false);
   const [celebrate, setCelebrate] = useState(false);
@@ -508,6 +515,20 @@ export function StudyBasic() {
     else navigate(`/deck/${current.deckId}/occlusion/${current.sheet.id}/edit`);
   }
 
+  /**
+   * Two answers can land before React has drawn the next card — a fast double
+   * press, or a double-clicked button — and the second would silently grade a
+   * card nobody saw. The first one through wins.
+   */
+  function claimAnswer(): boolean {
+    if (answerLockRef.current) return false;
+    answerLockRef.current = true;
+    window.setTimeout(() => {
+      answerLockRef.current = false;
+    }, ANSWER_LOCK_MS);
+    return true;
+  }
+
   function recordAnswer(correct: boolean) {
     setStats((s) => ({
       answers: s.answers + 1,
@@ -599,7 +620,7 @@ export function StudyBasic() {
 
   /** Quizlet flashcards mode: adaptive by speed + accuracy. */
   function markCram(correct: boolean) {
-    if (!current) return;
+    if (!current || !claimAnswer()) return;
     pushHistory();
     recordStats(current, correct);
     recordAnswer(correct);
@@ -634,7 +655,7 @@ export function StudyBasic() {
 
   /** Quizlet Learn mode: not-learned → familiar (1 correct) → mastered (2). */
   function markLearn(correct: boolean) {
-    if (!current) return;
+    if (!current || !claimAnswer()) return;
     pushHistory();
     recordStats(current, correct);
     recordAnswer(correct);
@@ -665,7 +686,7 @@ export function StudyBasic() {
 
   /** Anki mode: grade → SM-2 schedule persisted; learning steps stay in session. */
   function gradeSrs(rating: Rating) {
-    if (!current || !user) return;
+    if (!current || !user || !claimAnswer()) return;
     const prev = srsMap?.get(combinedKey(current)) ?? null;
     pushHistory(current, prev);
     const durMs = Date.now() - shownAtRef.current;
@@ -922,6 +943,8 @@ export function StudyBasic() {
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
+      // Holding a key fires it over and over; only the first press counts.
+      if (e.repeat) return;
       const target = e.target as HTMLElement;
       // Rich-text fields are contenteditable, not <input>, so they need their
       // own check or typing "e" in the editor would reopen it.
@@ -1317,8 +1340,15 @@ export function StudyBasic() {
       ) : mode === "flip" || mode === "learn" ? (
         /* ---------- text flashcard ---------- */
         <div>
+          {/*
+            Keyed by the card: remounting stops the answer face from fading
+            out over 0.12s while it already holds the *next* card's answer,
+            which read as a foreign card flashing past. A freshly mounted
+            element never animates from the previous card's state.
+          */}
           <div className="flip-card mx-auto h-[min(64vh,36rem)] max-w-3xl">
             <div
+              key={current.key}
               className={`flip-card-inner h-full w-full cursor-pointer ${flipped ? "flipped" : ""}`}
               onClick={() => {
                 captureGuessTime();
