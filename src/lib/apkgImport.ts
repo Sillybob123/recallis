@@ -1,7 +1,9 @@
 import type { SqlJsStatic } from "sql.js";
 import {
   parseApkg,
+  probeApkg,
   readMediaBytes,
+  type ApkgProbe,
   type ImportedSchedule,
   type ParsedApkg,
   type ParsedSheet,
@@ -45,9 +47,18 @@ async function loadSqlBrowser(): Promise<SqlJsStatic> {
   return sqlPromise;
 }
 
-export async function parseApkgInBrowser(file: File): Promise<ParsedApkg> {
+export async function parseApkgInBrowser(
+  file: File,
+  options: { excludeSuspended?: boolean } = {}
+): Promise<ParsedApkg> {
   const data = await file.arrayBuffer();
-  return parseApkg(data, loadSqlBrowser);
+  return parseApkg(data, loadSqlBrowser, options);
+}
+
+/** Fast look at a package's contents before committing to a full parse. */
+export async function probeApkgInBrowser(file: File): Promise<ApkgProbe> {
+  const data = await file.arrayBuffer();
+  return probeApkg(data, loadSqlBrowser);
 }
 
 export interface ApkgImportProgress {

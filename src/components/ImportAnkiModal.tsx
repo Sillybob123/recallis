@@ -2,8 +2,13 @@ import { useRef, useState } from "react";
 import { FileUp, X } from "lucide-react";
 import { importAnkiText, ankiDeckToName, type AnkiImportResult } from "../lib/ankiImport";
 import { createCardsBulk, createDeck } from "../lib/firestore";
-import { parseApkgInBrowser, importParsedApkg, type ApkgImportProgress } from "../lib/apkgImport";
-import type { ParsedApkg } from "../lib/apkgParse";
+import {
+  parseApkgInBrowser,
+  probeApkgInBrowser,
+  importParsedApkg,
+  type ApkgImportProgress,
+} from "../lib/apkgImport";
+import type { ApkgProbe } from "../lib/apkgParse";
 
 const COLORS = ["#6366f1", "#0ea5e9", "#10b981", "#f59e0b", "#ef4444", "#a855f7", "#ec4899"];
 
@@ -16,7 +21,9 @@ export function ImportAnkiModal({
 }) {
   const [fileName, setFileName] = useState("");
   const [txtResult, setTxtResult] = useState<AnkiImportResult | null>(null);
-  const [pkgResult, setPkgResult] = useState<ParsedApkg | null>(null);
+  const [pkgFile, setPkgFile] = useState<File | null>(null);
+  const [probe, setProbe] = useState<ApkgProbe | null>(null);
+  const [includeSuspended, setIncludeSuspended] = useState(false);
   const [parseError, setParseError] = useState("");
   const [parsing, setParsing] = useState(false);
   const [split, setSplit] = useState(true);
@@ -32,7 +39,8 @@ export function ImportAnkiModal({
     setFileName(f.name);
     setParseError("");
     setTxtResult(null);
-    setPkgResult(null);
+    setPkgFile(null);
+    setProbe(null);
     setParsing(true);
     try {
       const isPackage = /\.(apkg|colpkg)$/i.test(f.name);
@@ -44,13 +52,18 @@ export function ImportAnkiModal({
           setParsing(false);
           return;
         }
-        const parsed = await parseApkgInBrowser(f);
-        if (parsed.decks.length === 0) {
+        // Counts only: fields, media and masks are untouched. That keeps this
+        // quick even on a whole-collection export and, more importantly, lets
+        // the suspended choice be made before the costly work starts.
+        const info = await probeApkgInBrowser(f);
+        if (info.totalNotes === 0) {
           setParseError("No importable cards or occlusion sheets found in this package.");
           setParsing(false);
           return;
         }
-        setPkgResult(parsed);
+        setPkgFile(f);
+        setProbe(info);
+        setIncludeSuspended(info.suspendedNotes === 0);
       } else {
         const text = await f.text();
         const parsed = importAnkiText(text);
@@ -77,9 +90,21 @@ export function ImportAnkiModal({
     setBusy(true);
     setParseError("");
     try {
-      if (pkgResult) {
+      if (pkgFile && probe) {
         abortRef.current = new AbortController();
-        const outcome = await importParsedApkg(uid, pkgResult, {
+        setProgress({ stage: "Reading the package…", done: 0, total: 0 });
+        const parsed = await parseApkgInBrowser(pkgFile, {
+          excludeSuspended: !includeSuspended,
+        });
+        if (parsed.decks.length === 0) {
+          setParseError(
+            includeSuspended
+              ? "No importable cards or occlusion sheets found in this package."
+              : "Every note in this package is suspended. Choose “All cards” to import them anyway."
+          );
+          return;
+        }
+        const outcome = await importParsedApkg(uid, parsed, {
           split,
           singleDeckName: singleName.trim() || "Imported deck",
           importSchedule,
@@ -96,6 +121,11 @@ export function ImportAnkiModal({
               ? `, creating ${outcome.decksCreated} new deck${outcome.decksCreated === 1 ? "" : "s"}.`
               : "."),
         ];
+        if (!includeSuspended && probe.suspendedNotes > 0) {
+          parts.push(
+            `Left out ${probe.suspendedNotes} suspended note${probe.suspendedNotes === 1 ? "" : "s"}.`
+          );
+        }
         if (outcome.tagsUpdated > 0) {
           parts.push(
             `Tags updated on ${outcome.tagsUpdated} existing note${outcome.tagsUpdated === 1 ? "" : "s"}.`
@@ -164,18 +194,21 @@ export function ImportAnkiModal({
     }
   }
 
-  const pkgStats = pkgResult
-    ? {
-        cards: pkgResult.stats.cloze + pkgResult.stats.basic,
-        deckNames: pkgResult.decks.map((d) => d.name),
-      }
+  const pkgStats = probe
+    ? { cards: probe.totalCards, deckNames: probe.deckNames }
     : null;
+  /** What will actually be imported given the suspended choice. */
+  const notesToImport = probe
+    ? includeSuspended
+      ? probe.totalNotes
+      : probe.activeNotes
+    : 0;
   const txtDeckNames = txtResult
     ? Array.from(new Set(txtResult.groups.map((g) => g.ankiDeck).filter(Boolean)))
     : [];
   const multiDeck =
     (pkgStats?.deckNames.length ?? 0) > 1 || txtDeckNames.length > 1;
-  const ready = Boolean(pkgResult || txtResult);
+  const ready = Boolean(probe || txtResult);
 
   return (
     <div className="fixed inset-0 z-40 flex items-center justify-center bg-slate-900/45 p-4">
@@ -244,37 +277,43 @@ export function ImportAnkiModal({
               </p>
             )}
 
-            {pkgResult && pkgStats && (
+            {probe && pkgStats && (
               <div className="mb-4">
                 <p className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-400">
                   Package contents
                 </p>
                 <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                   <Tile
-                    value={pkgResult.stats.cloze + pkgResult.stats.basic}
-                    label="cards"
-                    hint={`${pkgResult.stats.cloze} cloze · ${pkgResult.stats.basic} basic`}
+                    value={probe.totalNotes}
+                    label="notes"
+                    hint={`${probe.totalCards} cards`}
                   />
                   <Tile
-                    value={pkgResult.stats.sheets}
-                    label="image sheets"
-                    hint={`${pkgResult.stats.masks} masks`}
+                    value={probe.activeNotes}
+                    label="not suspended"
+                    hint={
+                      probe.suspendedNotes > 0
+                        ? `${probe.suspendedNotes} suspended`
+                        : "nothing suspended"
+                    }
+                    accent={probe.suspendedNotes > 0}
                   />
                   <Tile
-                    value={pkgResult.stats.scheduled}
+                    value={probe.scheduled}
                     label="with history"
-                    hint={pkgResult.stats.scheduled > 0 ? "schedules kept" : "all new"}
-                    accent={pkgResult.stats.scheduled > 0}
+                    hint={probe.scheduled > 0 ? "schedules kept" : "all new"}
                   />
                   <Tile
-                    value={pkgResult.decks.length}
+                    value={probe.deckNames.length}
                     label="decks"
-                    hint={pkgResult.stats.skippedNotes > 0 ? `${pkgResult.stats.skippedNotes} skipped` : "ready"}
+                    hint="in the package"
                   />
                 </div>
                 <p className="mt-2 text-xs text-slate-500">
                   Occlusion notes become native, editable sheets with their mask
                   groups intact, and every image uploads to your own storage.
+                  Re-importing a deck you already have adds only the new notes
+                  and refreshes due dates on the rest — nothing is duplicated.
                 </p>
               </div>
             )}
@@ -299,7 +338,52 @@ export function ImportAnkiModal({
 
             {ready && (
               <div className="space-y-3">
-                {(pkgResult?.stats.scheduled ?? 0) > 0 && (
+                {probe && probe.suspendedNotes > 0 && (
+                  <div>
+                    <p className="mb-1.5 text-[13px] font-medium text-slate-700">
+                      This package has {probe.suspendedNotes.toLocaleString()}{" "}
+                      suspended note{probe.suspendedNotes === 1 ? "" : "s"}
+                    </p>
+                    <div className="grid gap-2 sm:grid-cols-2">
+                      {(
+                        [
+                          [
+                            false,
+                            "Only unsuspended",
+                            `Imports the ${probe.activeNotes.toLocaleString()} note${probe.activeNotes === 1 ? "" : "s"} you're actually studying — far fewer images to upload and far less storage used.`,
+                          ],
+                          [
+                            true,
+                            "All cards",
+                            `Imports all ${probe.totalNotes.toLocaleString()}, keeping suspended ones suspended.`,
+                          ],
+                        ] as const
+                      ).map(([value, title, body]) => (
+                        <label
+                          key={String(value)}
+                          className={`cursor-pointer rounded-xl border p-3 text-sm transition ${
+                            includeSuspended === value
+                              ? "border-indigo-400 bg-indigo-50"
+                              : "border-slate-200 hover:bg-slate-50"
+                          }`}
+                        >
+                          <span className="flex items-center gap-2 font-semibold text-slate-800">
+                            <input
+                              type="radio"
+                              checked={includeSuspended === value}
+                              onChange={() => setIncludeSuspended(value)}
+                            />
+                            {title}
+                          </span>
+                          <span className="mt-1 block text-xs leading-snug text-slate-500">
+                            {body}
+                          </span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {(probe?.scheduled ?? 0) > 0 && (
                   <label className="flex items-start gap-2 text-sm text-slate-700">
                     <input
                       type="checkbox"
@@ -389,7 +473,11 @@ export function ImportAnkiModal({
               disabled={busy}
               className="rounded-lg bg-indigo-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-700 disabled:opacity-50"
             >
-              {busy ? "Importing…" : "Import"}
+              {busy
+                ? "Importing…"
+                : probe
+                  ? `Import ${notesToImport.toLocaleString()} note${notesToImport === 1 ? "" : "s"}`
+                  : "Import"}
             </button>
           </div>
         )}

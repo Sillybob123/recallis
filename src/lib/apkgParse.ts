@@ -75,6 +75,8 @@ export interface ParsedApkg {
     sheets: number;
     masks: number;
     skippedNotes: number;
+    /** notes left out because every card of theirs was suspended */
+    suspendedSkipped: number;
     /** cards that arrived with real scheduling we can preserve */
     scheduled: number;
     warnings: string[];
@@ -439,9 +441,102 @@ function classifyNotetype(name: string): NoteTypeInfo["kind"] {
   return "basic";
 }
 
-export async function parseApkg(
+/** Opens the package and returns its zip plus the decompressed collection DB. */
+async function openPackage(
   data: ArrayBuffer,
   loadSql: () => Promise<SqlJsStatic>
+): Promise<{ zip: JSZip; db: Database }> {
+  const zip = await JSZip.loadAsync(data);
+  const modern = zip.file("collection.anki21b");
+  const legacy21 = zip.file("collection.anki21");
+  const legacy2 = zip.file("collection.anki2");
+  let dbBytes: Uint8Array | null = null;
+  if (modern) {
+    dbBytes = maybeDecompress(new Uint8Array(await modern.async("arraybuffer")));
+  } else if (legacy21) {
+    dbBytes = new Uint8Array(await legacy21.async("arraybuffer"));
+  } else if (legacy2) {
+    dbBytes = new Uint8Array(await legacy2.async("arraybuffer"));
+  }
+  if (!dbBytes) {
+    throw new Error(
+      "No Anki database found in this file — is it a .apkg/.colpkg export?"
+    );
+  }
+  const SQL = await loadSql();
+  return { zip, db: new SQL.Database(dbBytes) };
+}
+
+export interface ApkgProbe {
+  /** notes with at least one card you haven't suspended */
+  activeNotes: number;
+  /** notes whose every card is suspended */
+  suspendedNotes: number;
+  totalNotes: number;
+  totalCards: number;
+  suspendedCards: number;
+  /** cards carrying review history */
+  scheduled: number;
+  deckNames: string[];
+}
+
+/**
+ * First look at a package: SQL aggregates only — no field parsing, no media
+ * reads, no SVG masks. Most of its ~1s on a 13,000-note collection is just
+ * decompressing the database; the per-note work it skips is what would
+ * otherwise dominate. Running this first is what lets the dialog offer the
+ * suspended choice before any of the expensive work begins.
+ */
+export async function probeApkg(
+  data: ArrayBuffer,
+  loadSql: () => Promise<SqlJsStatic>
+): Promise<ApkgProbe> {
+  const { db } = await openPackage(data, loadSql);
+  try {
+    const one = (sql: string): number => {
+      try {
+        return Number(db.exec(sql)[0]?.values?.[0]?.[0] ?? 0);
+      } catch {
+        return 0;
+      }
+    };
+    const totalNotes = one("SELECT COUNT(*) FROM notes");
+    const totalCards = one("SELECT COUNT(*) FROM cards");
+    const suspendedCards = one("SELECT COUNT(*) FROM cards WHERE queue = -1");
+    const scheduled = one("SELECT COUNT(*) FROM cards WHERE type != 0");
+    // A note counts as active when any of its cards is not suspended.
+    const activeNotes = one(
+      "SELECT COUNT(DISTINCT nid) FROM cards WHERE queue != -1"
+    );
+
+    const deckNames: string[] = [];
+    try {
+      const res = db.exec("SELECT name FROM decks");
+      for (const [name] of res[0]?.values ?? []) {
+        deckNames.push(String(name).split("\x1f").join("::"));
+      }
+    } catch {
+      /* legacy schema keeps decks as JSON; names aren't needed for the probe */
+    }
+
+    return {
+      activeNotes,
+      suspendedNotes: Math.max(0, totalNotes - activeNotes),
+      totalNotes,
+      totalCards,
+      suspendedCards,
+      scheduled,
+      deckNames,
+    };
+  } finally {
+    db.close();
+  }
+}
+
+export async function parseApkg(
+  data: ArrayBuffer,
+  loadSql: () => Promise<SqlJsStatic>,
+  options: { excludeSuspended?: boolean } = {}
 ): Promise<ParsedApkg> {
   const zip = await JSZip.loadAsync(data);
   const warnings: string[] = [];
@@ -522,6 +617,7 @@ export async function parseApkg(
     // creation day, and learning steps as absolute epoch seconds.
     const schedules = new Map<number, Map<number, ImportedSchedule>>();
     let scheduledCount = 0;
+    let suspendedSkipped = 0;
     {
       let crtSeconds = 0;
       try {
@@ -590,6 +686,22 @@ export async function parseApkg(
       }
     }
 
+    // Which notes still have an unsuspended card. Filtering here means the
+    // expensive work below — field parsing, and especially reading and
+    // decompressing SVG masks out of the zip — never runs for the thousands
+    // of parked cards a big collection carries.
+    const activeNoteIds = new Set<number>();
+    if (options.excludeSuspended) {
+      try {
+        const res = db.exec("SELECT DISTINCT nid FROM cards WHERE queue != -1");
+        for (const [nid] of res[0]?.values ?? []) activeNoteIds.add(Number(nid));
+      } catch {
+        /* can't tell — fall through and import everything */
+      }
+    }
+    const isActiveNote = (noteId: number) =>
+      !options.excludeSuspended || activeNoteIds.size === 0 || activeNoteIds.has(noteId);
+
     // --- note -> deck via its first card ---
     const noteDeck = new Map<number, number>();
     {
@@ -614,6 +726,10 @@ export async function parseApkg(
       for (const [id, mid, flds, tags] of res[0]?.values ?? []) {
         const ntInfo = notetypes.get(Number(mid));
         if (!ntInfo) continue;
+        if (!isActiveNote(Number(id))) {
+          suspendedSkipped++;
+          continue;
+        }
         const did = noteDeck.get(Number(id));
         rawNotes.push({
           id: Number(id),
@@ -642,6 +758,7 @@ export async function parseApkg(
       sheets: 0,
       masks: 0,
       skippedNotes: 0,
+      suspendedSkipped: 0,
       scheduled: 0,
       warnings,
     };
@@ -781,6 +898,7 @@ export async function parseApkg(
     }
 
     stats.scheduled = scheduledCount;
+    stats.suspendedSkipped = suspendedSkipped;
     return {
       decks: Array.from(deckMap.values()).filter(
         (d) => d.cards.length > 0 || d.sheets.length > 0
