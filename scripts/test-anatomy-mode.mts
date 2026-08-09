@@ -2,6 +2,7 @@
 // confidently is worse than no gloss, so this checks both directions: real
 // terms are explained correctly, and ordinary English is left alone.
 import { glossWord, glossText } from "../src/lib/anatomyAnnotate";
+import { searchReference, ANATOMY_REFERENCE } from "../src/lib/anatomyReference";
 
 let failures = 0;
 const check = (name: string, ok: boolean, detail = "") => {
@@ -128,6 +129,50 @@ check(
   "case does not matter",
   glossText(glossWord("Subcutaneous")!) === glossText(glossWord("subcutaneous")!)
 );
+
+// ---------- the lookup panel ----------
+console.log("\nroot search:");
+{
+  const top = (q: string) => searchReference(q)[0]?.form ?? "(none)";
+  const hits = (q: string) => searchReference(q).map((e) => e.form);
+
+  check(`"cyto" leads with the cell root — ${top("cyto")}`,
+    top("cyto").startsWith("cyt"));
+  check(`"nephr" leads with the kidney root — ${top("nephr")}`,
+    top("nephr").startsWith("nephr"));
+  check(`"-itis" finds inflammation — ${top("-itis")}`,
+    searchReference("-itis")[0]?.meaning === "inflammation",
+    "leading hyphens are ignored");
+  check(`"ectomy" finds removal — ${top("ectomy")}`,
+    (searchReference("ectomy")[0]?.meaning ?? "").includes("removal"));
+
+  // Searching by meaning, which is how you use it when you don't know the root.
+  check(
+    `"kidney" finds both roots — ${hits("kidney").slice(0, 3).join(", ")}`,
+    hits("kidney").some((f) => f.startsWith("nephr")) &&
+      hits("kidney").some((f) => f.startsWith("ren"))
+  );
+  check(
+    `"heart" finds cardi- — ${hits("heart").slice(0, 2).join(", ")}`,
+    hits("heart").some((f) => f.startsWith("cardi"))
+  );
+  check("an empty query returns nothing", searchReference("").length === 0);
+  check("a nonsense query returns nothing", searchReference("qqzzx").length === 0);
+  check(
+    "results are capped",
+    searchReference("a", 5).length <= 5,
+    "the panel must not render hundreds of rows"
+  );
+
+  // The data itself should be well formed.
+  const bad = ANATOMY_REFERENCE.filter((e) => !e.form || !e.meaning);
+  check(`${ANATOMY_REFERENCE.length} entries, all with a form and a meaning`,
+    bad.length === 0, bad.map((b) => b.form).join(", "));
+  const dupes = ANATOMY_REFERENCE.map((e) => e.form).filter(
+    (f, i, all) => all.indexOf(f) !== i
+  );
+  check("no duplicate entries", dupes.length === 0, dupes.join(", "));
+}
 
 console.log(failures === 0 ? "\nAll cases passed." : `\n${failures} failing.`);
 process.exit(failures === 0 ? 0 : 1);

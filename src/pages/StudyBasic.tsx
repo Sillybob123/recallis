@@ -10,6 +10,7 @@ import { useLocation, useNavigate, useParams, useSearchParams } from "react-rout
 import {
   AlertTriangle,
   ArrowLeft,
+  BookOpen,
   CalendarClock,
   Check,
   ChevronDown,
@@ -30,6 +31,7 @@ import { Layout } from "../components/Layout";
 import { RichText } from "../components/RichText";
 import { ShapeOverlay } from "../components/ShapeOverlay";
 import { ZoomPan } from "../components/ZoomPan";
+import { searchReference } from "../lib/anatomyReference";
 import { StudySettingsModal } from "../components/StudySettingsModal";
 import {
   createCard,
@@ -306,6 +308,8 @@ export function StudyBasic() {
   const [formatOpen, setFormatOpen] = useState(false);
   const [reviewOpen, setReviewOpen] = useState(false);
   const [gradingOpen, setGradingOpen] = useState(false);
+  const [rootsOpen, setRootsOpen] = useState(false);
+  const [rootQuery, setRootQuery] = useState("");
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("saved");
   const [queueReady, setQueueReady] = useState(false);
   // Session performance is deliberately separate from the progress bar: the
@@ -556,6 +560,7 @@ export function StudyBasic() {
   const current = queue[0];
   const showMaskToggle = current?.kind === "occlusion";
   const anatomy = studyMode === "quizlet" && quizletSettings.anatomyMode;
+  const rootMatches = useMemo(() => searchReference(rootQuery), [rootQuery]);
 
   // Stars live on the note, so they're read straight off the loaded cards
   // rather than tracked per session.
@@ -1292,6 +1297,76 @@ export function StudyBasic() {
     </div>
   );
 
+  /**
+   * Look a word part up directly, for when the card doesn't happen to contain
+   * the one you're wondering about.
+   */
+  const rootsButton = anatomy && (
+    <div className="relative shrink-0">
+      <button
+        onClick={() => setRootsOpen((o) => !o)}
+        title="Look up a Latin or Greek root"
+        className={`rounded-full border p-1.5 transition ${
+          rootsOpen
+            ? "border-indigo-300 bg-indigo-50 text-indigo-600"
+            : "border-slate-200 bg-white text-slate-500 hover:bg-slate-50"
+        }`}
+      >
+        <BookOpen size={14} />
+      </button>
+      {rootsOpen && (
+        <>
+          <div className="fixed inset-0 z-20" onClick={() => setRootsOpen(false)} />
+          <div className="absolute right-0 top-9 z-30 w-80 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl">
+            <div className="border-b border-slate-100 p-2">
+              <input
+                autoFocus
+                value={rootQuery}
+                onChange={(e) => setRootQuery(e.target.value)}
+                placeholder="cyto, -itis, kidney…"
+                className="w-full rounded-lg border border-slate-200 px-2.5 py-1.5 text-sm outline-none focus:border-indigo-400"
+              />
+            </div>
+            <div className="max-h-72 overflow-y-auto">
+              {rootQuery.trim() === "" ? (
+                <p className="px-3 py-4 text-center text-xs text-slate-400">
+                  Search by word part or by meaning — <b>nephr</b> or{" "}
+                  <b>kidney</b> both find it.
+                </p>
+              ) : rootMatches.length === 0 ? (
+                <p className="px-3 py-4 text-center text-xs text-slate-400">
+                  Nothing for “{rootQuery.trim()}”.
+                </p>
+              ) : (
+                rootMatches.map((entry) => (
+                  <div
+                    key={entry.form}
+                    className="border-b border-slate-50 px-3 py-2 last:border-b-0"
+                  >
+                    <p className="text-sm">
+                      <span className="font-semibold text-slate-800">
+                        {entry.form}
+                      </span>
+                      <span className="ml-1.5 text-[10px] font-medium uppercase tracking-wide text-slate-400">
+                        {entry.origin}
+                      </span>
+                    </p>
+                    <p className="text-xs text-slate-600">{entry.meaning}</p>
+                    {entry.example && (
+                      <p className="mt-0.5 text-[11px] italic text-slate-400">
+                        {entry.example}
+                      </p>
+                    )}
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+
   /** How this mode grades, on demand instead of as a wall of small print. */
   const gradingButton = studyMode === "quizlet" && current && (
     <div className="relative shrink-0">
@@ -1497,6 +1572,7 @@ export function StudyBasic() {
         </span>
         <span className="shrink-0">{studyMode === "anki" && <SaveBadge status={saveStatus} />}</span>
         {reviewButton}
+        {rootsButton}
         {starButton}
         {gradingButton}
         {settingsButton}

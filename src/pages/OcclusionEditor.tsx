@@ -21,7 +21,15 @@ import {
   updateOcclusionSheet,
   uploadOcclusionImage,
 } from "../lib/firestore";
-import { DEFAULT_MASK_COLOR, polygonBounds, shapeColor, shapeKind, shapeOpacity, translateShape } from "../lib/shapes";
+import {
+  buildUnits,
+  DEFAULT_MASK_COLOR,
+  polygonBounds,
+  shapeColor,
+  shapeKind,
+  shapeOpacity,
+  translateShape,
+} from "../lib/shapes";
 import type { OcclusionShape, ShapeKind } from "../types";
 import { uid } from "../lib/uid";
 
@@ -850,6 +858,11 @@ export function OcclusionEditor() {
           <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
             <h3 className="mb-2 text-sm font-bold text-slate-700">
               Masks ({shapes.length})
+              {buildUnits(shapes).length !== shapes.length && (
+                <span className="ml-1 font-normal text-slate-400">
+                  · {buildUnits(shapes).length} cards
+                </span>
+              )}
             </h3>
             {shapes.length === 0 ? (
               <p className="text-xs text-slate-400">

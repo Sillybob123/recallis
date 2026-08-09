@@ -32,6 +32,7 @@ import { exportDeckToAnki, downloadBlob } from "../lib/ankiExport";
 import type { Card, CardData, Deck, OcclusionSheet } from "../types";
 import { stripCloze } from "../lib/cloze";
 import { normalizeDeckPath } from "../lib/deckPath";
+import { buildUnits } from "../lib/shapes";
 
 export function DeckPage() {
   const { deckId } = useParams();
@@ -235,7 +236,14 @@ export function DeckPage() {
                 <div className="p-3">
                   <p className="truncate font-medium text-slate-800">{sheet.title}</p>
                   <p className="text-xs text-slate-400">
-                    {sheet.shapes.length} mask{sheet.shapes.length === 1 ? "" : "s"}
+                    {/* Cards, not masks: grouped masks are asked together. */}
+                    {(() => {
+                      const cards = buildUnits(sheet.shapes).length;
+                      const masks = sheet.shapes.length;
+                      return cards === masks
+                        ? `${cards} card${cards === 1 ? "" : "s"}`
+                        : `${cards} card${cards === 1 ? "" : "s"} · ${masks} masks grouped`;
+                    })()}
                   </p>
                 </div>
               </div>
