@@ -130,8 +130,20 @@ function fastThresholdMs(item: StudyItem): number {
 }
 /** Correct answers a Quizlet card needs before it leaves the session. */
 const MASTERY = 2;
-/** Each miss adds a correct answer to that debt, up to this many. */
-const MAX_EXTRA_REPS = 2;
+/**
+ * A correct answer this long after you last saw the card is retrieval from
+ * memory rather than an echo of the answer you were just shown.
+ */
+const SPACED_RECALL_MS = 2 * 60 * 1000;
+/** …or this many other cards in between, for someone answering quickly. */
+const SPACED_RECALL_CARDS = 10;
+/**
+ * However cramped the session, never demand more than this. Past it you are
+ * drilling a card you have already recalled correctly several times.
+ */
+const MAX_CORRECT_ANSWERS = 3;
+/** Below this, the queue simply cannot space anything out. */
+const SHORT_QUEUE = 6;
 /** Where a just-missed card goes back: soon, while the answer is fresh. */
 const RETRY_GAP = 3;
 /**
@@ -337,6 +349,9 @@ export function StudyBasic() {
   // Session-local memory for the smart Quizlet scheduler.
   const strengthRef = useRef<Map<string, number>>(new Map());
   const missesRef = useRef<Map<string, number>>(new Map());
+  /** when each card was last answered, for judging spaced recall */
+  const lastSeenRef = useRef<Map<string, { at: number; n: number }>>(new Map());
+  const answerCountRef = useRef(0);
   const answerLockRef = useRef(false);
   /** every item this scope can study, for sizing the extra-review pool */
   const allItemsRef = useRef<StudyItem[]>([]);
@@ -394,6 +409,8 @@ export function StudyBasic() {
     ];
     strengthRef.current = new Map();
     missesRef.current = new Map();
+    lastSeenRef.current = new Map();
+    answerCountRef.current = 0;
 
     if (studyMode === "quizlet") {
       let cancelled = false;
@@ -752,16 +769,42 @@ export function StudyBasic() {
   }
 
   /**
-   * Correct answers this card still owes. Every miss adds one, so a card you
-   * got wrong twice can't leave on a single lucky answer.
+   * Whether this answer is a genuine re-test rather than a repeat of one you
+   * just did. Quizlet's Learn works the same way: it models the gap since the
+   * previous answer instead of counting correct answers, because a correct
+   * answer moments after being shown the answer proves very little, and one
+   * given minutes later proves a lot.
    */
-  function requiredFor(key: string): number {
-    return MASTERY + Math.min(missesRef.current.get(key) ?? 0, MAX_EXTRA_REPS);
+  function isSpacedRecall(key: string, strength: number): boolean {
+    const last = lastSeenRef.current.get(key);
+    // No record but existing credit means the session was resumed — whatever
+    // else is true, real time has passed.
+    if (!last) return strength > 0;
+    if (queue.length <= SHORT_QUEUE) return true;
+    return (
+      Date.now() - last.at >= SPACED_RECALL_MS ||
+      answerCountRef.current - last.n >= SPACED_RECALL_CARDS
+    );
+  }
+
+  function markSeen(key: string) {
+    answerCountRef.current += 1;
+    lastSeenRef.current.set(key, { at: Date.now(), n: answerCountRef.current });
   }
 
   function recordMiss(key: string) {
     missesRef.current.set(key, (missesRef.current.get(key) ?? 0) + 1);
     strengthRef.current.set(key, 0);
+  }
+
+  /**
+   * Whether a correct answer finishes the card off. Two correct answers with
+   * a real gap between them is the evidence we want; a third is only asked for
+   * when the gaps never materialised.
+   */
+  function retiresNow(strength: number, spaced: boolean): boolean {
+    if (strength < MASTERY) return false;
+    return spaced || strength >= MAX_CORRECT_ANSWERS;
   }
 
   /** Quizlet flashcards mode: adaptive by speed + accuracy. */
@@ -773,21 +816,23 @@ export function StudyBasic() {
     const key = current.key;
     const st = strengthRef.current.get(key) ?? 0;
     const missed = (missesRef.current.get(key) ?? 0) > 0;
+    const spaced = isSpacedRecall(key, st);
+    markSeen(key);
     let nextQueue: StudyItem[];
     if (!correct) {
       recordMiss(key);
       nextQueue = reinsert(queue, current, RETRY_GAP);
     } else {
-      // No speed bonus on a card you've already missed: answering quickly
-      // just after being shown the answer is recognition, not recall.
-      const fast =
+      // Answered right first time and promptly: a card you already know.
+      const knewIt =
         !missed &&
+        st === 0 &&
         guessMsRef.current > 0 &&
         guessMsRef.current < fastThresholdMs(current);
-      const strength = st + (fast ? 2 : 1);
+      const strength = st + 1;
       strengthRef.current.set(key, strength);
       nextQueue =
-        strength >= requiredFor(key)
+        knewIt || retiresNow(strength, spaced)
           ? queue.slice(1)
           : reinsert(
               queue,
@@ -810,6 +855,8 @@ export function StudyBasic() {
     const key = current.key;
     const st = strengthRef.current.get(key) ?? 0;
     const missed = (missesRef.current.get(key) ?? 0) > 0;
+    const spaced = isSpacedRecall(key, st);
+    markSeen(key);
     let nextQueue: StudyItem[];
     if (!correct) {
       recordMiss(key);
@@ -817,16 +864,15 @@ export function StudyBasic() {
     } else {
       const strength = st + 1;
       strengthRef.current.set(key, strength);
-      nextQueue =
-        strength >= requiredFor(key)
-          ? queue.slice(1)
-          : reinsert(
-              queue,
-              current,
-              missed
-                ? Math.max(SPACED_GAP, Math.floor(queue.length / 2))
-                : Math.min(6, queue.length)
-            );
+      nextQueue = retiresNow(strength, spaced)
+        ? queue.slice(1)
+        : reinsert(
+            queue,
+            current,
+            missed
+              ? Math.max(SPACED_GAP, Math.floor(queue.length / 2))
+              : Math.min(6, queue.length)
+          );
     }
     commitCramQueue(applySiblingPolicy(nextQueue, current), total);
     resetCardUI();
@@ -1200,16 +1246,11 @@ export function StudyBasic() {
     if (studyMode !== "quizlet") {
       return Math.round(((total - queue.length) / total) * 100);
     }
-    // Missing a card adds to what the session owes, so the bar dips rather
-    // than pretending the work didn't grow.
     let earned = 0;
-    let needed = total * MASTERY;
-    for (const [key, strength] of strengthRef.current) {
-      const required = requiredFor(key);
-      needed += required - MASTERY;
-      earned += Math.min(strength, required);
+    for (const strength of strengthRef.current.values()) {
+      earned += Math.min(strength, MASTERY);
     }
-    return Math.min(100, Math.round((earned / Math.max(needed, 1)) * 100));
+    return Math.min(100, Math.round((earned / (total * MASTERY)) * 100));
   })();
 
   if (!cards || !sheets || !srsMap || !queueReady) {
@@ -1386,18 +1427,21 @@ export function StudyBasic() {
             </p>
             {mode === "learn" ? (
               <p>
-                Multiple choice until you get a card right, then written — two
-                correct answers master a card, so both formats get asked.
+                Multiple choice until you get a card right, then written, so
+                both formats get asked before a card is done.
               </p>
             ) : (
               <p>
-                A quick first-try “Got it” retires a card outright; otherwise it
-                comes back once more.
+                A quick first-try “Got it” retires a card outright; otherwise
+                it comes back for a second go.
               </p>
             )}
             <p className="mt-2">
-              Misses return within a few cards, then again much later, and each
-              one adds a correct answer before the card can leave.
+              A miss comes back within a few cards to fix the answer, then
+              again much later. What retires it is getting it right{" "}
+              <b>after a real gap</b> — a correct answer moments after seeing
+              the answer doesn't count for much, so the second one has to be
+              spaced.
             </p>
             <ul className="mt-2 space-y-1 border-t border-slate-100 pt-2">
               <li>
