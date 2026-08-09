@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   AlertTriangle,
@@ -8,6 +15,7 @@ import {
   ChevronDown,
   CloudOff,
   Flag,
+  HelpCircle,
   Loader2,
   PartyPopper,
   Pencil,
@@ -200,6 +208,14 @@ function OcclusionCard({
   );
 }
 
+function Kbd({ children }: { children: ReactNode }) {
+  return (
+    <kbd className="mr-1 rounded border border-slate-200 bg-slate-50 px-1 font-sans text-[10px] font-semibold text-slate-500">
+      {children}
+    </kbd>
+  );
+}
+
 /** The four Anki grade buttons with interval previews. */
 function GradeButtons({
   srs,
@@ -288,6 +304,8 @@ export function StudyBasic() {
   const [retyped, setRetyped] = useState("");
   const [sessionNonce, setSessionNonce] = useState(0);
   const [formatOpen, setFormatOpen] = useState(false);
+  const [reviewOpen, setReviewOpen] = useState(false);
+  const [gradingOpen, setGradingOpen] = useState(false);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("saved");
   const [queueReady, setQueueReady] = useState(false);
   // Session performance is deliberately separate from the progress bar: the
@@ -1215,6 +1233,113 @@ export function StudyBasic() {
     </button>
   );
 
+  /**
+   * Extra review, as a header control rather than a slab under the card: a
+   * count you can act on, with the two things you might want to do with it.
+   */
+  const reviewButton = studyMode === "quizlet" && reviewCount > 0 && (
+    <div className="relative shrink-0">
+      <button
+        onClick={() => setReviewOpen((o) => !o)}
+        title={`${reviewCount} card${
+          reviewCount === 1 ? "" : "s"
+        } set aside for extra review`}
+        className={`flex items-center gap-1 rounded-full border px-2 py-1 text-xs font-semibold transition ${
+          reviewOnly
+            ? "border-emerald-300 bg-emerald-50 text-emerald-700"
+            : "border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100"
+        }`}
+      >
+        <Sparkles size={12} />
+        {reviewCount}
+      </button>
+      {reviewOpen && (
+        <>
+          <div className="fixed inset-0 z-20" onClick={() => setReviewOpen(false)} />
+          <div className="absolute right-0 top-9 z-30 w-64 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl">
+            <p className="border-b border-slate-100 px-3 py-2 text-xs leading-snug text-slate-500">
+              <b className="text-slate-700">{reviewCount} set aside</b> — cards
+              you missed {STILL_LEARNING_MISSES}+ times, plus notes you starred.
+            </p>
+            <button
+              onClick={() => {
+                setReviewOpen(false);
+                startSession(!reviewOnly);
+              }}
+              className="block w-full px-3 py-2 text-left text-sm text-slate-700 transition hover:bg-slate-50"
+            >
+              {reviewOnly ? "Study the whole deck" : "Study just those"}
+            </button>
+            {troubleKeys.length > 0 && (
+              <button
+                onClick={() => {
+                  clearTroubleList(user?.uid ?? null, baseScope);
+                  setTroubleKeys([]);
+                  setReviewOpen(false);
+                }}
+                className="block w-full px-3 py-2 text-left text-sm text-slate-500 transition hover:bg-slate-50"
+              >
+                Clear misses
+                <span className="block text-[11px] text-slate-400">
+                  Starred notes stay starred
+                </span>
+              </button>
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  );
+
+  /** How this mode grades, on demand instead of as a wall of small print. */
+  const gradingButton = studyMode === "quizlet" && current && (
+    <div className="relative shrink-0">
+      <button
+        onClick={() => setGradingOpen((o) => !o)}
+        title="How this mode grades"
+        className="rounded-full border border-slate-200 bg-white p-1.5 text-slate-500 transition hover:bg-slate-50"
+      >
+        <HelpCircle size={14} />
+      </button>
+      {gradingOpen && (
+        <>
+          <div className="fixed inset-0 z-20" onClick={() => setGradingOpen(false)} />
+          <div className="absolute right-0 top-9 z-30 w-72 rounded-xl border border-slate-200 bg-white p-3 text-xs leading-relaxed text-slate-600 shadow-xl">
+            <p className="mb-2 font-semibold text-slate-800">
+              {mode === "learn" ? "Learn" : "Smart shuffle"}
+            </p>
+            {mode === "learn" ? (
+              <p>
+                Multiple choice until you get a card right, then written — two
+                correct answers master a card, so both formats get asked.
+              </p>
+            ) : (
+              <p>
+                A quick first-try “Got it” retires a card outright; otherwise it
+                comes back once more.
+              </p>
+            )}
+            <p className="mt-2">
+              Misses return within a few cards, then again much later, and each
+              one adds a correct answer before the card can leave.
+            </p>
+            <ul className="mt-2 space-y-1 border-t border-slate-100 pt-2">
+              <li>
+                <Kbd>S</Kbd> star this note for extra review
+              </li>
+              <li>
+                <Kbd>⌘Z</Kbd> undo the last answer
+              </li>
+            </ul>
+            <p className="mt-2 border-t border-slate-100 pt-2 text-slate-400">
+              Your Anki-mode schedule is untouched.
+            </p>
+          </div>
+        </>
+      )}
+    </div>
+  );
+
   const settingsButton = (
     <button
       onClick={() => setShowSettings(true)}
@@ -1313,7 +1438,7 @@ export function StudyBasic() {
   return (
     <Layout>
       {/* One compact line: back · what you're studying · progress · settings */}
-      <div className="mb-4 flex items-center gap-3">
+      <div className="mb-4 flex items-center gap-2 sm:gap-3">
         <BackLink deckId={deckId} navigate={navigate} canGoBack={canGoBack} inline />
         {groupName && (
           <span
@@ -1362,7 +1487,7 @@ export function StudyBasic() {
             </span>
           )}
           {stats.answers > 0 && (
-            <span className="text-xs font-normal text-slate-400">
+            <span className="hidden text-xs font-normal text-slate-400 sm:inline">
               {/* spaces inside the string, or "0/1" and "0%" read as "0/10%" */}
               {" · "}
               {Math.round((stats.correct / stats.answers) * 100)}% correct
@@ -1370,7 +1495,9 @@ export function StudyBasic() {
           )}
         </span>
         <span className="shrink-0">{studyMode === "anki" && <SaveBadge status={saveStatus} />}</span>
+        {reviewButton}
         {starButton}
+        {gradingButton}
         {settingsButton}
       </div>
 
@@ -1671,70 +1798,6 @@ export function StudyBasic() {
         </div>
       )}
 
-      {studyMode === "quizlet" && current && reviewCount > 0 && (
-        <div className="mx-auto mb-3 flex max-w-3xl flex-wrap items-center justify-center gap-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-800">
-          {reviewOnly ? (
-            <>
-              <span>
-                Extra review: <b>{total}</b> card{total === 1 ? "" : "s"} you
-                missed or starred.
-              </span>
-              <button
-                onClick={() => startSession(false)}
-                className="rounded-lg border border-amber-300 bg-white px-2 py-1 font-semibold text-amber-800 hover:bg-amber-100"
-              >
-                Study the whole deck
-              </button>
-            </>
-          ) : (
-            <>
-              <span>
-                <b>{reviewCount}</b> card{reviewCount === 1 ? "" : "s"} set
-                aside for extra review.
-              </span>
-              <button
-                onClick={() => startSession(true)}
-                className="rounded-lg border border-amber-300 bg-white px-2 py-1 font-semibold text-amber-800 hover:bg-amber-100"
-              >
-                Study just those
-              </button>
-              {troubleKeys.length > 0 && (
-                <button
-                  onClick={() => {
-                    clearTroubleList(user?.uid ?? null, baseScope);
-                    setTroubleKeys([]);
-                  }}
-                  title="Forget the misses. Starred notes stay starred."
-                  className="rounded-lg px-2 py-1 font-medium text-amber-700 underline-offset-2 hover:underline"
-                >
-                  Clear misses
-                </button>
-              )}
-            </>
-          )}
-        </div>
-      )}
-
-      {studyMode === "quizlet" && current && mode !== "learn" && (
-        <p className="mt-6 text-center text-xs text-slate-400">
-          Smart shuffle: a quick first-try "Got it" retires a card outright;
-          otherwise it comes back once more. Misses return within a few cards,
-          then again much later, and each one adds a correct answer before the
-          card can leave. <b>S</b> stars a note for extra review, ⌘Z undoes the last
-          answer. Your Anki-mode schedule is untouched.
-        </p>
-      )}
-      {studyMode === "quizlet" && current && mode === "learn" && (
-        <p className="mt-6 text-center text-xs text-slate-400">
-          Learn: multiple choice until you get a card right, then written —
-          two correct answers master a card, so both formats get asked. Each
-          miss adds one more and brings it back later. <b>S</b> stars a note for
-          extra review, ⌘Z undoes the last answer.
-        </p>
-      )}
-
-
-      {/* Sticky action bar — always reachable without scrolling */}
       {current && (
         <>
           {/* spacer so the card never hides behind the fixed bar */}
