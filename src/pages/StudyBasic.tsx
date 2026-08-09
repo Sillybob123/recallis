@@ -32,6 +32,7 @@ import {
   updateCard,
 } from "../lib/firestore";
 import { CardEditorModal } from "../components/CardEditorModal";
+import { Confetti } from "../components/Confetti";
 import { findClozeNumbers } from "../lib/cloze";
 import { buildUnits } from "../lib/shapes";
 import type { Card, OcclusionSheet } from "../types";
@@ -80,11 +81,14 @@ import {
 } from "../lib/siblings";
 import {
   clearCramSession,
+  flushCramSession,
   loadCramSession,
   saveCramSession,
 } from "../lib/cramSession";
 
 const FAST_ANSWER_MS = 7000;
+/** Correct answers a Quizlet card needs before it leaves the session. */
+const MASTERY = 2;
 
 const FORMAT_LABELS: Record<"flip" | "type" | "learn", string> = {
   flip: "Flashcards",
@@ -195,7 +199,9 @@ export function StudyBasic() {
     ? [deckId]
     : (groupIdsParam ?? "").split(",").filter(Boolean);
   const deckScopeKey = deckIds.join(",");
-  const cramScope = `${deckScopeKey}:${cardsOnly ? "cards" : "all"}`;
+  // Deck order depends on how you got here, but it's the same session either
+  // way, so the scope is sorted.
+  const cramScope = `${[...deckIds].sort().join(",")}:${cardsOnly ? "cards" : "all"}`;
   const { user } = useAuth();
   const { studyMode, setStudyMode } = useStudyMode();
   const navigate = useNavigate();
@@ -253,6 +259,8 @@ export function StudyBasic() {
 
   // Session-local memory for the smart Quizlet scheduler.
   const strengthRef = useRef<Map<string, number>>(new Map());
+  const [celebrate, setCelebrate] = useState(false);
+  const celebratedRef = useRef(false);
   const shownAtRef = useRef<number>(Date.now());
   const guessMsRef = useRef<number>(0);
 
@@ -302,28 +310,36 @@ export function StudyBasic() {
     strengthRef.current = new Map();
 
     if (studyMode === "quizlet") {
-      // Resume an unfinished cram session rather than reshuffling from scratch.
-      const saved = loadCramSession(cramScope);
-      if (saved) {
-        const byKey = new Map(all.map((it) => [combinedKey(it), it]));
-        const restored = saved.order
-          .map((k) => byKey.get(k))
-          .filter((it): it is StudyItem => Boolean(it));
-        if (restored.length > 0) {
-          strengthRef.current = new Map(saved.strengths);
-          setQueue(restored);
-          setTotal(Math.max(saved.total, restored.length));
-          setNextDueMs(null);
-          setQueueReady(true);
-          return;
+      let cancelled = false;
+      (async () => {
+        // Resume an unfinished cram run rather than reshuffling from scratch —
+        // from this device, or from wherever it was last touched.
+        const saved = await loadCramSession(user?.uid ?? null, cramScope);
+        if (cancelled) return;
+        if (saved) {
+          const byKey = new Map(all.map((it) => [combinedKey(it), it]));
+          const restored = saved.order
+            .map((k) => byKey.get(k))
+            .filter((it): it is StudyItem => Boolean(it));
+          if (restored.length > 0) {
+            strengthRef.current = new Map(saved.strengths);
+            setQueue(restored);
+            setTotal(Math.max(saved.total, restored.length));
+            setNextDueMs(null);
+            setQueueReady(true);
+            return;
+          }
+          clearCramSession(user?.uid ?? null, cramScope);
         }
-        clearCramSession(cramScope);
-      }
-      const items = spreadSiblings(shuffle(all), ankiSettings.siblingGap);
-      setQueue(items);
-      setTotal(items.length);
-      setNextDueMs(null);
-      setQueueReady(true);
+        const items = spreadSiblings(shuffle(all), ankiSettings.siblingGap);
+        setQueue(items);
+        setTotal(items.length);
+        setNextDueMs(null);
+        setQueueReady(true);
+      })();
+      return () => {
+        cancelled = true;
+      };
     } else {
       let cancelled = false;
       (async () => {
@@ -408,6 +424,22 @@ export function StudyBasic() {
     sessionNonce,
     quizletSettings.answerWith,
   ]);
+
+  // Finishing the deck is the one moment worth marking.
+  useEffect(() => {
+    if (studyMode !== "quizlet" || !queueReady || total === 0) return;
+    if (queue.length > 0) {
+      celebratedRef.current = false;
+      return;
+    }
+    if (!celebratedRef.current) {
+      celebratedRef.current = true;
+      setCelebrate(true);
+    }
+  }, [queue.length, queueReady, studyMode, total]);
+
+  // Leaving mid-deck must not lose the last few answers.
+  useEffect(() => () => void flushCramSession(), []);
 
   const current = queue[0];
   const showMaskToggle = current?.kind === "occlusion";
@@ -510,10 +542,11 @@ export function StudyBasic() {
   function commitCramQueue(next: StudyItem[], sessionTotal: number) {
     setQueue(next);
     if (next.length === 0) {
-      // Finished — nothing about a cram run is worth keeping.
-      clearCramSession(cramScope);
+      // Finished — the run has served its purpose, so it stops costing
+      // storage here and in Firestore.
+      clearCramSession(user?.uid ?? null, cramScope);
     } else {
-      saveCramSession(cramScope, {
+      saveCramSession(user?.uid ?? null, cramScope, {
         order: next.map(combinedKey),
         strengths: [...strengthRef.current.entries()],
         total: sessionTotal,
@@ -545,7 +578,7 @@ export function StudyBasic() {
       const strength = st + (fast ? 2 : 1);
       strengthRef.current.set(current.key, strength);
       nextQueue =
-        strength >= 2
+        strength >= MASTERY
           ? queue.slice(1)
           : reinsert(queue, current, Math.max(8, queue.length - 2));
     }
@@ -568,7 +601,9 @@ export function StudyBasic() {
       const strength = st + 1;
       strengthRef.current.set(current.key, strength);
       nextQueue =
-        strength >= 2 ? queue.slice(1) : reinsert(queue, current, Math.min(6, queue.length));
+        strength >= MASTERY
+          ? queue.slice(1)
+          : reinsert(queue, current, Math.min(6, queue.length));
     }
     commitCramQueue(applySiblingPolicy(nextQueue, current), total);
     resetCardUI();
@@ -618,7 +653,7 @@ export function StudyBasic() {
   }
 
   function restart() {
-    clearCramSession(cramScope);
+    clearCramSession(user?.uid ?? null, cramScope);
     setSessionNonce((n) => n + 1);
     resetCardUI();
   }
@@ -871,7 +906,21 @@ export function StudyBasic() {
     return () => window.removeEventListener("keydown", onKey);
   });
 
-  const progress = total > 0 ? Math.round(((total - queue.length) / total) * 100) : 0;
+  // Quizlet retires a card after MASTERY good answers, so the bar counts those
+  // half-steps. Measuring the queue instead meant answering every card in the
+  // deck correctly once still read 0% — the queue hadn't shrunk, because each
+  // card had been put back for its second pass.
+  const progress = (() => {
+    if (total <= 0) return 0;
+    if (studyMode !== "quizlet") {
+      return Math.round(((total - queue.length) / total) * 100);
+    }
+    let earned = 0;
+    for (const strength of strengthRef.current.values()) {
+      earned += Math.min(strength, MASTERY);
+    }
+    return Math.min(100, Math.round((earned / (total * MASTERY)) * 100));
+  })();
 
   if (!cards || !sheets || !srsMap || !queueReady) {
     return (
@@ -1021,6 +1070,7 @@ export function StudyBasic() {
 
       {!current ? (
         <div className="rounded-2xl border border-emerald-200 bg-emerald-50 py-20 text-center">
+          {celebrate && <Confetti onDone={() => setCelebrate(false)} />}
           <PartyPopper className="mx-auto mb-3 text-emerald-500" size={40} />
           <p className="mb-1 text-lg font-bold text-emerald-800">
             {studyMode === "anki"

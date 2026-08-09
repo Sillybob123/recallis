@@ -714,6 +714,51 @@ export async function setItemTags(
   });
 }
 
+// ---------- Quizlet cram progress (cross-device) ----------
+// A cram run is throwaway compared to the SRS schedule, but it has to survive
+// a refresh, a closed tab, and moving to another device — losing your place
+// halfway through a deck is the thing that makes people start over. The doc is
+// deleted the moment the deck is finished, so nothing accumulates.
+
+export interface CramProgressDoc {
+  order: string[];
+  strengths: [string, number][];
+  total: number;
+  savedAt: number;
+}
+
+function cramDoc(uid: string, id: string) {
+  return doc(db, "users", uid, "cram", id);
+}
+
+export async function saveCramProgress(
+  uid: string,
+  id: string,
+  data: CramProgressDoc
+) {
+  await setDoc(cramDoc(uid, id), { ...data, updatedAt: serverTimestamp() });
+}
+
+export async function fetchCramProgress(
+  uid: string,
+  id: string
+): Promise<CramProgressDoc | null> {
+  const snap = await getDoc(cramDoc(uid, id));
+  if (!snap.exists()) return null;
+  const data = snap.data() as Partial<CramProgressDoc>;
+  if (!Array.isArray(data.order) || data.order.length === 0) return null;
+  return {
+    order: data.order,
+    strengths: (data.strengths ?? []) as [string, number][],
+    total: data.total ?? data.order.length,
+    savedAt: data.savedAt ?? 0,
+  };
+}
+
+export async function deleteCramProgress(uid: string, id: string) {
+  await deleteDoc(cramDoc(uid, id));
+}
+
 // ---------- User settings (cross-device) ----------
 
 export async function fetchUserSettings(
