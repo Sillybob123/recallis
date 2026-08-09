@@ -1,9 +1,11 @@
 import type { SqlJsStatic } from "sql.js";
 import {
+  openApkg,
   parseApkg,
   probeApkg,
   readMediaBytes,
   type ApkgProbe,
+  type OpenApkg,
   type ImportedSchedule,
   type ParsedApkg,
   type ParsedSheet,
@@ -47,18 +49,25 @@ async function loadSqlBrowser(): Promise<SqlJsStatic> {
   return sqlPromise;
 }
 
+/**
+ * Opens a package once. The File is handed straight to JSZip so the bytes
+ * aren't also held as an ArrayBuffer on our side — the difference matters on
+ * a several-hundred-megabyte collection.
+ */
+export async function openApkgInBrowser(file: File) {
+  return openApkg(file, loadSqlBrowser);
+}
+
 export async function parseApkgInBrowser(
-  file: File,
+  pkg: OpenApkg,
   options: { excludeSuspended?: boolean } = {}
 ): Promise<ParsedApkg> {
-  const data = await file.arrayBuffer();
-  return parseApkg(data, loadSqlBrowser, options);
+  return parseApkg(pkg, options);
 }
 
 /** Fast look at a package's contents before committing to a full parse. */
-export async function probeApkgInBrowser(file: File): Promise<ApkgProbe> {
-  const data = await file.arrayBuffer();
-  return probeApkg(data, loadSqlBrowser);
+export async function probeApkgInBrowser(pkg: OpenApkg): Promise<ApkgProbe> {
+  return probeApkg(pkg);
 }
 
 export interface ApkgImportProgress {
@@ -174,8 +183,9 @@ function stripSoundTags(html: string): string {
 
 async function loadImageDims(bytes: Uint8Array, name: string): Promise<{ w: number; h: number }> {
   const type = contentTypeForFilename(name) ?? "image/png";
-  const buf = new Uint8Array(bytes).buffer as ArrayBuffer;
-  const blob = new Blob([buf], { type });
+  // Blob copies the view itself; wrapping it in another Uint8Array first
+  // would double the peak memory for every image in a big package.
+  const blob = new Blob([bytes as unknown as BlobPart], { type });
   const url = URL.createObjectURL(blob);
   try {
     return await new Promise((resolve, reject) => {
@@ -411,8 +421,9 @@ export async function importParsedApkg(
     }
     const ext = sheet.imageName.split(".").pop() || "png";
     const type = contentTypeForFilename(sheet.imageName) ?? "image/png";
-    const buf = new Uint8Array(bytes).buffer as ArrayBuffer;
-    const asFile = new File([buf], `import.${ext}`, { type });
+    const asFile = new File([bytes as unknown as BlobPart], `import.${ext}`, {
+      type,
+    });
     const { path, url } = await retry(
       () => uploadOcclusionImage(uid, target.deckId, asFile),
       { signal: opts.signal }

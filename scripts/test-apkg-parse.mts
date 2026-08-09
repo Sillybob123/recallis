@@ -1,12 +1,12 @@
-import { readFileSync } from "node:fs";
 import initSqlJs from "sql.js";
 import { parseApkg, readMediaBytes } from "/Users/yairben-dor/XCode/MedicalQuizlet/src/lib/apkgParse";
 
-const data = readFileSync("/Users/yairben-dor/XCode/MedicalQuizlet/example of decks/AnatomyApkcg.apkg");
-const parsed = await parseApkg(
-  data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) as ArrayBuffer,
-  () => initSqlJs()
+const { openAsBlob } = await import("node:fs");
+const { openApkg } = await import("/Users/yairben-dor/XCode/MedicalQuizlet/src/lib/apkgParse");
+const blob = await openAsBlob(
+  "/Users/yairben-dor/XCode/MedicalQuizlet/example of decks/AnatomyApkcg.apkg"
 );
+const parsed = await parseApkg(await openApkg(blob, () => initSqlJs()));
 
 console.log("stats:", JSON.stringify(parsed.stats, null, 1));
 console.log("\ndecks:");

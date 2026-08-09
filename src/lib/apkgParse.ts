@@ -8,6 +8,7 @@ import type { Database, SqlJsStatic } from "sql.js";
 import type { CardData, OcclusionShape } from "../types";
 import { uid } from "./uid";
 import { normalizeTags, parseTagString } from "./tags";
+import { BlobZip, supportsBlobZip } from "./blobZip";
 
 export interface ParsedSheet {
   /** the note's Anki tags, normalized */
@@ -68,7 +69,8 @@ export interface ParsedApkg {
   mediaIndex: Map<string, string>;
   /** modern format = media files are individually zstd-compressed */
   zstdMedia: boolean;
-  zip: JSZip;
+  /** kept so media can be read lazily, one entry at a time */
+  pkg: OpenApkg;
   stats: {
     cloze: number;
     basic: number;
@@ -153,12 +155,11 @@ function parseMediaProtobuf(raw: Uint8Array): string[] {
 }
 
 async function buildMediaIndex(
-  zip: JSZip
+  pkg: OpenApkg
 ): Promise<{ index: Map<string, string>; zstdMedia: boolean }> {
   const index = new Map<string, string>();
-  const mediaFile = zip.file("media");
-  if (!mediaFile) return { index, zstdMedia: false };
-  const raw = new Uint8Array(await mediaFile.async("arraybuffer"));
+  const raw = await pkg.readEntry("media");
+  if (!raw) return { index, zstdMedia: false };
   if (isZstd(raw)) {
     const names = parseMediaProtobuf(zstdDecompress(raw));
     names.forEach((name, i) => index.set(name, String(i)));
@@ -173,14 +174,13 @@ async function buildMediaIndex(
 }
 
 export async function readMediaBytes(
-  parsed: Pick<ParsedApkg, "zip" | "mediaIndex" | "zstdMedia">,
+  parsed: Pick<ParsedApkg, "pkg" | "mediaIndex" | "zstdMedia">,
   name: string
 ): Promise<Uint8Array | null> {
   const entry = parsed.mediaIndex.get(name);
   if (entry === undefined) return null;
-  const file = parsed.zip.file(entry);
-  if (!file) return null;
-  const raw = new Uint8Array(await file.async("arraybuffer"));
+  const raw = await parsed.pkg.readEntry(entry);
+  if (!raw) return null;
   return parsed.zstdMedia ? maybeDecompress(raw) : raw;
 }
 
@@ -441,30 +441,71 @@ function classifyNotetype(name: string): NoteTypeInfo["kind"] {
   return "basic";
 }
 
-/** Opens the package and returns its zip plus the decompressed collection DB. */
-async function openPackage(
-  data: ArrayBuffer,
+/**
+ * An opened package. Reading a multi-hundred-megabyte export is the single
+ * biggest memory cost here, so the caller opens it once and hands the same
+ * handle to the probe, the parse, and every media read.
+ */
+export interface OpenApkg {
+  /** reads one entry by name, or null when it isn't in the archive */
+  readEntry: (name: string) => Promise<Uint8Array | null>;
+  /** every entry name, for the media map fallback */
+  names: () => string[];
+  loadSql: () => Promise<SqlJsStatic>;
+}
+
+/**
+ * Opens a package for reading.
+ *
+ * Given a Blob on a browser that can inflate natively, only the ZIP directory
+ * is read up front and entries are sliced out on demand — a 1 GB collection
+ * never has to sit in memory. Otherwise JSZip loads the archive as before.
+ */
+export async function openApkg(
+  source: Blob | ArrayBuffer,
   loadSql: () => Promise<SqlJsStatic>
-): Promise<{ zip: JSZip; db: Database }> {
-  const zip = await JSZip.loadAsync(data);
-  const modern = zip.file("collection.anki21b");
-  const legacy21 = zip.file("collection.anki21");
-  const legacy2 = zip.file("collection.anki2");
-  let dbBytes: Uint8Array | null = null;
-  if (modern) {
-    dbBytes = maybeDecompress(new Uint8Array(await modern.async("arraybuffer")));
-  } else if (legacy21) {
-    dbBytes = new Uint8Array(await legacy21.async("arraybuffer"));
-  } else if (legacy2) {
-    dbBytes = new Uint8Array(await legacy2.async("arraybuffer"));
+): Promise<OpenApkg> {
+  if (source instanceof Blob && supportsBlobZip()) {
+    try {
+      const zip = await BlobZip.open(source);
+      return {
+        readEntry: (name) => zip.read(name),
+        names: () => [...zip.entries.keys()],
+        loadSql,
+      };
+    } catch {
+      // Unusual archive layout — fall back to the full reader below.
+    }
   }
-  if (!dbBytes) {
+  const zip = await JSZip.loadAsync(source);
+  return {
+    readEntry: async (name) => {
+      const file = zip.file(name);
+      return file ? await file.async("uint8array") : null;
+    },
+    names: () => Object.keys(zip.files),
+    loadSql,
+  };
+}
+
+/** Opens the collection database. Callers must close it when finished. */
+async function openDb(pkg: OpenApkg): Promise<Database> {
+  let bytes: Uint8Array | null = null;
+  for (const name of ["collection.anki21b", "collection.anki21", "collection.anki2"]) {
+    bytes = await pkg.readEntry(name);
+    if (bytes) break;
+  }
+  if (!bytes) {
     throw new Error(
       "No Anki database found in this file — is it a .apkg/.colpkg export?"
     );
   }
-  const SQL = await loadSql();
-  return { zip, db: new SQL.Database(dbBytes) };
+  if (isZstd(bytes)) bytes = zstdDecompress(bytes);
+  const SQL = await pkg.loadSql();
+  const db = new SQL.Database(bytes);
+  // sql.js has copied the bytes into wasm memory; let the JS copy go.
+  bytes = null;
+  return db;
 }
 
 export interface ApkgProbe {
@@ -487,11 +528,8 @@ export interface ApkgProbe {
  * otherwise dominate. Running this first is what lets the dialog offer the
  * suspended choice before any of the expensive work begins.
  */
-export async function probeApkg(
-  data: ArrayBuffer,
-  loadSql: () => Promise<SqlJsStatic>
-): Promise<ApkgProbe> {
-  const { db } = await openPackage(data, loadSql);
+export async function probeApkg(pkg: OpenApkg): Promise<ApkgProbe> {
+  const db = await openDb(pkg);
   try {
     const one = (sql: string): number => {
       try {
@@ -534,36 +572,14 @@ export async function probeApkg(
 }
 
 export async function parseApkg(
-  data: ArrayBuffer,
-  loadSql: () => Promise<SqlJsStatic>,
+  pkg: OpenApkg,
   options: { excludeSuspended?: boolean } = {}
 ): Promise<ParsedApkg> {
-  const zip = await JSZip.loadAsync(data);
   const warnings: string[] = [];
 
-  // Prefer the modern DB when present (legacy collection.anki2 in modern
-  // packages is a stub that just says "please upgrade").
-  let dbBytes: Uint8Array | null = null;
-  const modern = zip.file("collection.anki21b");
-  const legacy21 = zip.file("collection.anki21");
-  const legacy2 = zip.file("collection.anki2");
-  if (modern) {
-    dbBytes = maybeDecompress(new Uint8Array(await modern.async("arraybuffer")));
-  } else if (legacy21) {
-    dbBytes = new Uint8Array(await legacy21.async("arraybuffer"));
-  } else if (legacy2) {
-    dbBytes = new Uint8Array(await legacy2.async("arraybuffer"));
-  }
-  if (!dbBytes) {
-    throw new Error(
-      "No Anki database found in this file — is it a .apkg/.colpkg export?"
-    );
-  }
+  const db: Database = await openDb(pkg);
 
-  const { index: mediaIndex, zstdMedia } = await buildMediaIndex(zip);
-
-  const SQL = await loadSql();
-  const db: Database = new SQL.Database(dbBytes);
+  const { index: mediaIndex, zstdMedia } = await buildMediaIndex(pkg);
 
   try {
     const tableNames = new Set<string>();
@@ -856,7 +872,7 @@ export async function parseApkg(
         warnings.push(`Occlusion group ${prefix}: missing image or mask reference.`);
         continue;
       }
-      const svgBytes = await readMediaBytes({ zip, mediaIndex, zstdMedia }, maskSvgName);
+      const svgBytes = await readMediaBytes({ pkg, mediaIndex, zstdMedia }, maskSvgName);
       if (!svgBytes) {
         stats.skippedNotes += notes.length;
         warnings.push(
@@ -905,7 +921,7 @@ export async function parseApkg(
       ),
       mediaIndex,
       zstdMedia,
-      zip,
+      pkg,
       stats,
     };
   } finally {

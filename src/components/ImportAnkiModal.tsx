@@ -3,12 +3,13 @@ import { FileUp, X } from "lucide-react";
 import { importAnkiText, ankiDeckToName, type AnkiImportResult } from "../lib/ankiImport";
 import { createCardsBulk, createDeck } from "../lib/firestore";
 import {
+  openApkgInBrowser,
   parseApkgInBrowser,
   probeApkgInBrowser,
   importParsedApkg,
   type ApkgImportProgress,
 } from "../lib/apkgImport";
-import type { ApkgProbe } from "../lib/apkgParse";
+import type { ApkgProbe, OpenApkg } from "../lib/apkgParse";
 
 const COLORS = ["#6366f1", "#0ea5e9", "#10b981", "#f59e0b", "#ef4444", "#a855f7", "#ec4899"];
 
@@ -21,11 +22,12 @@ export function ImportAnkiModal({
 }) {
   const [fileName, setFileName] = useState("");
   const [txtResult, setTxtResult] = useState<AnkiImportResult | null>(null);
-  const [pkgFile, setPkgFile] = useState<File | null>(null);
+  const [pkg, setPkg] = useState<OpenApkg | null>(null);
   const [probe, setProbe] = useState<ApkgProbe | null>(null);
   const [includeSuspended, setIncludeSuspended] = useState(false);
   const [parseError, setParseError] = useState("");
   const [parsing, setParsing] = useState(false);
+  const [largeNotice, setLargeNotice] = useState("");
   const [split, setSplit] = useState(true);
   const [importSchedule, setImportSchedule] = useState(true);
   const [singleName, setSingleName] = useState("");
@@ -39,29 +41,31 @@ export function ImportAnkiModal({
     setFileName(f.name);
     setParseError("");
     setTxtResult(null);
-    setPkgFile(null);
+    setPkg(null);
     setProbe(null);
     setParsing(true);
     try {
       const isPackage = /\.(apkg|colpkg)$/i.test(f.name);
       if (isPackage) {
-        if (f.size > 400 * 1024 * 1024) {
-          setParseError(
-            "That package is very large (probably a whole-collection .colpkg). The browser may run out of memory unpacking it. In Anki, use File → Export → Anki Deck Package (.apkg) for just the deck you want, with 'Include media' checked — it'll be much smaller."
-          );
-          setParsing(false);
-          return;
-        }
+        // Large packages are read straight off disk a piece at a time, so
+        // size is no longer a barrier — this is just a heads-up about how long
+        // uploading the media will take.
+        setLargeNotice(
+          f.size > 300 * 1024 * 1024
+            ? `This package is ${(f.size / 1024 / 1024 / 1024).toFixed(1)} GB. It's read in place rather than loaded into memory, so it will open quickly — but uploading images for whatever you import still takes a while, so keep this tab open.`
+            : ""
+        );
         // Counts only: fields, media and masks are untouched. That keeps this
         // quick even on a whole-collection export and, more importantly, lets
         // the suspended choice be made before the costly work starts.
-        const info = await probeApkgInBrowser(f);
+        const opened = await openApkgInBrowser(f);
+        const info = await probeApkgInBrowser(opened);
         if (info.totalNotes === 0) {
           setParseError("No importable cards or occlusion sheets found in this package.");
           setParsing(false);
           return;
         }
-        setPkgFile(f);
+        setPkg(opened);
         setProbe(info);
         setIncludeSuspended(info.suspendedNotes === 0);
       } else {
@@ -90,10 +94,10 @@ export function ImportAnkiModal({
     setBusy(true);
     setParseError("");
     try {
-      if (pkgFile && probe) {
+      if (pkg && probe) {
         abortRef.current = new AbortController();
         setProgress({ stage: "Reading the package…", done: 0, total: 0 });
-        const parsed = await parseApkgInBrowser(pkgFile, {
+        const parsed = await parseApkgInBrowser(pkg, {
           excludeSuspended: !includeSuspended,
         });
         if (parsed.decks.length === 0) {
@@ -270,6 +274,12 @@ export function ImportAnkiModal({
                 onChange={(e) => e.target.files?.[0] && handleFile(e.target.files[0])}
               />
             </label>
+
+            {largeNotice && (
+              <p className="mb-3 rounded-lg border border-sky-200 bg-sky-50 p-3 text-sm text-sky-800">
+                {largeNotice}
+              </p>
+            )}
 
             {parseError && (
               <p className="mb-3 rounded-lg border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">

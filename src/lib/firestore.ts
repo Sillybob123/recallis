@@ -845,8 +845,11 @@ export async function uploadDeckMedia(
   const ext = filename.split(".").pop() || "png";
   const path = `users/${uid}/decks/${deckId}/media/${newId()}.${ext}`;
   const storageRef = ref(storage, path);
-  const buf = new Uint8Array(bytes).buffer as ArrayBuffer;
-  await uploadBytes(storageRef, buf, { contentType });
+  // Upload the view directly — copying it first would double peak memory
+  // on a package full of images.
+  await uploadBytes(storageRef, bytes as unknown as Uint8Array<ArrayBuffer>, {
+    contentType,
+  });
   const url = await getDownloadURL(storageRef);
   return { path, url };
 }
