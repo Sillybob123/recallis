@@ -1,6 +1,32 @@
 // Parses Anki-style cloze syntax: {{c1::answer}} or {{c1::answer::hint}}
 
+import type { CardData } from "../types";
+
 const CLOZE_RE = /\{\{c(\d+)::(.*?)(?:::(.*?))?\}\}/gs;
+const HAS_CLOZE_RE = /\{\{c\d+::/;
+
+export function hasClozeMarkup(text: string): boolean {
+  return HAS_CLOZE_RE.test(text);
+}
+
+/**
+ * Treats a basic card whose front carries cloze markup as the cloze card it
+ * obviously is.
+ *
+ * Imports used to decide cloze-ness from the note type's *name*, so a deck
+ * whose type was called "Basic-000c0" landed here as a basic card with a
+ * literal "{{c1::6-10}}" on its front. The importer looks at the content now,
+ * but cards stored before that would still read as raw markup — this repairs
+ * them on the way to the screen, without rewriting anything on disk.
+ */
+export function normalizeCardData(data: CardData): CardData {
+  if (data.type !== "basic" || !hasClozeMarkup(data.front)) return data;
+  return {
+    type: "cloze",
+    text: data.front,
+    extra: data.back || undefined,
+  };
+}
 
 export interface ClozeMatch {
   full: string;

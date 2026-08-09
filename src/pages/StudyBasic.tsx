@@ -1033,10 +1033,15 @@ export function StudyBasic() {
         {groupName && (
           <span
             className="hidden max-w-[16rem] truncate text-sm font-semibold text-slate-500 sm:inline"
-            title={`${groupName} — ${deckIds.length} decks pooled`}
+            title={`${groupName} — ${deckIds.length} deck${
+              deckIds.length === 1 ? "" : "s"
+            } pooled`}
           >
             {groupName}
-            <span className="font-normal text-slate-400"> · {deckIds.length} decks</span>
+            <span className="font-normal text-slate-400">
+              {" · "}
+              {deckIds.length} deck{deckIds.length === 1 ? "" : "s"}
+            </span>
           </span>
         )}
         <div className="h-2 min-w-[6rem] flex-1 overflow-hidden rounded-full bg-slate-200">
@@ -1058,7 +1063,9 @@ export function StudyBasic() {
           {total - queue.length}/{total}
           {stats.answers > 0 && (
             <span className="ml-2 text-xs font-normal text-slate-400">
-              {Math.round((stats.correct / stats.answers) * 100)}%
+              {/* separated, or "0/1" and "0%" read as one number */}
+              {"· "}
+              {Math.round((stats.correct / stats.answers) * 100)}% correct
             </span>
           )}
         </span>

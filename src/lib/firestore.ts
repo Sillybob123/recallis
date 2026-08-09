@@ -24,6 +24,7 @@ import {
   listAll,
 } from "firebase/storage";
 import { db, storage } from "../firebase";
+import { normalizeCardData } from "./cloze";
 import type { Card, CardData, Deck, OcclusionSheet, OcclusionShape } from "../types";
 
 function toMillis(v: unknown): number {
@@ -383,7 +384,9 @@ export function watchCards(
           createdAt: toMillis(data.createdAt),
           updatedAt: toMillis(data.updatedAt),
           stats: data.stats ?? { correct: 0, incorrect: 0 },
-          data: data.data as CardData,
+          // Cards imported before cloze detection looked at the content are
+          // stored as basic with the markup intact; read them as what they are.
+          data: normalizeCardData(data.data as CardData),
         } as Card;
       })
     );
@@ -401,7 +404,7 @@ export async function getCardsOnce(uid: string, deckId: string): Promise<Card[]>
       createdAt: toMillis(data.createdAt),
       updatedAt: toMillis(data.updatedAt),
       stats: data.stats ?? { correct: 0, incorrect: 0 },
-      data: data.data as CardData,
+      data: normalizeCardData(data.data as CardData),
     } as Card;
   });
 }

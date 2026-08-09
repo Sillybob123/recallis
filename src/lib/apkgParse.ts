@@ -840,24 +840,27 @@ export async function parseApkg(
         continue;
       }
       // cloze / basic
-      const first = (note.fields[0] ?? "").trim();
-      const second = (note.fields[1] ?? "").trim();
-      if (!first) {
-        stats.skippedNotes++;
-        continue;
-      }
+      //
+      // The content decides, not the note type's name. Decks in the wild
+      // routinely carry cloze notes on a type called "Basic-000c0" or
+      // "MCATClozeVocab" — matching on the name alone turned those into
+      // basic cards showing a literal "{{c1::6-10}}" on the front. Occlusion
+      // note types never reach here, so their cloze syntax is unaffected.
+      const fields = note.fields.map((f) => (f ?? "").trim());
       const schedule = schedules.get(note.id);
-      if (kind === "cloze" && /\{\{c\d+::/.test(first)) {
+      const clozeIdx = fields.findIndex((f) => /\{\{c\d+::/.test(f));
+      if (clozeIdx >= 0) {
+        const extra = fields.find((f, i) => i !== clozeIdx && f);
         deckFor(note.deckName).cards.push({
-          data: { type: "cloze", text: first, extra: second || undefined },
+          data: { type: "cloze", text: fields[clozeIdx], extra: extra || undefined },
           schedule,
           tags: note.tags,
           importId: `anki:${note.id}`,
         });
         stats.cloze++;
-      } else if (second) {
+      } else if (fields[0] && fields[1]) {
         deckFor(note.deckName).cards.push({
-          data: { type: "basic", front: first, back: second },
+          data: { type: "basic", front: fields[0], back: fields[1] },
           schedule,
           tags: note.tags,
           importId: `anki:${note.id}`,

@@ -1,5 +1,10 @@
 import type { Card, OcclusionSheet } from "../types";
-import { findClozeNumbers, renderClozeAnswer, renderClozeQuestion } from "./cloze";
+import {
+  findClozeNumbers,
+  normalizeCardData,
+  renderClozeAnswer,
+  renderClozeQuestion,
+} from "./cloze";
 import { buildUnits, type ShapeUnit } from "./shapes";
 import { stripHtml } from "./text";
 
@@ -29,7 +34,8 @@ export function buildTextItems(
   opts: { answerWithTerm?: boolean } = {}
 ): StudyItem[] {
   const items: StudyItem[] = [];
-  for (const card of cards) {
+  for (const raw of cards) {
+    const card = { ...raw, data: normalizeCardData(raw.data) };
     if (card.data.type === "basic") {
       // "Answer with term" flips the card: the definition becomes the
       // question and the term is what you answer with (Quizlet's toggle).
