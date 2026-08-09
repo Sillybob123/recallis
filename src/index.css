@@ -157,16 +157,25 @@ body {
   display: inline-block;
   padding: 0 0.4em;
   border-radius: 0.35rem;
-  background: #e0e7ff;
-  color: #4338ca;
+  background: var(--cloze-blank-bg, #e0e7ff);
+  color: var(--cloze-blank-fg, #4338ca);
   font-weight: 700;
 }
 .cloze-answer {
   border-radius: 0.35rem;
-  background: #d1fae5;
-  color: #047857;
+  background: var(--cloze-answer-bg, #d1fae5);
+  color: var(--cloze-answer-fg, #047857);
   font-weight: 700;
   padding: 0 0.25em;
+}
+
+/*
+ * Anki note types frequently colour cloze text inline — often a near-white
+ * green that's unreadable here. Inside a revealed cloze our own colour wins.
+ */
+.cloze-answer [style*="color"],
+.cloze-answer font[color] {
+  color: inherit !important;
 }
 
 ::selection {

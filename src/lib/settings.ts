@@ -23,6 +23,48 @@ export interface AnkiSettings {
   siblingMode: SiblingMode;
   /** cards to keep between siblings when dispersing */
   siblingGap: number;
+  /** highlight used for the revealed cloze answer */
+  clozeAnswerColor: ClozeColorKey;
+  /** highlight used for the blank on the question side */
+  clozeBlankColor: ClozeColorKey;
+}
+
+export type ClozeColorKey =
+  | "green"
+  | "indigo"
+  | "blue"
+  | "amber"
+  | "rose"
+  | "violet"
+  | "slate";
+
+/**
+ * Background/foreground pairs for cloze highlights. Anki note types often
+ * ship near-fluorescent colors that survive the import; these are picked to
+ * stay legible against the card background.
+ */
+export const CLOZE_COLORS: Record<
+  ClozeColorKey,
+  { label: string; bg: string; fg: string }
+> = {
+  green: { label: "Green", bg: "#d1fae5", fg: "#047857" },
+  indigo: { label: "Indigo", bg: "#e0e7ff", fg: "#4338ca" },
+  blue: { label: "Blue", bg: "#dbeafe", fg: "#1d4ed8" },
+  amber: { label: "Amber", bg: "#fef3c7", fg: "#b45309" },
+  rose: { label: "Rose", bg: "#ffe4e6", fg: "#be123c" },
+  violet: { label: "Violet", bg: "#ede9fe", fg: "#6d28d9" },
+  slate: { label: "Subtle", bg: "#e2e8f0", fg: "#334155" },
+};
+
+/** Pushes the chosen cloze colors to the CSS variables the styles read. */
+export function applyClozeColors(settings: AnkiSettings) {
+  const root = document.documentElement;
+  const answer = CLOZE_COLORS[settings.clozeAnswerColor] ?? CLOZE_COLORS.green;
+  const blank = CLOZE_COLORS[settings.clozeBlankColor] ?? CLOZE_COLORS.indigo;
+  root.style.setProperty("--cloze-answer-bg", answer.bg);
+  root.style.setProperty("--cloze-answer-fg", answer.fg);
+  root.style.setProperty("--cloze-blank-bg", blank.bg);
+  root.style.setProperty("--cloze-blank-fg", blank.fg);
 }
 
 export const DEFAULT_ANKI_SETTINGS: AnkiSettings = {
@@ -36,6 +78,8 @@ export const DEFAULT_ANKI_SETTINGS: AnkiSettings = {
   desiredRetentionPct: 90,
   siblingMode: "disperse",
   siblingGap: 10,
+  clozeAnswerColor: "green",
+  clozeBlankColor: "indigo",
 };
 
 export type GradingLevel = "relaxed" | "moderate" | "strict";
@@ -76,6 +120,7 @@ export function loadAnkiSettings(): AnkiSettings {
 
 export function saveAnkiSettings(s: AnkiSettings) {
   localStorage.setItem("ankiSettings", JSON.stringify(s));
+  applyClozeColors(s);
   pushSettingsRemote();
 }
 
@@ -127,6 +172,7 @@ export async function initSettingsSync(uid: string) {
           JSON.stringify({ ...DEFAULT_QUIZLET_SETTINGS, ...remote.quizlet })
         );
       }
+      applyClozeColors(loadAnkiSettings());
     } else {
       // First device to sync seeds the doc with what it has locally.
       pushSettingsRemote();

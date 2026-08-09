@@ -275,6 +275,35 @@ export function ImportAnkiModal({
               />
             </label>
 
+            <details className="mb-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+              <summary className="cursor-pointer font-semibold text-slate-700">
+                Exporting just the cards you're studying
+              </summary>
+              <ol className="mt-2 list-decimal space-y-1 pl-4 leading-relaxed">
+                <li>
+                  In Anki open <b>Browse</b> and search{" "}
+                  <code className="rounded bg-white px-1 py-0.5 font-mono">
+                    deck:YourDeck -is:suspended
+                  </code>
+                </li>
+                <li>
+                  Select all (<b>⌘A</b> / Ctrl+A) → right-click →{" "}
+                  <b>Notes → Export Notes</b>
+                </li>
+                <li>
+                  Choose <b>Anki Deck Package (.apkg)</b>, tick{" "}
+                  <b>Include media</b> and <b>Include scheduling</b>
+                </li>
+              </ol>
+              <p className="mt-2 leading-relaxed">
+                Import that here. Next week, export the same way and import
+                again — notes already here are recognized by their Anki id and
+                skipped, so only the new ones are added and only genuinely
+                changed due dates are written. You can also just export the
+                whole deck and pick <b>Only unsuspended</b> below.
+              </p>
+            </details>
+
             {largeNotice && (
               <p className="mb-3 rounded-lg border border-sky-200 bg-sky-50 p-3 text-sm text-sky-800">
                 {largeNotice}

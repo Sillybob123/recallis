@@ -14,6 +14,7 @@ import {
   getDocs,
   getDoc,
   setDoc,
+  getCountFromServer,
 } from "firebase/firestore";
 import {
   ref,
@@ -623,6 +624,79 @@ export async function uploadNoteSlide(
   await uploadBytes(storageRef, blob, { contentType });
   const url = await getDownloadURL(storageRef);
   return { path, url };
+}
+
+/**
+ * Looks up existing cards by their import identity, in `in` batches of 30.
+ * Re-importing a growing deck only needs to ask about the notes actually in
+ * the package, instead of reading every card in the deck.
+ */
+export async function findCardsByImportIds(
+  uid: string,
+  deckId: string,
+  importIds: string[]
+): Promise<Map<string, { id: string; tags: string[] }>> {
+  const found = new Map<string, { id: string; tags: string[] }>();
+  const unique = [...new Set(importIds.filter(Boolean))];
+  for (let i = 0; i < unique.length; i += 30) {
+    const chunk = unique.slice(i, i + 30);
+    const snap = await getDocs(
+      query(cardsCol(uid, deckId), where("importId", "in", chunk))
+    );
+    for (const d of snap.docs) {
+      const data = d.data();
+      found.set(String(data.importId), {
+        id: d.id,
+        tags: (data.tags as string[] | undefined) ?? [],
+      });
+    }
+  }
+  return found;
+}
+
+/** Same targeted lookup for occlusion sheets. */
+export async function findSheetsByImportIds(
+  uid: string,
+  deckId: string,
+  importIds: string[]
+): Promise<Map<string, string>> {
+  const found = new Map<string, string>();
+  const unique = [...new Set(importIds.filter(Boolean))];
+  for (let i = 0; i < unique.length; i += 30) {
+    const chunk = unique.slice(i, i + 30);
+    const snap = await getDocs(
+      query(occlusionsCol(uid, deckId), where("importId", "in", chunk))
+    );
+    for (const d of snap.docs) {
+      found.set(String(d.data().importId), d.id);
+    }
+  }
+  return found;
+}
+
+/**
+ * Counts items in a deck that predate import ids.
+ *
+ * Re-import matches on import id, which is cheap. Falling back to a full
+ * content scan is only justified when the deck actually holds items an id
+ * lookup can never find — two aggregate queries answer that without reading
+ * a single document.
+ */
+export async function countItemsWithoutImportId(
+  uid: string,
+  deckId: string
+): Promise<number> {
+  let missing = 0;
+  for (const col of [cardsCol(uid, deckId), occlusionsCol(uid, deckId)]) {
+    // `!=` excludes documents where the field is absent, which is exactly
+    // what "written before import ids" looks like.
+    const [total, withIds] = await Promise.all([
+      getCountFromServer(col),
+      getCountFromServer(query(col, where("importId", "!=", null))),
+    ]);
+    missing += total.data().count - withIds.data().count;
+  }
+  return missing;
 }
 
 /** Replaces a card's or sheet's tag list. */

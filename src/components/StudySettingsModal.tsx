@@ -1,11 +1,13 @@
 import { useState, type ReactNode } from "react";
 import { X } from "lucide-react";
 import {
+  CLOZE_COLORS,
   formatSteps,
   parseSteps,
   saveAnkiSettings,
   saveQuizletSettings,
   type AnkiSettings,
+  type ClozeColorKey,
   type QuizletSettings,
 } from "../lib/settings";
 import type { StudyMode } from "../contexts/StudyModeContext";
@@ -145,6 +147,8 @@ export function StudySettingsModal({
                   Caps how far ahead a card can ever be scheduled.
                 </p>
               </Card>
+
+              <ClozeColorSettings a={a} setA={setA} />
             </div>
           ) : (
             <div className="grid gap-5 md:grid-cols-2">
@@ -237,6 +241,8 @@ export function StudySettingsModal({
                   />
                 </div>
               </Card>
+
+              <ClozeColorSettings a={a} setA={setA} />
             </div>
           )}
         </div>
@@ -324,6 +330,87 @@ function SiblingSettings({
           />
         </div>
       )}
+    </Card>
+  );
+}
+
+/**
+ * Cloze highlight colors. Shared by both study modes — the same note renders
+ * in each — so editing it here edits it everywhere.
+ */
+function ClozeColorSettings({
+  a,
+  setA,
+}: {
+  a: AnkiSettings;
+  setA: (s: AnkiSettings) => void;
+}) {
+  const keys = Object.keys(CLOZE_COLORS) as ClozeColorKey[];
+  const rows = [
+    {
+      label: "Answer (after you flip)",
+      value: a.clozeAnswerColor,
+      set: (k: ClozeColorKey) => setA({ ...a, clozeAnswerColor: k }),
+      sample: "answer text",
+    },
+    {
+      label: "Blank (before you flip)",
+      value: a.clozeBlankColor,
+      set: (k: ClozeColorKey) => setA({ ...a, clozeBlankColor: k }),
+      sample: "[...]",
+    },
+  ];
+  return (
+    <Card title="Cloze colors" className="md:col-span-2">
+      <p className="mb-3 text-xs leading-snug text-slate-500">
+        Some Anki decks use colors that are hard to read here. These apply to
+        both study modes.
+      </p>
+      <div className="space-y-4">
+        {rows.map((row) => (
+          <div key={row.label}>
+            <div className="mb-2 flex items-center gap-2">
+              <span className="text-sm font-medium text-slate-700">
+                {row.label}
+              </span>
+              <span
+                className="rounded px-1.5 py-0.5 text-sm font-bold"
+                style={{
+                  background: CLOZE_COLORS[row.value].bg,
+                  color: CLOZE_COLORS[row.value].fg,
+                }}
+              >
+                {row.sample}
+              </span>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {keys.map((k) => (
+                <button
+                  key={k}
+                  type="button"
+                  title={CLOZE_COLORS[k].label}
+                  aria-label={CLOZE_COLORS[k].label}
+                  aria-pressed={row.value === k}
+                  onClick={() => row.set(k)}
+                  className={`h-8 w-8 rounded-lg border-2 transition ${
+                    row.value === k
+                      ? "border-slate-800"
+                      : "border-transparent hover:border-slate-300"
+                  }`}
+                  style={{ background: CLOZE_COLORS[k].bg }}
+                >
+                  <span
+                    className="text-sm font-bold"
+                    style={{ color: CLOZE_COLORS[k].fg }}
+                  >
+                    A
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
     </Card>
   );
 }

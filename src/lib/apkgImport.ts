@@ -17,7 +17,11 @@ import { newSrsState, type SrsState } from "./srs";
 import { startOfStudyDay } from "./settings";
 import {
   contentTypeForFilename,
+  countItemsWithoutImportId,
   createCardsBulk,
+  findCardsByImportIds,
+  findSheetsByImportIds,
+  getSrsMap,
   setItemTags,
   listDecksOnce,
   getCardsOnce,
@@ -155,6 +159,23 @@ function srsFromAnki(entry: ImportedSchedule): SrsState {
   };
 }
 
+/**
+ * Whether a stored schedule already matches what the package says. A new card
+ * has no due date worth comparing — `newSrsState` stamps it with the current
+ * time — so identity there is just "still new, still parked".
+ */
+function sameSchedule(current: SrsState, next: SrsState, isNew: boolean): boolean {
+  if (Boolean(current.suspended) !== Boolean(next.suspended)) return false;
+  if (isNew) return current.reps === 0 && current.phase === next.phase;
+  return (
+    current.phase === next.phase &&
+    current.due === next.due &&
+    current.ivl === next.ivl &&
+    current.reps === next.reps &&
+    current.lapses === next.lapses
+  );
+}
+
 function nextDayStartFrom(now: number): number {
   const d = new Date(now);
   d.setHours(4, 0, 0, 0);
@@ -242,7 +263,11 @@ export async function importParsedApkg(
     /** current tags of existing cards, so re-imports can union rather than wipe */
     cardTagsById: Map<string, string[]>;
     sheetIndex: Map<string, string>;
-    indexed: boolean;
+    /** existing scheduling, so unchanged cards aren't rewritten */
+    srs: Map<string, SrsState>;
+    /** true once content-based matching is either done or known unnecessary */
+    legacyIndexed: boolean;
+    srsLoaded: boolean;
   }
 
   let colorIdx = 0;
@@ -262,9 +287,10 @@ export async function importParsedApkg(
         cardIndex: new Map(),
         cardTagsById: new Map(),
         sheetIndex: new Map(),
-        indexed: false,
+        srs: new Map(),
+        legacyIndexed: false,
+        srsLoaded: false,
       };
-      await indexExisting(reused);
       return reused;
     }
     const deckId = await createDeck(
@@ -287,17 +313,69 @@ export async function importParsedApkg(
       cardIndex: new Map(),
       cardTagsById: new Map(),
       sheetIndex: new Map(),
-      indexed: false,
+      srs: new Map(),
+      // A brand-new deck has nothing to match against.
+      legacyIndexed: true,
+      srsLoaded: true,
     };
   }
 
   /**
-   * Indexes what a deck already holds so a re-import updates instead of
-   * duplicating. Only runs for decks that existed before this import.
+   * Learns which of *these* notes the deck already has.
+   *
+   * Asking by import id costs one query per 30 notes and returns only
+   * matches, so re-importing next week's export doesn't have to read a deck
+   * that has grown to thousands of cards. The full scan is kept purely as a
+   * fallback for cards imported before import ids existed, and only runs if
+   * something actually failed to match.
    */
-  async function indexExisting(target: TargetDeck) {
-    if (target.indexed) return;
-    target.indexed = true;
+  async function indexExisting(
+    target: TargetDeck,
+    cardImportIds: string[],
+    sheetImportIds: string[]
+  ) {
+    try {
+      const [cardHits, sheetHits] = await Promise.all([
+        findCardsByImportIds(uid, target.deckId, cardImportIds),
+        findSheetsByImportIds(uid, target.deckId, sheetImportIds),
+      ]);
+      for (const [importId, hit] of cardHits) {
+        target.cardIndex.set(importId, hit.id);
+        target.cardTagsById.set(hit.id, hit.tags);
+      }
+      for (const [importId, sheetId] of sheetHits) {
+        target.sheetIndex.set(importId, sheetId);
+      }
+    } catch {
+      /* query unavailable — the legacy scan below still covers us */
+    }
+  }
+
+  /**
+   * True when the deck contains cards or sheets written before import ids —
+   * the only case where a content scan can find anything the id lookup
+   * missed. Two aggregate queries, no document reads.
+   */
+  async function hasPreIdItems(target: TargetDeck): Promise<boolean> {
+    try {
+      const missing = await countItemsWithoutImportId(uid, target.deckId);
+      // Nothing to find by content — never ask again for this deck.
+      if (missing === 0) target.legacyIndexed = true;
+      return missing > 0;
+    } catch {
+      // Aggregates unavailable — be conservative and scan only if something
+      // in this package failed to match by id.
+      return true;
+    }
+  }
+
+  /**
+   * One-time full read, used only when some notes didn't match by id. Cards
+   * imported before ids existed are matched on normalized content instead.
+   */
+  async function indexLegacy(target: TargetDeck) {
+    if (target.legacyIndexed) return;
+    target.legacyIndexed = true;
     try {
       const [existingCards, existingSheets] = await Promise.all([
         getCardsOnce(uid, target.deckId),
@@ -374,17 +452,16 @@ export async function importParsedApkg(
         for (let i = 0; i < units.length; i++) {
           const entry = sheet.unitSchedules[i];
           if (!entry) continue;
+          const itemKey = `${existingSheetId}-${units[i].key}`;
+          const next = srsFromAnki(entry);
+          const current = target.srs.get(itemKey);
+          if (current && sameSchedule(current, next, entry.isNew)) continue;
           try {
             await retry(
-              () =>
-                setSrsState(
-                  uid,
-                  target.deckId,
-                  `${existingSheetId}-${units[i].key}`,
-                  srsFromAnki(entry)
-                ),
+              () => setSrsState(uid, target.deckId, itemKey, next),
               { attempts: 2, timeoutMs: 20000, signal: opts.signal }
             );
+            target.srs.set(itemKey, next);
             schedulesRestored++;
           } catch {
             /* one mask's schedule is not worth failing the import */
@@ -486,6 +563,29 @@ export async function importParsedApkg(
       target = single;
     }
 
+    // Ask about exactly the notes in this package before touching anything.
+    progress(`Checking for duplicates (${deck.name})`);
+    await indexExisting(
+      target,
+      deck.cards.map((c) => c.importId),
+      deck.sheets.map((sh) => sh.importId)
+    );
+    if (!target.legacyIndexed && (await hasPreIdItems(target))) {
+      // The deck holds items from before import ids existed; only those need
+      // the content scan. A deck that's purely imported never pays for it,
+      // no matter how many new notes this package brings.
+      await indexLegacy(target);
+    }
+    // Existing scheduling, so a card whose due date didn't move isn't rewritten.
+    if (opts.importSchedule && !target.srsLoaded) {
+      target.srsLoaded = true;
+      try {
+        target.srs = await getSrsMap(uid, target.deckId);
+      } catch {
+        /* fall through and write unconditionally */
+      }
+    }
+
     // Cards: rewrite media references, then insert only what's missing.
     const rewritten: CardData[] = [];
     const schedules: (Map<number, ImportedSchedule> | undefined)[] = [];
@@ -545,11 +645,20 @@ export async function importParsedApkg(
         const entry = schedule.get(num);
         if (!entry) continue;
         const itemKey = data.type === "cloze" ? `${cardId}-c${num}` : cardId;
+        const current = target.srs.get(itemKey);
+        const next = srsFromAnki(entry);
+        // Re-importing the same export shouldn't touch a card whose schedule
+        // didn't move. Only the fields Anki actually scheduled are compared —
+        // timestamps like firstSeen are derived from "now" and would
+        // otherwise report a difference on every import.
+        if (current && sameSchedule(current, next, entry.isNew)) continue;
         try {
-          await retry(
-            () => setSrsState(uid, target.deckId, itemKey, srsFromAnki(entry)),
-            { attempts: 2, timeoutMs: 20000, signal: opts.signal }
-          );
+          await retry(() => setSrsState(uid, target.deckId, itemKey, next), {
+            attempts: 2,
+            timeoutMs: 20000,
+            signal: opts.signal,
+          });
+          target.srs.set(itemKey, next);
           schedulesRestored++;
         } catch {
           warnings.push(`Couldn't restore the schedule for one card in "${deck.name}".`);
