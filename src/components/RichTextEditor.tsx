@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  caretOffset,
+  EditorHistory,
+  restoreCaret,
+} from "../lib/editorHistory";
+import {
   AlignCenter,
   AlignLeft,
   AlignRight,
@@ -47,6 +52,9 @@ const FONTS = [
   { label: "Mono", css: "'SF Mono', Menlo, Consolas, monospace" },
 ];
 const SIZES = [12, 14, 16, 18, 20, 24, 30];
+/** How long a pause ends one undo step and starts the next. */
+const HISTORY_PAUSE_MS = 500;
+
 /** execCommand fontSize only accepts 1–7, so map our px list onto that. */
 const SIZE_TO_LEGACY: Record<number, string> = {
   12: "1",
@@ -108,15 +116,79 @@ export function RichTextEditor({
   const [colorOpen, setColorOpen] = useState<null | "fore" | "hilite">(null);
   const [counts, setCounts] = useState({ words: 0, chars: 0 });
   const [bubble, setBubble] = useState<{ top: number; left: number } | null>(null);
+  const [undoState, setUndoState] = useState({ canUndo: false, canRedo: false });
+  const history = useRef<EditorHistory | null>(null);
+  const coalesceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const composing = useRef(false);
+  const recountRef = useRef<(() => void) | null>(null);
 
   // Set initial content once; afterwards the div owns its own DOM.
   useEffect(() => {
     if (ref.current && ref.current.innerHTML !== value) {
       ref.current.innerHTML = value;
     }
+    history.current = new EditorHistory({ html: value, caret: null });
+    setUndoState({ canUndo: false, canRedo: false });
     if (autoFocus) ref.current?.focus();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  /**
+   * Typing is grouped into steps rather than recorded per keystroke — one
+   * Ctrl+Z should take back a word or a burst, not a single letter. The
+   * snapshot lands once you pause, or immediately for a discrete action like
+   * a toolbar command or a paste.
+   */
+  const commitHistory = useCallback(() => {
+    if (coalesceTimer.current) {
+      clearTimeout(coalesceTimer.current);
+      coalesceTimer.current = null;
+    }
+    const el = ref.current;
+    if (!el || !history.current || composing.current) return;
+    if (history.current.push({ html: el.innerHTML, caret: caretOffset(el) })) {
+      setUndoState({
+        canUndo: history.current.canUndo,
+        canRedo: history.current.canRedo,
+      });
+    }
+  }, []);
+
+  const scheduleHistory = useCallback(() => {
+    if (coalesceTimer.current) clearTimeout(coalesceTimer.current);
+    coalesceTimer.current = setTimeout(commitHistory, HISTORY_PAUSE_MS);
+  }, [commitHistory]);
+
+  /** Puts a remembered state back on screen, caret and all. */
+  const applySnapshot = useCallback(
+    (snap: { html: string; caret: number | null } | null) => {
+      const el = ref.current;
+      if (!snap || !el) return;
+      el.innerHTML = snap.html;
+      el.focus();
+      restoreCaret(el, snap.caret);
+      // The parent has to hear about it, or an undo would never be saved.
+      onChange(el.innerHTML);
+      recountRef.current?.();
+      setUndoState({
+        canUndo: history.current?.canUndo ?? false,
+        canRedo: history.current?.canRedo ?? false,
+      });
+    },
+    [onChange]
+  );
+
+  const undo = useCallback(() => {
+    // Whatever has been typed since the last step is itself a step, or
+    // pressing undo straight after typing would appear to do nothing.
+    commitHistory();
+    if (ref.current) history.current?.amendCaret(caretOffset(ref.current));
+    applySnapshot(history.current?.undo() ?? null);
+  }, [applySnapshot, commitHistory]);
+
+  const redo = useCallback(() => {
+    applySnapshot(history.current?.redo() ?? null);
+  }, [applySnapshot]);
 
   const recount = useCallback(() => {
     if (!wordCount || !ref.current) return;
@@ -131,15 +203,25 @@ export function RichTextEditor({
     recount();
   }, [recount]);
 
+  useEffect(() => {
+    recountRef.current = recount;
+  }, [recount]);
+
   function emit() {
     if (ref.current) onChange(ref.current.innerHTML);
     recount();
+    scheduleHistory();
   }
 
   function exec(cmd: string, val?: string) {
+    // A formatting command is one deliberate action: record the state before
+    // it so undo steps back over the whole thing, not half of it.
+    commitHistory();
     ref.current?.focus();
     document.execCommand(cmd, false, val);
-    emit();
+    if (ref.current) onChange(ref.current.innerHTML);
+    recount();
+    commitHistory();
   }
 
   /** Wraps the selection in {{cN::…}}. same=true reuses the highest number. */
@@ -210,6 +292,9 @@ export function RichTextEditor({
 
   // Paste an image straight from the clipboard (screenshot of a slide, etc.).
   function handlePaste(e: React.ClipboardEvent) {
+    // Close the current typing step first, so one undo takes back the whole
+    // paste rather than leaving half of it behind.
+    commitHistory();
     const item = Array.from(e.clipboardData?.items ?? []).find((i) =>
       i.type.startsWith("image/")
     );
@@ -217,11 +302,31 @@ export function RichTextEditor({
     if (f && onUploadImage) {
       e.preventDefault();
       handleImageFile(f);
+      return;
     }
+    // The text lands after this handler returns; snapshot it as one step.
+    setTimeout(commitHistory, 0);
   }
 
   function handleKeyDown(e: React.KeyboardEvent) {
     const mod = e.metaKey || e.ctrlKey;
+    // Ours, not the browser's — its stack is empty for anything we inserted.
+    if (mod && e.key.toLowerCase() === "z") {
+      e.preventDefault();
+      if (e.shiftKey) redo();
+      else undo();
+      return;
+    }
+    if (mod && e.key.toLowerCase() === "y") {
+      e.preventDefault();
+      redo();
+      return;
+    }
+    // A new line or a deletion ends a typing burst, so the next undo stops
+    // at that boundary rather than swallowing the sentence before it.
+    if (e.key === "Enter" || e.key === "Backspace" || e.key === "Delete") {
+      commitHistory();
+    }
     if (cloze && mod && e.shiftKey && e.key.toLowerCase() === "c") {
       e.preventDefault();
       insertCloze(e.altKey);
@@ -274,22 +379,25 @@ export function RichTextEditor({
     onClick,
     children,
     active,
+    disabled,
   }: {
     title: string;
     onClick: () => void;
     children: React.ReactNode;
     active?: boolean;
+    disabled?: boolean;
   }) {
     return (
       <button
         type="button"
         title={title}
+        disabled={disabled}
         onMouseDown={(e) => e.preventDefault()} // keep the selection alive
         onClick={onClick}
-        className={`flex h-7 w-7 items-center justify-center rounded transition ${
+        className={`flex h-7 w-7 items-center justify-center rounded transition disabled:opacity-30 ${
           active
             ? "bg-slate-200 text-slate-900"
-            : "text-slate-500 hover:bg-slate-100 hover:text-slate-800"
+            : "text-slate-500 hover:bg-slate-100 enabled:hover:text-slate-800"
         }`}
       >
         {children}
@@ -308,10 +416,10 @@ export function RichTextEditor({
       >
         {full && (
           <>
-            <ToolButton title="Undo (⌘Z)" onClick={() => exec("undo")}>
+            <ToolButton title="Undo (⌘Z)" disabled={!undoState.canUndo} onClick={undo}>
               <Undo2 size={14} />
             </ToolButton>
-            <ToolButton title="Redo (⌘⇧Z)" onClick={() => exec("redo")}>
+            <ToolButton title="Redo (⌘⇧Z)" disabled={!undoState.canRedo} onClick={redo}>
               <Redo2 size={14} />
             </ToolButton>
             <Divider />
@@ -552,6 +660,13 @@ export function RichTextEditor({
           contentEditable
           onInput={emit}
           onKeyDown={handleKeyDown}
+          onCompositionStart={() => {
+            composing.current = true;
+          }}
+          onCompositionEnd={() => {
+            composing.current = false;
+            scheduleHistory();
+          }}
           onPaste={handlePaste}
           onBlur={() => setColorOpen(null)}
           data-placeholder={placeholder}
