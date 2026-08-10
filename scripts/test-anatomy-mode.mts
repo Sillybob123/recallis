@@ -38,6 +38,17 @@ const shouldGloss: [string, string[]][] = [
   ["bradycardia", ["slow", "heart"]],
   ["hepatitis", ["liver", "inflammation"]],
   ["chondrocytes", ["cartilage", "cell"]],
+  // added when the dictionary was widened
+  ["laparotomy", ["abdominal", "incision"]],
+  ["cholecystectomy", ["gallbladder", "removal"]],
+  ["splanchnology", ["viscera", "study"]],
+  ["rhabdomyolysis", ["rod-shaped", "muscle", "breakdown"]],
+  ["xeroderma", ["dry", "skin"]],
+  ["haematopoiesis", ["blood", "production"]],
+  ["polyuria", ["many", "urine"]],
+  ["tympanostomy", ["eardrum", "opening"]],
+  ["scoliosis", ["twisted", "abnormal condition"]],
+  ["lymphocyte", ["lymph", "cell"]],
 ];
 for (const [word, expected] of shouldGloss) {
   const g = glossWord(word);
@@ -156,6 +167,25 @@ console.log("\nroot search:");
     `"heart" finds cardi- — ${hits("heart").slice(0, 2).join(", ")}`,
     hits("heart").some((f) => f.startsWith("cardi"))
   );
+  // The widened reference should answer the everyday ones too.
+  for (const [q, expect] of [
+    ["lapar", "abdominal"],
+    ["-poiesis", "production"],
+    ["rhabd", "rod"],
+    ["pachy", "thick"],
+    ["left", "left"],
+    ["yellow", "yellow"],
+    ["gallbladder", "gallbladder"],
+  ] as const) {
+    const found = searchReference(q);
+    check(
+      `"${q}" is answered — ${found[0]?.form ?? "(none)"}`,
+      found.some((e) =>
+        `${e.form} ${e.meaning}`.toLowerCase().includes(expect.toLowerCase())
+      )
+    );
+  }
+
   check("an empty query returns nothing", searchReference("").length === 0);
   check("a nonsense query returns nothing", searchReference("qqzzx").length === 0);
   check(
