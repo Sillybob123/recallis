@@ -104,6 +104,8 @@ export interface NoteSlide {
   imageUrl: string;
   /** per-slide lecture notes (sanitized HTML) */
   note: string;
+  /** flagged as worth coming back to before an exam */
+  important?: boolean;
 }
 
 export interface Note {

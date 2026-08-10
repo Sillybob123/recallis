@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
   AlertTriangle,
@@ -12,6 +12,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   RefreshCw,
+  Star,
   ScanEye,
   Scissors,
   Trash2,
@@ -69,7 +70,9 @@ export function NoteEditorPage() {
   const [cardPrefill, setCardPrefill] = useState<string | null>(null);
   /** which slide the right-hand panel is showing */
   const [activeSlide, setActiveSlide] = useState(0);
-  const [slideTab, setSlideTab] = useState<"note" | "all" | "outline">("note");
+  const [slideTab, setSlideTab] = useState<
+    "note" | "all" | "outline" | "starred"
+  >("note");
   const [online, setOnline] = useState(navigator.onLine);
 
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -444,6 +447,44 @@ export function NoteEditorPage() {
     [user, noteId]
   );
 
+  /**
+   * Everything flagged for a second look: whole slides, plus every phrase
+   * highlighted inline anywhere in the note. This is the pre-exam view — the
+   * point of marking things is being able to pull just those back up.
+   */
+  const starred = useMemo(() => {
+    const marks = (html: string) =>
+      [...html.matchAll(/<mark class="starred">([\s\S]*?)<\/mark>/g)]
+        .map((m) => m[1].replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim())
+        .filter(Boolean);
+    const out: {
+      key: string;
+      text: string;
+      slide: number | null;
+      whole: boolean;
+    }[] = [];
+    for (const text of marks(note?.content ?? "")) {
+      out.push({ key: `c-${out.length}`, text, slide: null, whole: false });
+    }
+    (note?.slides ?? []).forEach((slide, i) => {
+      if (slide.important) {
+        const first =
+          slide.note.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+        out.push({
+          key: `s-${slide.id}`,
+          text: first || "(no notes yet)",
+          slide: i,
+          whole: true,
+        });
+      }
+      for (const text of marks(slide.note)) {
+        out.push({ key: `s-${slide.id}-${out.length}`, text, slide: i, whole: false });
+      }
+    });
+    return out;
+  }, [note]);
+  const starredCount = starred.length;
+
   if (!note) {
     return (
       <Layout>
@@ -577,10 +618,13 @@ export function NoteEditorPage() {
       */}
       <div
         className={`grid gap-5 ${
-          note.slides.length > 0 ? "lg:grid-cols-[1.3fr_1fr]" : ""
+          note.slides.length > 0 ? "lg:grid-cols-[45fr_55fr]" : ""
         }`}
       >
         <div className="order-2 min-w-0 lg:order-1">
+          <p className="mb-1.5 px-1 text-[11px] font-bold uppercase tracking-wide text-slate-400">
+            Lecture notes
+          </p>
           <div className="rounded-2xl border border-slate-200 bg-white p-1 shadow-sm">
             <RichTextEditor
               value={note.content}
@@ -589,8 +633,10 @@ export function NoteEditorPage() {
               full
               stickyToolbar
               wordCount
-              minHeightClass="min-h-[45vh]"
+              // Grows with what you write instead of reserving a tall empty box.
+              minHeightClass="min-h-[200px]"
               maxHeightClass="max-h-none"
+              contentClass="px-5 py-4 text-[16px] leading-[1.65]"
               onUploadImage={uploadInlineImage}
             />
           </div>
@@ -605,7 +651,8 @@ export function NoteEditorPage() {
                     ["note", "Slide note"],
                     ["all", "All slides"],
                     ["outline", "Outline"],
-                  ] as const
+                    ["starred", starredCount ? `Starred ${starredCount}` : "Starred"],
+                  ] as [typeof slideTab, string][]
                 ).map(([id, label]) => (
                   <button
                     key={id}
@@ -631,13 +678,22 @@ export function NoteEditorPage() {
                           setActiveSlide(i);
                           setSlideTab("note");
                         }}
-                        className={`group block overflow-hidden rounded-lg border transition ${
+                        className={`group relative block overflow-hidden rounded-lg border transition ${
                           i === slideIndex
                             ? "border-indigo-400 ring-2 ring-indigo-100"
-                            : "border-slate-200 hover:border-indigo-300"
+                            : slide.important
+                              ? "border-amber-300"
+                              : "border-slate-200 hover:border-indigo-300"
                         }`}
                         title={`Go to slide ${i + 1}`}
                       >
+                        {slide.important && (
+                          <Star
+                            size={12}
+                            fill="currentColor"
+                            className="absolute right-1 top-1 text-amber-500 drop-shadow"
+                          />
+                        )}
                         <img src={slide.imageUrl} alt="" loading="lazy" className="block w-full" />
                         <span className="block bg-slate-50 py-0.5 text-[10px] font-semibold text-slate-500 group-hover:bg-indigo-50 group-hover:text-indigo-600">
                           {i + 1}
@@ -670,6 +726,50 @@ export function NoteEditorPage() {
                     );
                   })}
                 </div>
+              ) : slideTab === "starred" ? (
+                <div className="max-h-[calc(100vh-160px)] overflow-y-auto rounded-2xl border border-amber-200 bg-white shadow-sm">
+                  {starred.length === 0 ? (
+                    <p className="px-4 py-8 text-center text-xs leading-relaxed text-slate-400">
+                      Nothing flagged yet. Use the{" "}
+                      <Star size={11} className="inline text-amber-400" /> on a
+                      slide for the whole thing, or highlight a phrase and press
+                      the star in the toolbar.
+                    </p>
+                  ) : (
+                    starred.map((item) => (
+                      <button
+                        key={item.key}
+                        onClick={() => {
+                          if (item.slide !== null) {
+                            setActiveSlide(item.slide);
+                            setSlideTab("note");
+                          }
+                        }}
+                        className="flex w-full items-start gap-2 border-b border-amber-50 px-3 py-2 text-left last:border-b-0 hover:bg-amber-50/60"
+                      >
+                        <Star
+                          size={12}
+                          fill={item.whole ? "currentColor" : "none"}
+                          className="mt-0.5 shrink-0 text-amber-500"
+                        />
+                        <span className="min-w-0 flex-1">
+                          <span className="block text-xs leading-snug text-slate-700">
+                            {item.text.length > 160
+                              ? item.text.slice(0, 160) + "…"
+                              : item.text}
+                          </span>
+                          <span className="mt-0.5 block text-[10px] font-semibold uppercase tracking-wide text-amber-600/70">
+                            {item.slide === null
+                              ? "Lecture notes"
+                              : item.whole
+                                ? `Slide ${item.slide + 1} — whole slide`
+                                : `Slide ${item.slide + 1}`}
+                          </span>
+                        </span>
+                      </button>
+                    ))
+                  )}
+                </div>
               ) : (
                 <>
                   {/* Arrow keys move between slides once the panel is focused. */}
@@ -689,13 +789,42 @@ export function NoteEditorPage() {
                         );
                       }
                     }}
-                    className="relative overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm outline-none focus:border-indigo-300"
+                    className="relative overflow-hidden rounded-2xl border border-slate-200 border-t-2 border-t-indigo-500 bg-white shadow-md outline-none focus:border-indigo-300"
                   >
-                    <div className="flex items-center justify-between gap-2 border-b border-slate-100 px-3 py-1.5">
-                      <span className="text-xs font-semibold text-slate-400">
-                        Slide {slideIndex + 1} of {note.slides.length}
+                    <div className="flex items-center justify-between gap-2 border-b border-slate-100 px-4 py-2.5">
+                      <span className="text-sm font-bold text-slate-700">
+                        Slide {slideIndex + 1}
+                        <span className="ml-1 text-xs font-medium text-slate-400">
+                          of {note.slides.length}
+                        </span>
                       </span>
                       <div className="flex gap-1">
+                        <button
+                          onClick={() =>
+                            updateSlide(note.slides[slideIndex].id, {
+                              important: !note.slides[slideIndex].important,
+                            })
+                          }
+                          title={
+                            note.slides[slideIndex].important
+                              ? "Important — remove the flag"
+                              : "Flag this slide as important"
+                          }
+                          className={`rounded-lg p-1.5 transition ${
+                            note.slides[slideIndex].important
+                              ? "bg-amber-50 text-amber-500"
+                              : "text-slate-300 hover:bg-amber-50 hover:text-amber-500"
+                          }`}
+                        >
+                          <Star
+                            size={15}
+                            fill={
+                              note.slides[slideIndex].important
+                                ? "currentColor"
+                                : "none"
+                            }
+                          />
+                        </button>
                         <button
                           onMouseDown={(e) => e.preventDefault()}
                           onClick={() => {
@@ -762,6 +891,7 @@ export function NoteEditorPage() {
                       full
                       minHeightClass="min-h-24"
                       maxHeightClass="max-h-[28vh]"
+                      contentClass="px-5 py-4 text-[16px] leading-[1.65]"
                       onUploadImage={uploadInlineImage}
                     />
                   </div>

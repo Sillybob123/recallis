@@ -21,6 +21,8 @@ import {
   ListOrdered,
   Outdent,
   Redo2,
+  MoreHorizontal,
+  Star,
   Strikethrough,
   Subscript,
   Superscript,
@@ -87,6 +89,8 @@ export interface RichTextEditorProps {
   /** show a live word/character count under the field */
   wordCount?: boolean;
   minHeightClass?: string;
+  /** typography and padding of the writing area itself */
+  contentClass?: string;
   maxHeightClass?: string;
   onUploadImage?: (file: File) => Promise<string>;
   autoFocus?: boolean;
@@ -106,6 +110,7 @@ export function RichTextEditor({
   stickyToolbar = false,
   wordCount = false,
   minHeightClass = "min-h-20",
+  contentClass = "px-3 py-2 text-sm",
   maxHeightClass = "max-h-64",
   onUploadImage,
   autoFocus,
@@ -117,6 +122,8 @@ export function RichTextEditor({
   const [counts, setCounts] = useState({ words: 0, chars: 0 });
   const [bubble, setBubble] = useState<{ top: number; left: number } | null>(null);
   const [undoState, setUndoState] = useState({ canUndo: false, canRedo: false });
+  /** Two fully-expanded toolbars on one page was the clutter. */
+  const [moreTools, setMoreTools] = useState(false);
   const history = useRef<EditorHistory | null>(null);
   const coalesceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const composing = useRef(false);
@@ -243,6 +250,41 @@ export function RichTextEditor({
     }
     document.execCommand("insertHTML", false, `{{c${n}::${inner || "…"}}}`);
     emit();
+  }
+
+  /**
+   * Marks the selection as important, as <mark class="starred"> so it stays
+   * inline in the flow of the note. Clicking inside an existing highlight
+   * removes it.
+   */
+  function toggleStarred() {
+    const el = ref.current;
+    const sel = window.getSelection();
+    if (!el || !sel || sel.rangeCount === 0) return;
+    commitHistory();
+    el.focus();
+    const node = sel.anchorNode;
+    const parent =
+      node?.nodeType === 1
+        ? (node as HTMLElement)
+        : (node?.parentElement ?? null);
+    const existing = parent?.closest?.("mark.starred");
+    if (existing && el.contains(existing)) {
+      const host = existing.parentNode;
+      while (existing.firstChild) host?.insertBefore(existing.firstChild, existing);
+      host?.removeChild(existing);
+    } else if (!sel.isCollapsed) {
+      const holder = document.createElement("div");
+      holder.appendChild(sel.getRangeAt(0).cloneContents());
+      document.execCommand(
+        "insertHTML",
+        false,
+        `<mark class="starred">${holder.innerHTML}</mark>`
+      );
+    }
+    if (ref.current) onChange(ref.current.innerHTML);
+    recount();
+    commitHistory();
   }
 
   /** Checklist item — execCommand has no equivalent, so insert markup. */
@@ -414,6 +456,37 @@ export function RichTextEditor({
           stickyToolbar ? "sticky top-[57px] z-10 rounded-t-lg" : ""
         }`}
       >
+        {/* Undo, redo and the three that get used constantly stay out;
+            the rest hides behind More, so two editors on one page
+            don't stack two full toolbars. */}
+
+        <ToolButton title="Bold (⌘B)" onClick={() => exec("bold")}>
+          <Bold size={14} />
+        </ToolButton>
+        <ToolButton title="Italic (⌘I)" onClick={() => exec("italic")}>
+          <Italic size={14} />
+        </ToolButton>
+        <ToolButton title="Underline (⌘U)" onClick={() => exec("underline")}>
+          <Underline size={14} />
+        </ToolButton>
+        <Divider />
+        <ToolButton
+          title="Highlight as important — collected in the Starred tab"
+          onClick={toggleStarred}
+        >
+          <Star size={14} className="text-amber-500" />
+        </ToolButton>
+        {full && (
+          <ToolButton
+            title={moreTools ? "Fewer options" : "More formatting"}
+            active={moreTools}
+            onClick={() => setMoreTools((v) => !v)}
+          >
+            <MoreHorizontal size={14} />
+          </ToolButton>
+        )}
+        {moreTools && (
+          <>
         {full && (
           <>
             <ToolButton title="Undo (⌘Z)" disabled={!undoState.canUndo} onClick={undo}>
@@ -472,16 +545,6 @@ export function RichTextEditor({
             <Divider />
           </>
         )}
-
-        <ToolButton title="Bold (⌘B)" onClick={() => exec("bold")}>
-          <Bold size={14} />
-        </ToolButton>
-        <ToolButton title="Italic (⌘I)" onClick={() => exec("italic")}>
-          <Italic size={14} />
-        </ToolButton>
-        <ToolButton title="Underline (⌘U)" onClick={() => exec("underline")}>
-          <Underline size={14} />
-        </ToolButton>
         <ToolButton title="Strikethrough" onClick={() => exec("strikeThrough")}>
           <Strikethrough size={14} />
         </ToolButton>
@@ -577,6 +640,8 @@ export function RichTextEditor({
           </>
         )}
 
+          </>
+        )}
         {cloze && (
           <>
             <Divider />
@@ -670,7 +735,7 @@ export function RichTextEditor({
           onPaste={handlePaste}
           onBlur={() => setColorOpen(null)}
           data-placeholder={placeholder}
-          className={`prose-card ${minHeightClass} ${maxHeightClass} overflow-y-auto px-3 py-2 text-sm outline-none empty:before:text-slate-400 empty:before:content-[attr(data-placeholder)]`}
+          className={`prose-card ${minHeightClass} ${maxHeightClass} ${contentClass} overflow-y-auto outline-none empty:before:text-slate-400 empty:before:content-[attr(data-placeholder)]`}
         />
       </div>
 

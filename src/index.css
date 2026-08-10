@@ -219,6 +219,20 @@ body {
   color: inherit !important;
 }
 
+/*
+ * Amber means "come back to this" throughout the notes editor — indigo is for
+ * things you're doing, amber for things you've marked. Kept soft enough to
+ * read a whole paragraph through.
+ */
+.prose-card :where(mark.starred),
+mark.starred {
+  background: #fef3c7;
+  border-bottom: 2px solid #fbbf24;
+  border-radius: 2px;
+  padding: 0 0.15em;
+  color: inherit;
+}
+
 /* Anatomy mode: a quiet underline, not a highlighter. The text has to stay
    readable when half the anatomical terms on a card are marked. */
 .anat-term {
