@@ -3,14 +3,16 @@ import { useNavigate, useParams } from "react-router-dom";
 import {
   ArrowLeft,
   Check,
+  ChevronLeft,
+  ChevronRight,
   CloudOff,
   FilePlus2,
   Loader2,
-  RefreshCw,
   PanelLeftClose,
   PanelLeftOpen,
-  Scissors,
+  RefreshCw,
   ScanEye,
+  Scissors,
   Trash2,
   X,
 } from "lucide-react";
@@ -51,12 +53,13 @@ export function NoteEditorPage() {
   const [savedAt, setSavedAt] = useState<Date | null>(null);
   const [slideProgress, setSlideProgress] = useState<string | null>(null);
   const [cardPrefill, setCardPrefill] = useState<string | null>(null);
-  const [showNav, setShowNav] = useState(true);
+  /** which slide the right-hand panel is showing */
+  const [activeSlide, setActiveSlide] = useState(0);
+  const [slideTab, setSlideTab] = useState<"note" | "all" | "outline">("note");
   const [online, setOnline] = useState(navigator.onLine);
 
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const latest = useRef<Note | null>(null);
-  const slideRefs = useRef<Map<string, HTMLDivElement>>(new Map());
 
   useEffect(() => {
     if (!user || !noteId) return;
@@ -218,10 +221,9 @@ export function NoteEditorPage() {
   function removeSlide(id: string) {
     if (!latest.current) return;
     if (!confirm("Remove this slide (and its slide notes) from the note?")) return;
-    scheduleSave({
-      ...latest.current,
-      slides: latest.current.slides.filter((s) => s.id !== id),
-    });
+    const remaining = latest.current.slides.filter((s) => s.id !== id);
+    setActiveSlide((i) => Math.max(0, Math.min(i, remaining.length - 1)));
+    scheduleSave({ ...latest.current, slides: remaining });
   }
 
   /**
@@ -274,22 +276,18 @@ export function NoteEditorPage() {
     return div.innerHTML;
   }
 
-  // Coming back from the occlusion editor lands on #slide-<id>; scroll there
+  // Coming back from the occlusion editor lands on #slide-<id>; select it
   // once the slides have rendered.
   useEffect(() => {
     if (!note) return;
     const hash = window.location.hash;
     if (!hash.startsWith("#slide-")) return;
     const id = hash.slice("#slide-".length);
-    const timer = setTimeout(() => {
-      slideRefs.current.get(id)?.scrollIntoView({ block: "start" });
-    }, 100);
-    return () => clearTimeout(timer);
+    // One slide shows at a time now, so coming back from an occlusion means
+    // selecting that slide rather than scrolling the page to it.
+    const index = note.slides.findIndex((sl) => sl.id === id);
+    if (index >= 0) setActiveSlide(index);
   }, [note]);
-
-  function jumpToSlide(id: string) {
-    slideRefs.current.get(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
-  }
 
   const uploadInlineImage = useCallback(
     async (file: File) => {
@@ -310,6 +308,10 @@ export function NoteEditorPage() {
   const effectiveSave: SaveState =
     !online && saveState !== "saving" ? "offline" : saveState;
 
+  // Slides can be replaced with a shorter deck while a later one is selected,
+  // so the index is clamped on the way out rather than trusted.
+  const slideIndex = Math.max(0, Math.min(activeSlide, note.slides.length - 1));
+
   return (
     <Layout>
       <div className="mb-3 flex items-center justify-between gap-3">
@@ -325,11 +327,11 @@ export function NoteEditorPage() {
       <div className="mb-4 flex flex-wrap items-center gap-2">
         {note.slides.length > 0 && (
           <button
-            onClick={() => setShowNav((v) => !v)}
-            title={showNav ? "Hide slide list" : "Show slide list"}
+            onClick={() => setSlideTab((t) => (t === "all" ? "note" : "all"))}
+            title={slideTab === "all" ? "Back to the current slide" : "Show every slide"}
             className="rounded-lg border border-slate-300 bg-white p-2 text-slate-500 hover:bg-slate-50"
           >
-            {showNav ? <PanelLeftClose size={15} /> : <PanelLeftOpen size={15} />}
+            {slideTab === "all" ? <PanelLeftClose size={15} /> : <PanelLeftOpen size={15} />}
           </button>
         )}
         <input
@@ -403,39 +405,18 @@ export function NoteEditorPage() {
         )}
       </div>
 
-      <div className="flex gap-5">
-        {/* Slide jump navigation */}
-        {showNav && note.slides.length > 0 && (
-          <aside className="sticky top-[70px] hidden h-[calc(100vh-100px)] w-36 shrink-0 overflow-y-auto rounded-xl border border-slate-200 bg-white p-2 lg:block">
-            <p className="mb-2 px-1 text-[11px] font-bold uppercase tracking-wide text-slate-400">
-              Slides
-            </p>
-            <div className="space-y-1.5">
-              {note.slides.map((slide, i) => (
-                <button
-                  key={slide.id}
-                  onClick={() => jumpToSlide(slide.id)}
-                  className="group block w-full overflow-hidden rounded-lg border border-slate-200 transition hover:border-indigo-400"
-                  title={`Jump to slide ${i + 1}`}
-                >
-                  <img
-                    src={slide.imageUrl}
-                    alt=""
-                    loading="lazy"
-                    className="block w-full"
-                  />
-                  <span className="block bg-slate-50 py-0.5 text-[10px] font-semibold text-slate-500 group-hover:bg-indigo-50 group-hover:text-indigo-600">
-                    {i + 1}
-                    {slide.note.replace(/<[^>]*>/g, "").trim() && " ·"}
-                  </span>
-                </button>
-              ))}
-            </div>
-          </aside>
-        )}
-
-        <div className="min-w-0 flex-1">
-          <div className="mb-8 rounded-2xl border border-slate-200 bg-white p-1 shadow-sm">
+      {/*
+        Split view: notes on the left, one slide at a time on the right. The
+        old layout stacked every slide down the page, so following a lecture
+        meant scrolling past slides you weren't writing about.
+      */}
+      <div
+        className={`grid gap-5 ${
+          note.slides.length > 0 ? "lg:grid-cols-[1.3fr_1fr]" : ""
+        }`}
+      >
+        <div className="order-2 min-w-0 lg:order-1">
+          <div className="rounded-2xl border border-slate-200 bg-white p-1 shadow-sm">
             <RichTextEditor
               value={note.content}
               onChange={(html) => scheduleSave({ ...latest.current!, content: html })}
@@ -448,26 +429,106 @@ export function NoteEditorPage() {
               onUploadImage={uploadInlineImage}
             />
           </div>
+        </div>
 
-          {note.slides.length > 0 && (
-            <section>
-              <h2 className="mb-3 text-sm font-bold uppercase tracking-wide text-slate-400">
-                Lecture slides ({note.slides.length}) — take notes under each one
-              </h2>
-              <div className="space-y-6">
-                {note.slides.map((slide, i) => (
-                  <div
-                    key={slide.id}
-                    id={`slide-${slide.id}`}
-                    ref={(el) => {
-                      if (el) slideRefs.current.set(slide.id, el);
-                      else slideRefs.current.delete(slide.id);
-                    }}
-                    className="scroll-mt-20 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm"
+        {note.slides.length > 0 && (
+          <div className="order-1 min-w-0 lg:order-2">
+            <div className="lg:sticky lg:top-[70px]">
+              <div className="mb-2 flex items-center gap-1 rounded-xl border border-slate-200 bg-white p-1 text-xs font-semibold shadow-sm">
+                {(
+                  [
+                    ["note", "Slide note"],
+                    ["all", "All slides"],
+                    ["outline", "Outline"],
+                  ] as const
+                ).map(([id, label]) => (
+                  <button
+                    key={id}
+                    onClick={() => setSlideTab(id)}
+                    className={`flex-1 rounded-lg px-2 py-1.5 transition ${
+                      slideTab === id
+                        ? "bg-indigo-50 text-indigo-700"
+                        : "text-slate-500 hover:bg-slate-50"
+                    }`}
                   >
-                    <div className="flex items-center justify-between border-b border-slate-100 px-4 py-2">
+                    {label}
+                  </button>
+                ))}
+              </div>
+
+              {slideTab === "all" ? (
+                <div className="max-h-[calc(100vh-160px)] overflow-y-auto rounded-2xl border border-slate-200 bg-white p-2 shadow-sm">
+                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-2">
+                    {note.slides.map((slide, i) => (
+                      <button
+                        key={slide.id}
+                        onClick={() => {
+                          setActiveSlide(i);
+                          setSlideTab("note");
+                        }}
+                        className={`group block overflow-hidden rounded-lg border transition ${
+                          i === slideIndex
+                            ? "border-indigo-400 ring-2 ring-indigo-100"
+                            : "border-slate-200 hover:border-indigo-300"
+                        }`}
+                        title={`Go to slide ${i + 1}`}
+                      >
+                        <img src={slide.imageUrl} alt="" loading="lazy" className="block w-full" />
+                        <span className="block bg-slate-50 py-0.5 text-[10px] font-semibold text-slate-500 group-hover:bg-indigo-50 group-hover:text-indigo-600">
+                          {i + 1}
+                          {slide.note.replace(/<[^>]*>/g, "").trim() && " ·"}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : slideTab === "outline" ? (
+                <div className="max-h-[calc(100vh-160px)] overflow-y-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
+                  {note.slides.map((slide, i) => {
+                    const line = slide.note.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+                    return (
+                      <button
+                        key={slide.id}
+                        onClick={() => {
+                          setActiveSlide(i);
+                          setSlideTab("note");
+                        }}
+                        className={`flex w-full items-baseline gap-2 border-b border-slate-50 px-3 py-2 text-left text-xs last:border-b-0 hover:bg-slate-50 ${
+                          i === slideIndex ? "bg-indigo-50/60" : ""
+                        }`}
+                      >
+                        <span className="w-6 shrink-0 font-bold text-slate-400">{i + 1}</span>
+                        <span className={line ? "truncate text-slate-700" : "italic text-slate-300"}>
+                          {line || "no notes yet"}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              ) : (
+                <>
+                  {/* Arrow keys move between slides once the panel is focused. */}
+                  <div
+                    tabIndex={0}
+                    onKeyDown={(e) => {
+                      if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
+                        e.preventDefault();
+                        setActiveSlide((i) =>
+                          Math.max(
+                            0,
+                            Math.min(
+                              note.slides.length - 1,
+                              i + (e.key === "ArrowRight" ? 1 : -1)
+                            )
+                          )
+                        );
+                      }
+                    }}
+                    className="relative overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm outline-none focus:border-indigo-300"
+                  >
+                    <div className="flex items-center justify-between gap-2 border-b border-slate-100 px-3 py-1.5">
                       <span className="text-xs font-semibold text-slate-400">
-                        Slide {i + 1}
+                        Slide {slideIndex + 1} of {note.slides.length}
                       </span>
                       <div className="flex gap-1">
                         <button
@@ -489,11 +550,13 @@ export function NoteEditorPage() {
                         </button>
                         <SlideToOcclusionButton
                           decks={decks}
-                          slideNumber={i + 1}
-                          onPick={(deckId) => slideToOcclusion(slide, i, deckId)}
+                          slideNumber={slideIndex + 1}
+                          onPick={(deckId) =>
+                            slideToOcclusion(note.slides[slideIndex], slideIndex, deckId)
+                          }
                         />
                         <button
-                          onClick={() => removeSlide(slide.id)}
+                          onClick={() => removeSlide(note.slides[slideIndex].id)}
                           className="rounded-lg p-1.5 text-slate-300 hover:bg-red-50 hover:text-red-500"
                           title="Remove slide"
                         >
@@ -501,28 +564,47 @@ export function NoteEditorPage() {
                         </button>
                       </div>
                     </div>
-                    <img
-                      src={slide.imageUrl}
-                      alt={`Slide ${i + 1}`}
-                      loading="lazy"
-                      className="block w-full"
-                    />
-                    <div className="border-t border-slate-100 p-2">
-                      <RichTextEditor
-                        value={slide.note}
-                        onChange={(html) => updateSlide(slide.id, { note: html })}
-                        placeholder={`Notes for slide ${i + 1}…`}
-                        full
-                        minHeightClass="min-h-16"
-                        onUploadImage={uploadInlineImage}
+
+                    <div className="relative bg-slate-50">
+                      <img
+                        src={note.slides[slideIndex].imageUrl}
+                        alt={`Slide ${slideIndex + 1}`}
+                        className="block max-h-[46vh] w-full object-contain"
+                      />
+                      <SlideArrow
+                        side="left"
+                        disabled={slideIndex === 0}
+                        onClick={() => setActiveSlide((i) => Math.max(0, i - 1))}
+                      />
+                      <SlideArrow
+                        side="right"
+                        disabled={slideIndex >= note.slides.length - 1}
+                        onClick={() =>
+                          setActiveSlide((i) => Math.min(note.slides.length - 1, i + 1))
+                        }
                       />
                     </div>
                   </div>
-                ))}
-              </div>
-            </section>
-          )}
-        </div>
+
+                  <div className="mt-2 rounded-2xl border border-slate-200 bg-white p-1 shadow-sm">
+                    <RichTextEditor
+                      key={note.slides[slideIndex].id}
+                      value={note.slides[slideIndex].note}
+                      onChange={(html) =>
+                        updateSlide(note.slides[slideIndex].id, { note: html })
+                      }
+                      placeholder={`Notes for slide ${slideIndex + 1}…`}
+                      full
+                      minHeightClass="min-h-24"
+                      maxHeightClass="max-h-[28vh]"
+                      onUploadImage={uploadInlineImage}
+                    />
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        )}
       </div>
 
       {cardPrefill !== null && (
@@ -610,6 +692,31 @@ function SaveIndicator({
           })}`
         : "Saved"}
     </span>
+  );
+}
+
+/** A chevron pinned in a bottom corner of the slide, as a page-turn. */
+function SlideArrow({
+  side,
+  disabled,
+  onClick,
+}: {
+  side: "left" | "right";
+  disabled: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      title={side === "left" ? "Previous slide" : "Next slide"}
+      aria-label={side === "left" ? "Previous slide" : "Next slide"}
+      className={`absolute bottom-3 ${
+        side === "left" ? "left-3" : "right-3"
+      } rounded-full border border-slate-200 bg-white/80 p-2 text-slate-600 shadow-sm backdrop-blur transition enabled:hover:bg-white enabled:hover:text-slate-900 disabled:opacity-0`}
+    >
+      {side === "left" ? <ChevronLeft size={16} /> : <ChevronRight size={16} />}
+    </button>
   );
 }
 

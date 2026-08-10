@@ -585,6 +585,25 @@ export function StudyBasic() {
   const current = queue[0];
   const showMaskToggle = current?.kind === "occlusion";
   const anatomy = studyMode === "quizlet" && quizletSettings.anatomyMode;
+
+  /**
+   * What's left to do, split the way Anki splits it. Counting the queue
+   * rather than the deck means it falls as you work, including the card on
+   * screen — which is what makes it worth watching.
+   */
+  const ankiCounts = useMemo(() => {
+    if (studyMode !== "anki" || !srsMap) return null;
+    let fresh = 0;
+    let learning = 0;
+    let due = 0;
+    for (const item of queue) {
+      const state = srsMap.get(combinedKey(item));
+      if (!state || isNew(state)) fresh++;
+      else if (state.phase === "review") due++;
+      else learning++;
+    }
+    return { fresh, learning, due };
+  }, [queue, srsMap, studyMode]);
   const rootMatches = useMemo(() => searchReference(rootQuery), [rootQuery]);
 
   // Stars live on the note, so they're read straight off the loaded cards
@@ -2041,6 +2060,24 @@ export function StudyBasic() {
           {/* spacer so the card never hides behind the fixed bar */}
           <div className="h-32" aria-hidden />
           <div className="fixed inset-x-0 bottom-0 z-20 border-t border-slate-200 bg-white/95 shadow-[0_-2px_12px_rgba(15,23,42,0.06)] backdrop-blur">
+            {/* Anki puts the remaining counts here, under the card, and they
+                are worth watching precisely because they move as you work. */}
+            {ankiCounts && (
+              <div className="flex items-center justify-center gap-3 pt-1.5 text-xs font-semibold tabular-nums">
+                <span className="text-sky-500">
+                  {ankiCounts.fresh}
+                  <span className="ml-1 font-medium text-slate-400">new</span>
+                </span>
+                <span className="text-orange-500">
+                  {ankiCounts.learning}
+                  <span className="ml-1 font-medium text-slate-400">learning</span>
+                </span>
+                <span className="text-emerald-600">
+                  {ankiCounts.due}
+                  <span className="ml-1 font-medium text-slate-400">due</span>
+                </span>
+              </div>
+            )}
             <div className="mx-auto max-w-3xl px-4 py-2">
               {isFlashcardContext && (
                 <>
