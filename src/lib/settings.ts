@@ -96,6 +96,11 @@ export interface QuizletSettings {
   answerWith: "definition" | "term";
   /** gloss Latin/Greek word parts in card text on hover */
   anatomyMode: boolean;
+  /**
+   * Shuffled, or in the order the cards were made — which for a deck built
+   * from a lecture is the order of the slides.
+   */
+  studyOrder: "shuffle" | "ordered";
 }
 
 export const DEFAULT_QUIZLET_SETTINGS: QuizletSettings = {
@@ -105,6 +110,7 @@ export const DEFAULT_QUIZLET_SETTINGS: QuizletSettings = {
   retypeCorrect: true,
   answerWith: "definition",
   anatomyMode: false,
+  studyOrder: "shuffle",
 };
 
 function load<T>(key: string, defaults: T): T {

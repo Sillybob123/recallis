@@ -64,6 +64,7 @@ import {
 import {
   loadAnkiSettings,
   loadQuizletSettings,
+  saveQuizletSettings,
   recordAnkiReview,
   startOfStudyDay,
   type AnkiSettings,
@@ -289,12 +290,10 @@ export function StudyBasic() {
   const deckScopeKey = deckIds.join(",");
   // Deck order depends on how you got here, but it's the same session either
   // way, so the scope is sorted.
-  const baseScope = `${[...deckIds].sort().join(",")}:${cardsOnly ? "cards" : "all"}`;
   // Reviewing the hard cards is a separate run under its own key, so starting
   // one doesn't disturb the full pass you may be part-way through.
   const [reviewOnly, setReviewOnly] = useState(false);
   const [troubleKeys, setTroubleKeys] = useState<string[]>([]);
-  const cramScope = reviewOnly ? `${baseScope}:review` : baseScope;
   const { user } = useAuth();
   const { studyMode, setStudyMode } = useStudyMode();
   const navigate = useNavigate();
@@ -307,6 +306,14 @@ export function StudyBasic() {
   const [ankiSettings, setAnkiSettings] = useState<AnkiSettings>(loadAnkiSettings);
   const [quizletSettings, setQuizletSettings] =
     useState<QuizletSettings>(loadQuizletSettings);
+
+  // Ordered runs are their own session, so switching between the two keeps
+  // both. Shuffle stays on the original key so existing sessions survive.
+  const orderKey = quizletSettings.studyOrder === "ordered" ? ":ordered" : "";
+  const baseScope = `${[...deckIds].sort().join(",")}:${
+    cardsOnly ? "cards" : "all"
+  }${orderKey}`;
+  const cramScope = reviewOnly ? `${baseScope}:review` : baseScope;
   const [showSettings, setShowSettings] = useState(false);
   const [queue, setQueue] = useState<StudyItem[]>([]);
   const [total, setTotal] = useState(0);
@@ -471,7 +478,13 @@ export function StudyBasic() {
           }
           clearCramSession(user?.uid ?? null, cramScope);
         }
-        const items = spreadSiblings(shuffle(pool), ankiSettings.siblingGap);
+        // In order, a deck built from a lecture runs slide 1 to slide 2, and
+        // the cloze deletions of one sentence stay together — which is the
+        // whole point, so sibling spreading is skipped rather than fighting it.
+        const items =
+          quizletSettings.studyOrder === "ordered"
+            ? [...pool].sort((a, b) => itemOrder(a) - itemOrder(b))
+            : spreadSiblings(shuffle(pool), ankiSettings.siblingGap);
         setQueue(items);
         setTotal(items.length);
         setNextDueMs(null);
@@ -564,6 +577,7 @@ export function StudyBasic() {
     sessionNonce,
     reviewOnly,
     quizletSettings.answerWith,
+    quizletSettings.studyOrder,
   ]);
 
   // Finishing the deck is the one moment worth marking.
@@ -585,6 +599,27 @@ export function StudyBasic() {
   const current = queue[0];
   const showMaskToggle = current?.kind === "occlusion";
   const anatomy = studyMode === "quizlet" && quizletSettings.anatomyMode;
+
+  /**
+   * Where an item sits in "in order" mode. Cards made from a lecture are
+   * created slide by slide, so creation time is slide order; occlusion masks
+   * fall in with the sheet they belong to.
+   */
+  const createdAtOf = useMemo(() => {
+    const byCard = new Map<string, number>();
+    for (const c of cards ?? []) byCard.set(`${c.deckId}|${c.id}`, c.createdAt);
+    for (const sh of sheets ?? []) byCard.set(`${sh.deckId}|${sh.id}`, sh.createdAt);
+    return byCard;
+  }, [cards, sheets]);
+  const itemOrder = useCallback(
+    (item: StudyItem) =>
+      createdAtOf.get(
+        item.kind === "text"
+          ? `${item.deckId}|${item.cardId}`
+          : `${item.deckId}|${item.sheet.id}`
+      ) ?? 0,
+    [createdAtOf]
+  );
 
   /**
    * What's left to do, split the way Anki splits it. Counting the queue
@@ -748,6 +783,11 @@ export function StudyBasic() {
    * on screen. Bury mode additionally drops them out of today's session.
    */
   function applySiblingPolicy(nextQueue: StudyItem[], answered: StudyItem) {
+    // Studying in order means the cloze deletions of one sentence belong
+    // together; pushing them apart is exactly what you asked it not to do.
+    if (studyMode === "quizlet" && quizletSettings.studyOrder === "ordered") {
+      return nextQueue;
+    }
     const mode = ankiSettings.siblingMode;
     if (mode === "bury") {
       const { queue: pruned, removed } = removeSiblings(nextQueue, answered);
@@ -2133,6 +2173,38 @@ export function StudyBasic() {
                 </>
               )}
             </div>
+            {studyMode === "quizlet" && (
+              <div className="flex overflow-hidden rounded-lg border border-slate-300 text-xs font-medium">
+                {(
+                  [
+                    ["shuffle", "Shuffle"],
+                    ["ordered", "In order"],
+                  ] as ["shuffle" | "ordered", string][]
+                ).map(([id, label]) => (
+                  <button
+                    key={id}
+                    onClick={() => {
+                      if (quizletSettings.studyOrder === id) return;
+                      const next = { ...quizletSettings, studyOrder: id };
+                      setQuizletSettings(next);
+                      saveQuizletSettings(next);
+                    }}
+                    title={
+                      id === "ordered"
+                        ? "Slide 1, then slide 2 — the order the cards were made in"
+                        : "Random order"
+                    }
+                    className={`px-2.5 py-1 transition ${
+                      quizletSettings.studyOrder === id
+                        ? "bg-slate-800 text-white"
+                        : "bg-white text-slate-600 hover:bg-slate-50"
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            )}
             {showMaskToggle && (
               <div className="flex overflow-hidden rounded-lg border border-slate-300 text-xs font-medium">
                 {(["hideOne", "hideAll"] as const).map((m) => (

@@ -242,6 +242,51 @@ export function StudySettingsModal({
                 </div>
               </Card>
 
+              <Card title="Order" className="md:col-span-2">
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {(
+                    [
+                      [
+                        "shuffle",
+                        "Shuffle",
+                        "Random order every session. Better testing — you can't lean on what came before.",
+                      ],
+                      [
+                        "ordered",
+                        "In order",
+                        "Slide 1, then slide 2. Follows the order the cards were made, which is how a lecture was taught.",
+                      ],
+                    ] as const
+                  ).map(([value, label, desc]) => (
+                    <label
+                      key={value}
+                      className={`cursor-pointer rounded-lg border p-3 text-sm transition ${
+                        q.studyOrder === value
+                          ? "border-indigo-400 bg-indigo-50"
+                          : "border-slate-200 hover:bg-slate-50"
+                      }`}
+                    >
+                      <span className="flex items-center gap-2 font-medium text-slate-800">
+                        <input
+                          type="radio"
+                          checked={q.studyOrder === value}
+                          onChange={() => setQ({ ...q, studyOrder: value })}
+                        />
+                        {label}
+                      </span>
+                      <span className="mt-1 block text-xs leading-snug text-slate-500">
+                        {desc}
+                      </span>
+                    </label>
+                  ))}
+                </div>
+                <p className="mt-2 text-xs leading-snug text-slate-500">
+                  In order also keeps the blanks of one sentence together
+                  instead of spacing them out. Each order remembers its own
+                  progress, so switching doesn't lose where you were.
+                </p>
+              </Card>
+
               <Card title="Anatomy mode" className="md:col-span-2">
                 <ToggleField
                   label="Explain Latin and Greek word parts"
