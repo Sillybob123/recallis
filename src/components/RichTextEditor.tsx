@@ -463,37 +463,12 @@ export function RichTextEditor({
           stickyToolbar ? "sticky top-[57px] z-10 rounded-t-lg" : ""
         }`}
       >
-        {/* Undo, redo and the three that get used constantly stay out;
-            the rest hides behind More, so two editors on one page
-            don't stack two full toolbars. */}
-
-        <ToolButton title="Bold (⌘B)" onClick={() => exec("bold")}>
-          <Bold size={14} />
-        </ToolButton>
-        <ToolButton title="Italic (⌘I)" onClick={() => exec("italic")}>
-          <Italic size={14} />
-        </ToolButton>
-        <ToolButton title="Underline (⌘U)" onClick={() => exec("underline")}>
-          <Underline size={14} />
-        </ToolButton>
-        <Divider />
-        <ToolButton
-          title="Highlight as important — collected in the Starred tab"
-          onClick={toggleStarred}
-        >
-          <Star size={14} className="text-amber-500" />
-        </ToolButton>
-        {full && (
-          <ToolButton
-            title={moreTools ? "Fewer options" : "More formatting"}
-            active={moreTools}
-            onClick={() => setMoreTools((v) => !v)}
-          >
-            <MoreHorizontal size={14} />
-          </ToolButton>
-        )}
-        {moreTools && (
-          <>
+        {/*
+          What a lecture actually needs while typing stays out: undo, headings,
+          emphasis, colour, lists and the star. Fonts, alignment, links and the
+          rest go behind More, so a second editor on the page doesn't stack a
+          second full toolbar.
+        */}
         {full && (
           <>
             <ToolButton title="Undo (⌘Z)" disabled={!undoState.canUndo} onClick={undo}>
@@ -504,7 +479,7 @@ export function RichTextEditor({
             </ToolButton>
             <Divider />
             <select
-              title="Paragraph style"
+              title="Heading or paragraph"
               onMouseDown={(e) => e.stopPropagation()}
               onChange={(e) => {
                 exec("formatBlock", `<${e.target.value}>`);
@@ -519,51 +494,23 @@ export function RichTextEditor({
                 </option>
               ))}
             </select>
-            <select
-              title="Font"
-              onChange={(e) => {
-                exec("fontName", e.target.value);
-                e.target.selectedIndex = 0;
-              }}
-              className="h-7 rounded border border-slate-200 bg-white px-1 text-xs text-slate-600 outline-none hover:bg-slate-50"
-            >
-              <option value="">Font</option>
-              {FONTS.map((f) => (
-                <option key={f.label} value={f.css}>
-                  {f.label}
-                </option>
-              ))}
-            </select>
-            <select
-              title="Font size"
-              onChange={(e) => {
-                exec("fontSize", SIZE_TO_LEGACY[Number(e.target.value)]);
-                e.target.selectedIndex = 0;
-              }}
-              className="h-7 rounded border border-slate-200 bg-white px-1 text-xs text-slate-600 outline-none hover:bg-slate-50"
-            >
-              <option value="">Size</option>
-              {SIZES.map((s) => (
-                <option key={s} value={s}>
-                  {s}
-                </option>
-              ))}
-            </select>
             <Divider />
           </>
         )}
-        <ToolButton title="Strikethrough" onClick={() => exec("strikeThrough")}>
-          <Strikethrough size={14} />
+
+        <ToolButton title="Bold (⌘B)" onClick={() => exec("bold")}>
+          <Bold size={14} />
         </ToolButton>
-        <ToolButton title="Superscript" onClick={() => exec("superscript")}>
-          <Superscript size={14} />
+        <ToolButton title="Italic (⌘I)" onClick={() => exec("italic")}>
+          <Italic size={14} />
         </ToolButton>
-        <ToolButton title="Subscript" onClick={() => exec("subscript")}>
-          <Subscript size={14} />
+        <ToolButton title="Underline (⌘U)" onClick={() => exec("underline")}>
+          <Underline size={14} />
         </ToolButton>
 
+        <Divider />
         <ToolButton
-          title="Text color"
+          title="Text colour"
           onClick={() => setColorOpen(colorOpen === "fore" ? null : "fore")}
         >
           <span className="border-b-2 border-red-500 text-xs font-bold">A</span>
@@ -591,9 +538,6 @@ export function RichTextEditor({
             ))}
           </div>
         )}
-        <ToolButton title="Remove formatting" onClick={() => exec("removeFormat")}>
-          <Eraser size={14} />
-        </ToolButton>
 
         <Divider />
         <ToolButton title="Bulleted list" onClick={() => exec("insertUnorderedList")}>
@@ -602,8 +546,73 @@ export function RichTextEditor({
         <ToolButton title="Numbered list" onClick={() => exec("insertOrderedList")}>
           <ListOrdered size={14} />
         </ToolButton>
+
+        <Divider />
+        <ToolButton
+          title="Flag as important — collected in the Starred tab"
+          onClick={toggleStarred}
+        >
+          <Star size={14} className="text-amber-500" />
+        </ToolButton>
         {full && (
+          <ToolButton
+            title={moreTools ? "Fewer options" : "More formatting"}
+            active={moreTools}
+            onClick={() => setMoreTools((v) => !v)}
+          >
+            <MoreHorizontal size={14} />
+          </ToolButton>
+        )}
+
+        {moreTools && (
           <>
+            <Divider />
+            <select
+              title="Font"
+              onMouseDown={(e) => e.stopPropagation()}
+              onChange={(e) => {
+                exec("fontName", e.target.value);
+                e.target.selectedIndex = 0;
+              }}
+              className="h-7 rounded border border-slate-200 bg-white px-1 text-xs text-slate-600 outline-none hover:bg-slate-50"
+            >
+              <option value="">Font</option>
+              {FONTS.map((f) => (
+                <option key={f.label} value={f.css}>
+                  {f.label}
+                </option>
+              ))}
+            </select>
+            <select
+              title="Text size"
+              onMouseDown={(e) => e.stopPropagation()}
+              onChange={(e) => {
+                exec("fontSize", SIZE_TO_LEGACY[Number(e.target.value)]);
+                e.target.selectedIndex = 0;
+              }}
+              className="h-7 rounded border border-slate-200 bg-white px-1 text-xs text-slate-600 outline-none hover:bg-slate-50"
+            >
+              <option value="">Size</option>
+              {SIZES.map((s) => (
+                <option key={s} value={s}>
+                  {s}
+                </option>
+              ))}
+            </select>
+            <Divider />
+            <ToolButton title="Strikethrough" onClick={() => exec("strikeThrough")}>
+              <Strikethrough size={14} />
+            </ToolButton>
+            <ToolButton title="Superscript" onClick={() => exec("superscript")}>
+              <Superscript size={14} />
+            </ToolButton>
+            <ToolButton title="Subscript" onClick={() => exec("subscript")}>
+              <Subscript size={14} />
+            </ToolButton>
+            <ToolButton title="Remove formatting" onClick={() => exec("removeFormat")}>
+              <Eraser size={14} />
+            </ToolButton>
+            <Divider />
             <ToolButton title="Checklist" onClick={insertChecklist}>
               <CheckSquare size={14} />
             </ToolButton>
@@ -626,29 +635,28 @@ export function RichTextEditor({
             <ToolButton title="Insert link (⌘K)" onClick={insertLink}>
               <Link2 size={14} />
             </ToolButton>
+            {onUploadImage && (
+              <>
+                <ToolButton
+                  title={uploading ? "Uploading…" : "Insert image"}
+                  onClick={() => fileRef.current?.click()}
+                >
+                  <ImageIcon size={14} className={uploading ? "animate-pulse" : ""} />
+                </ToolButton>
+                <input
+                  ref={fileRef}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={(e) =>
+                    e.target.files?.[0] && handleImageFile(e.target.files[0])
+                  }
+                />
+              </>
+            )}
           </>
         )}
 
-        {onUploadImage && (
-          <>
-            <ToolButton
-              title={uploading ? "Uploading…" : "Insert image"}
-              onClick={() => fileRef.current?.click()}
-            >
-              <ImageIcon size={14} className={uploading ? "animate-pulse" : ""} />
-            </ToolButton>
-            <input
-              ref={fileRef}
-              type="file"
-              accept="image/*"
-              className="hidden"
-              onChange={(e) => e.target.files?.[0] && handleImageFile(e.target.files[0])}
-            />
-          </>
-        )}
-
-          </>
-        )}
         {cloze && (
           <>
             <Divider />
@@ -667,10 +675,7 @@ export function RichTextEditor({
             </ToolButton>
           </>
         )}
-      </div>
 
-      <div className="relative">
-        {/* Floating selection toolbar */}
         {full && bubble && (
           <div
             className="absolute z-20 flex -translate-x-1/2 items-center gap-0.5 rounded-lg border border-slate-700 bg-slate-800 px-1 py-1 shadow-xl"

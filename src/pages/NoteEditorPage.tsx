@@ -778,9 +778,38 @@ export function NoteEditorPage() {
 
         {/* ---------- this slide ---------- */}
         <section className="order-2 flex min-h-0 flex-col overflow-hidden rounded-2xl border border-slate-200 border-t-2 border-t-indigo-500 bg-white shadow-md">
-          <p className="shrink-0 border-b border-slate-100 px-3 py-2 text-[11px] font-bold uppercase tracking-wide text-slate-400">
-            {note.slides.length > 0 ? `Slide ${slideIndex + 1} notes` : "Slide notes"}
-          </p>
+          <div className="flex shrink-0 items-center justify-between gap-2 border-b border-slate-100 px-3 py-1.5">
+            <p className="text-[11px] font-bold uppercase tracking-wide text-slate-400">
+              {note.slides.length > 0 ? `Slide ${slideIndex + 1} notes` : "Slide notes"}
+            </p>
+            {/* Moving on is the most common thing to do next, so the arrows
+                are here as well as on the slide itself. */}
+            {note.slides.length > 1 && (
+              <div className="flex items-center gap-0.5">
+                <button
+                  onClick={() => setActiveSlide((i) => Math.max(0, i - 1))}
+                  disabled={slideIndex === 0}
+                  title="Previous slide"
+                  className="rounded-md p-1 text-slate-400 transition enabled:hover:bg-slate-100 enabled:hover:text-slate-700 disabled:opacity-25"
+                >
+                  <ChevronLeft size={16} />
+                </button>
+                <span className="w-10 text-center text-[11px] font-semibold tabular-nums text-slate-400">
+                  {slideIndex + 1}/{note.slides.length}
+                </span>
+                <button
+                  onClick={() =>
+                    setActiveSlide((i) => Math.min(note.slides.length - 1, i + 1))
+                  }
+                  disabled={slideIndex >= note.slides.length - 1}
+                  title="Next slide"
+                  className="rounded-md p-1 text-slate-400 transition enabled:hover:bg-slate-100 enabled:hover:text-slate-700 disabled:opacity-25"
+                >
+                  <ChevronRight size={16} />
+                </button>
+              </div>
+            )}
+          </div>
           <div className="min-h-0 flex-1 p-2">
             {note.slides.length > 0 ? (
               <RichTextEditor
