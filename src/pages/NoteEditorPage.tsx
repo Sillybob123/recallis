@@ -310,10 +310,13 @@ export function NoteEditorPage() {
         blobs = result.slides;
         if (result.degradedCount > 0) {
           notice =
-            `${result.degradedCount} slide(s) contain charts, SmartArt, or vector art that ` +
-            `can't be drawn in the browser, so those parts are missing.\n\n` +
-            `For a pixel-perfect copy, open the deck in PowerPoint and use ` +
-            `File → Save As → PDF, then upload that PDF instead.`;
+            `${result.degradedCount} of ${result.slides.length} slides use drawn ` +
+            `shapes, arrows, tables, charts, SmartArt or vector art. Slides are ` +
+            `redrawn from the PowerPoint file in your browser, and those parts ` +
+            `can't be reproduced — so they'll be missing or look wrong.\n\n` +
+            `PowerPoint itself makes an exact copy: open the deck and use ` +
+            `File → Save As (or Export) → PDF, then upload that PDF here. ` +
+            `PDFs are rendered exactly as they look.`;
         }
       } else {
         const { renderPdfToSlides } = await import("../lib/pdfSlides");
@@ -561,7 +564,14 @@ export function NoteEditorPage() {
         >
           <Scissors size={13} /> Make card
         </button>
-        <label className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50">
+        <label
+          title={
+            "PDF is reproduced exactly. PowerPoint files are redrawn in the " +
+            "browser, so drawn shapes, tables and charts may be missing — if a " +
+            "deck relies on those, export it as a PDF from PowerPoint first."
+          }
+          className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
+        >
           {slideProgress ? (
             <Loader2 size={13} className="animate-spin" />
           ) : (

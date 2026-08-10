@@ -47,6 +47,8 @@ interface TextShape {
 }
 
 interface PictureShape {
+  /** the part of the source image PowerPoint shows, if it was cropped */
+  crop?: SrcCrop;
   kind: "pic";
   box: Box;
   target: string;
@@ -107,6 +109,87 @@ function findDescendant(root: Element, name: string): Element | null {
     stack.push(...Array.from(el.children));
   }
   return null;
+}
+
+/**
+ * How a group maps its children onto the slide.
+ *
+ * A group's children are positioned in the group's own child coordinate space
+ * (a:chOff / a:chExt), which is then mapped onto where the group itself sits
+ * (a:off / a:ext). Reading a child's raw coordinates without applying that
+ * puts grouped content wherever the group's designer happened to be working —
+ * usually far off the slide, which is why grouped diagrams came out scattered
+ * or missing entirely.
+ */
+interface GroupTransform {
+  offX: number;
+  offY: number;
+  scaleX: number;
+  scaleY: number;
+  chOffX: number;
+  chOffY: number;
+}
+
+function readGroupTransform(grpSpPr: Element | null): GroupTransform | null {
+  if (!grpSpPr) return null;
+  const xfrm = firstNamed(grpSpPr, "xfrm");
+  if (!xfrm) return null;
+  const off = firstNamed(xfrm, "off");
+  const ext = firstNamed(xfrm, "ext");
+  const chOff = firstNamed(xfrm, "chOff");
+  const chExt = firstNamed(xfrm, "chExt");
+  if (!off || !ext || !chOff || !chExt) return null;
+  const chW = Number(chExt.getAttribute("cx") ?? 0);
+  const chH = Number(chExt.getAttribute("cy") ?? 0);
+  return {
+    offX: Number(off.getAttribute("x") ?? 0),
+    offY: Number(off.getAttribute("y") ?? 0),
+    // A zero-sized child space would divide by zero; treat it as 1:1.
+    scaleX: chW ? Number(ext.getAttribute("cx") ?? 0) / chW : 1,
+    scaleY: chH ? Number(ext.getAttribute("cy") ?? 0) / chH : 1,
+    chOffX: Number(chOff.getAttribute("x") ?? 0),
+    chOffY: Number(chOff.getAttribute("y") ?? 0),
+  };
+}
+
+/** Applies a chain of group transforms, innermost first. */
+export function applyGroupTransforms(box: Box, chain: GroupTransform[]): Box {
+  let out = box;
+  for (let i = chain.length - 1; i >= 0; i--) {
+    const t = chain[i];
+    out = {
+      x: t.offX + (out.x - t.chOffX) * t.scaleX,
+      y: t.offY + (out.y - t.chOffY) * t.scaleY,
+      w: out.w * t.scaleX,
+      h: out.h * t.scaleY,
+    };
+  }
+  return out;
+}
+
+/**
+ * PowerPoint crops a picture by naming the fraction to cut off each edge
+ * (a:srcRect, in 1000ths of a percent) while the shape box stays the visible
+ * part. Ignoring it draws the whole image squeezed into the cropped box, which
+ * is why cropped photos came out squashed and off-centre.
+ */
+export interface SrcCrop {
+  l: number;
+  t: number;
+  r: number;
+  b: number;
+}
+
+function readCrop(blipFill: Element | null): SrcCrop | undefined {
+  if (!blipFill) return undefined;
+  const src = firstNamed(blipFill, "srcRect");
+  if (!src) return undefined;
+  const pct = (name: string) => Number(src.getAttribute(name) ?? 0) / 100000;
+  const crop = { l: pct("l"), t: pct("t"), r: pct("r"), b: pct("b") };
+  if (!crop.l && !crop.t && !crop.r && !crop.b) return undefined;
+  // A crop that removes everything would give a zero-width source rect.
+  if (crop.l + crop.r >= 1 || crop.t + crop.b >= 1) return undefined;
+  return crop;
 }
 
 function readBox(spPr: Element | null): Box | null {
@@ -247,11 +330,12 @@ function collectShapes(
 ): Shape[] {
   const shapes: Shape[] = [];
 
-  function walk(container: Element) {
+  function walk(container: Element, chain: GroupTransform[]) {
     for (const el of Array.from(container.children)) {
       const name = local(el);
       if (name === "grpSp") {
-        walk(el);
+        const t = readGroupTransform(firstNamed(el, "grpSpPr"));
+        walk(el, t ? [...chain, t] : chain);
         continue;
       }
       if (name === "sp") {
@@ -270,6 +354,7 @@ function collectShapes(
             null;
         }
         if (!box) continue;
+        box = applyGroupTransforms(box, chain);
         const isTitle = Boolean(ph && /title/i.test(ph.type));
         const paragraphs = extractParagraphs(txBody, false);
         if (!paragraphs.some((p) => p.runs.some((r) => r.text.trim()))) continue;
@@ -283,7 +368,6 @@ function collectShapes(
           anchor: anchorAttr === "ctr" ? "ctr" : anchorAttr === "b" ? "b" : "t",
         });
       } else if (name === "pic") {
-        if (isLayoutOrMaster) continue;
         const box = readBox(firstNamed(el, "spPr"));
         const blipFill = firstNamed(el, "blipFill");
         const blip = blipFill ? findDescendant(blipFill, "blip") : null;
@@ -291,35 +375,42 @@ function collectShapes(
         if (!box || !embed) continue;
         const target = rels.get(embed);
         if (!target) continue;
-        shapes.push({ kind: "pic", box, target });
+        shapes.push({
+          kind: "pic",
+          box: applyGroupTransforms(box, chain),
+          target,
+          crop: readCrop(blipFill),
+        });
       }
     }
   }
 
-  walk(spTree);
+  walk(spTree, []);
   return shapes;
 }
 
 /** Placeholder geometry from a layout (and its master), keyed "type:idx". */
 function collectPlaceholderBoxes(spTree: Element): Map<string, Box> {
   const boxes = new Map<string, Box>();
-  function walk(container: Element) {
+  function walk(container: Element, chain: GroupTransform[]) {
     for (const el of Array.from(container.children)) {
       const name = local(el);
       if (name === "grpSp") {
-        walk(el);
+        const t = readGroupTransform(firstNamed(el, "grpSpPr"));
+        walk(el, t ? [...chain, t] : chain);
         continue;
       }
       if (name !== "sp") continue;
       const ph = placeholderInfo(el);
-      const box = readBox(firstNamed(el, "spPr"));
-      if (!ph || !box) continue;
+      const raw = readBox(firstNamed(el, "spPr"));
+      if (!ph || !raw) continue;
+      const box = applyGroupTransforms(raw, chain);
       boxes.set(`${ph.type}:${ph.idx}`, box);
       if (!boxes.has(`${ph.type}:`)) boxes.set(`${ph.type}:`, box);
       if (ph.idx && !boxes.has(`:${ph.idx}`)) boxes.set(`:${ph.idx}`, box);
     }
   }
-  walk(spTree);
+  walk(spTree, []);
   return boxes;
 }
 
@@ -462,6 +553,64 @@ async function loadImageBitmap(
   }
 }
 
+/**
+ * Whether a slide holds things this renderer cannot draw: tables, charts and
+ * SmartArt (all graphicFrame), connectors and arrows (cxnSp), and drawn shapes
+ * whose point is their fill or outline rather than their text.
+ *
+ * Only undecodable *images* used to be counted, so a slide built out of boxes
+ * and arrows came through as bare text on white with nothing said about it.
+ */
+function hasUndrawableContent(spTree: Element): boolean {
+  const stack: Element[] = [spTree];
+  while (stack.length) {
+    const el = stack.pop()!;
+    for (const child of Array.from(el.children)) {
+      const name = local(child);
+      if (name === "graphicFrame" || name === "cxnSp") return true;
+      if (name === "sp") {
+        const spPr = firstNamed(child, "spPr");
+        if (spPr) {
+          const filled =
+            firstNamed(spPr, "solidFill") ??
+            firstNamed(spPr, "gradFill") ??
+            firstNamed(spPr, "blipFill") ??
+            firstNamed(spPr, "pattFill");
+          const outlined = firstNamed(spPr, "ln");
+          // An outline element can still say "no line".
+          const realOutline =
+            outlined && !firstNamed(outlined, "noFill") ? outlined : null;
+          if (filled || realOutline) return true;
+        }
+      }
+      if (name === "grpSp" || name === "spTree") stack.push(child);
+    }
+  }
+  return false;
+}
+
+/** Draws a picture, honouring any crop PowerPoint applied to it. */
+function drawPicture(
+  ctx: CanvasRenderingContext2D,
+  bitmap: ImageBitmap,
+  shape: PictureShape
+) {
+  const dx = shape.box.x * PX_PER_EMU;
+  const dy = shape.box.y * PX_PER_EMU;
+  const dw = shape.box.w * PX_PER_EMU;
+  const dh = shape.box.h * PX_PER_EMU;
+  const crop = shape.crop;
+  if (!crop) {
+    ctx.drawImage(bitmap, dx, dy, dw, dh);
+    return;
+  }
+  const sx = bitmap.width * crop.l;
+  const sy = bitmap.height * crop.t;
+  const sw = bitmap.width * (1 - crop.l - crop.r);
+  const sh = bitmap.height * (1 - crop.t - crop.b);
+  ctx.drawImage(bitmap, sx, sy, sw, sh, dx, dy, dw, dh);
+}
+
 // ---------- public API ----------
 
 export interface PptxRenderResult {
@@ -513,7 +662,12 @@ export async function renderPptxToSlides(
   const total = Math.min(slidePaths.length, MAX_SLIDES);
   const canvasW = Math.round(slideW * PX_PER_EMU);
   const canvasH = Math.round(slideH * PX_PER_EMU);
-  const layoutCache = new Map<string, Map<string, Box>>();
+  // Layouts are shared between slides, so parse each once — its placeholder
+  // geometry and its template artwork both.
+  const layoutCache = new Map<
+    string,
+    { boxes: Map<string, Box>; background: Shape[] }
+  >();
   const blobs: Blob[] = [];
   let degradedCount = 0;
 
@@ -526,39 +680,68 @@ export async function renderPptxToSlides(
     const slideRels = await readRels(zip, slidePath);
     const spTree = allDescendants(slideDoc, "spTree")[0];
 
-    // Placeholder geometry: layout first, then its master.
+    // Placeholder geometry and template artwork: layout first, then master.
     let layoutBoxes = new Map<string, Box>();
+    let background: Shape[] = [];
     const layoutPath = Array.from(slideRels.values()).find((t) =>
       t.includes("slideLayouts/")
     );
     if (layoutPath) {
-      if (layoutCache.has(layoutPath)) {
-        layoutBoxes = layoutCache.get(layoutPath)!;
+      const cached = layoutCache.get(layoutPath);
+      if (cached) {
+        layoutBoxes = cached.boxes;
+        background = cached.background;
       } else {
+        const boxes = new Map<string, Box>();
+        const art: Shape[] = [];
         const layoutFile = zip.file(layoutPath);
         if (layoutFile) {
           const layoutDoc = parseXml(await layoutFile.async("string"));
           const layoutTree = allDescendants(layoutDoc, "spTree")[0];
-          if (layoutTree) layoutBoxes = collectPlaceholderBoxes(layoutTree);
-
           const layoutRels = await readRels(zip, layoutPath);
+          if (layoutTree) {
+            for (const [k, v] of collectPlaceholderBoxes(layoutTree)) boxes.set(k, v);
+          }
+
           const masterPath = Array.from(layoutRels.values()).find((t) =>
             t.includes("slideMasters/")
           );
+          // A layout can opt out of the master's decoration entirely.
+          const layoutEl = allDescendants(layoutDoc, "sldLayout")[0];
+          const wantsMaster = layoutEl?.getAttribute("showMasterSp") !== "0";
           if (masterPath) {
             const masterFile = zip.file(masterPath);
             if (masterFile) {
               const masterDoc = parseXml(await masterFile.async("string"));
               const masterTree = allDescendants(masterDoc, "spTree")[0];
+              const masterRels = await readRels(zip, masterPath);
               if (masterTree) {
                 for (const [k, v] of collectPlaceholderBoxes(masterTree)) {
-                  if (!layoutBoxes.has(k)) layoutBoxes.set(k, v);
+                  if (!boxes.has(k)) boxes.set(k, v);
+                }
+                // The master's own artwork sits behind everything else.
+                if (wantsMaster) {
+                  art.push(
+                    ...collectShapes(masterTree, masterRels, boxes, true).filter(
+                      (sh) => sh.kind === "pic"
+                    )
+                  );
                 }
               }
             }
           }
+          // Then the layout's, on top of the master's.
+          if (layoutTree) {
+            art.push(
+              ...collectShapes(layoutTree, layoutRels, boxes, true).filter(
+                (sh) => sh.kind === "pic"
+              )
+            );
+          }
         }
-        layoutCache.set(layoutPath, layoutBoxes);
+        layoutBoxes = boxes;
+        background = art;
+        layoutCache.set(layoutPath, { boxes, background });
       }
     }
 
@@ -569,9 +752,20 @@ export async function renderPptxToSlides(
     ctx.fillStyle = "#ffffff";
     ctx.fillRect(0, 0, canvasW, canvasH);
 
+    // The deck's own template, underneath the slide's content.
+    let missedArt = false;
+    for (const shape of background) {
+      if (shape.kind !== "pic") continue;
+      const bitmap = await loadImageBitmap(zip, shape.target);
+      if (!bitmap) continue;
+      drawPicture(ctx, bitmap, shape);
+      bitmap.close();
+    }
+
+    if (spTree && hasUndrawableContent(spTree)) missedArt = true;
+
     if (spTree) {
       const shapes = collectShapes(spTree, slideRels, layoutBoxes, false);
-      let missedArt = false;
       // Pictures first so text lands on top of them.
       for (const shape of shapes) {
         if (shape.kind !== "pic") continue;
@@ -580,20 +774,14 @@ export async function renderPptxToSlides(
           missedArt = true;
           continue;
         }
-        ctx.drawImage(
-          bitmap,
-          shape.box.x * PX_PER_EMU,
-          shape.box.y * PX_PER_EMU,
-          shape.box.w * PX_PER_EMU,
-          shape.box.h * PX_PER_EMU
-        );
+        drawPicture(ctx, bitmap, shape);
         bitmap.close();
       }
       for (const shape of shapes) {
         if (shape.kind === "text") drawTextShape(ctx, shape);
       }
-      if (missedArt) degradedCount++;
     }
+    if (missedArt) degradedCount++;
 
     const blob = await new Promise<Blob>((resolve, reject) =>
       canvas.toBlob(
