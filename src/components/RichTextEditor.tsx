@@ -127,6 +127,9 @@ export function RichTextEditor({
   const [undoState, setUndoState] = useState({ canUndo: false, canRedo: false });
   /** Two fully-expanded toolbars on one page was the clutter. */
   const [moreTools, setMoreTools] = useState(false);
+  /** whether the caret currently sits inside a flagged phrase */
+  const [starActive, setStarActive] = useState(false);
+  const [starHint, setStarHint] = useState(false);
   const history = useRef<EditorHistory | null>(null);
   const coalesceTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const composing = useRef(false);
@@ -255,6 +258,18 @@ export function RichTextEditor({
     emit();
   }
 
+  /** The starred phrase the selection is inside, if any. */
+  function starredAtCaret(): HTMLElement | null {
+    const el = ref.current;
+    const sel = window.getSelection();
+    if (!el || !sel || sel.rangeCount === 0) return null;
+    const node = sel.anchorNode;
+    const from =
+      node?.nodeType === 1 ? (node as HTMLElement) : (node?.parentElement ?? null);
+    const mark = from?.closest?.("mark.starred") ?? null;
+    return mark && el.contains(mark) ? (mark as HTMLElement) : null;
+  }
+
   /**
    * Marks the selection as important, as <mark class="starred"> so it stays
    * inline in the flow of the note. Clicking inside an existing highlight
@@ -263,20 +278,37 @@ export function RichTextEditor({
   function toggleStarred() {
     const el = ref.current;
     const sel = window.getSelection();
-    if (!el || !sel || sel.rangeCount === 0) return;
+    if (!el || !sel || sel.rangeCount === 0) {
+      el?.focus();
+      return;
+    }
+    const existing = starredAtCaret();
+    // Nothing selected and not inside one: say so rather than doing nothing
+    // silently, which reads as a broken button.
+    if (!existing && sel.isCollapsed) {
+      setStarHint(true);
+      window.setTimeout(() => setStarHint(false), 2600);
+      el.focus();
+      return;
+    }
     commitHistory();
     el.focus();
-    const node = sel.anchorNode;
-    const parent =
-      node?.nodeType === 1
-        ? (node as HTMLElement)
-        : (node?.parentElement ?? null);
-    const existing = parent?.closest?.("mark.starred");
-    if (existing && el.contains(existing)) {
+    if (existing) {
+      // Unwrap: keep the words, drop the flag, and keep them selected so the
+      // button can be pressed again to put it back.
       const host = existing.parentNode;
+      const first = existing.firstChild;
+      const last = existing.lastChild;
       while (existing.firstChild) host?.insertBefore(existing.firstChild, existing);
       host?.removeChild(existing);
-    } else if (!sel.isCollapsed) {
+      if (first && last) {
+        const range = document.createRange();
+        range.setStartBefore(first);
+        range.setEndAfter(last);
+        sel.removeAllRanges();
+        sel.addRange(range);
+      }
+    } else {
       const holder = document.createElement("div");
       holder.appendChild(sel.getRangeAt(0).cloneContents());
       document.execCommand(
@@ -288,6 +320,7 @@ export function RichTextEditor({
     if (ref.current) onChange(ref.current.innerHTML);
     recount();
     commitHistory();
+    setStarActive(Boolean(starredAtCaret()));
   }
 
   /** Checklist item — execCommand has no equivalent, so insert markup. */
@@ -414,6 +447,7 @@ export function RichTextEditor({
     if (!full) return;
     function onSelectionChange() {
       updateBubble();
+      setStarActive(Boolean(starredAtCaret()));
     }
     document.addEventListener("selectionchange", onSelectionChange);
     return () => document.removeEventListener("selectionchange", onSelectionChange);
@@ -549,11 +583,25 @@ export function RichTextEditor({
 
         <Divider />
         <ToolButton
-          title="Flag as important — collected in the Starred tab"
+          title={
+            starActive
+              ? "Flagged — press to remove"
+              : "Select some words, then flag them as important"
+          }
+          active={starActive}
           onClick={toggleStarred}
         >
-          <Star size={14} className="text-amber-500" />
+          <Star
+            size={14}
+            className="text-amber-500"
+            fill={starActive ? "currentColor" : "none"}
+          />
         </ToolButton>
+        {starHint && (
+          <span className="ml-1 whitespace-nowrap rounded-md bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-700">
+            Select the words first
+          </span>
+        )}
         {full && (
           <ToolButton
             title={moreTools ? "Fewer options" : "More formatting"}
@@ -675,7 +723,11 @@ export function RichTextEditor({
             </ToolButton>
           </>
         )}
+      </div>
 
+      {/* Positioning context for the floating selection bar, and the box the
+          writing area stretches inside when the editor fills its column. */}
+      <div className={`relative ${fill ? "flex min-h-0 flex-1 flex-col" : ""}`}>
         {full && bubble && (
           <div
             className="absolute z-20 flex -translate-x-1/2 items-center gap-0.5 rounded-lg border border-slate-700 bg-slate-800 px-1 py-1 shadow-xl"
