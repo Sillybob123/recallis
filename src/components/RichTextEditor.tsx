@@ -91,6 +91,8 @@ export interface RichTextEditorProps {
   minHeightClass?: string;
   /** typography and padding of the writing area itself */
   contentClass?: string;
+  /** stretch to the height of the parent instead of sizing to content */
+  fill?: boolean;
   maxHeightClass?: string;
   onUploadImage?: (file: File) => Promise<string>;
   autoFocus?: boolean;
@@ -111,6 +113,7 @@ export function RichTextEditor({
   wordCount = false,
   minHeightClass = "min-h-20",
   contentClass = "px-3 py-2 text-sm",
+  fill = false,
   maxHeightClass = "max-h-64",
   onUploadImage,
   autoFocus,
@@ -450,7 +453,11 @@ export function RichTextEditor({
   const Divider = () => <span className="mx-1 h-4 w-px shrink-0 bg-slate-200" />;
 
   return (
-    <div className="rounded-lg border border-slate-300 focus-within:border-indigo-500 focus-within:ring-2 focus-within:ring-indigo-100">
+    <div
+      className={`rounded-lg border border-slate-300 focus-within:border-indigo-500 focus-within:ring-2 focus-within:ring-indigo-100 ${
+        fill ? "flex h-full min-h-0 flex-col" : ""
+      }`}
+    >
       <div
         className={`relative flex flex-wrap items-center gap-0.5 border-b border-slate-200 bg-white px-1.5 py-1 ${
           stickyToolbar ? "sticky top-[57px] z-10 rounded-t-lg" : ""
@@ -735,7 +742,9 @@ export function RichTextEditor({
           onPaste={handlePaste}
           onBlur={() => setColorOpen(null)}
           data-placeholder={placeholder}
-          className={`prose-card ${minHeightClass} ${maxHeightClass} ${contentClass} overflow-y-auto outline-none empty:before:text-slate-400 empty:before:content-[attr(data-placeholder)]`}
+          className={`prose-card ${
+            fill ? "min-h-0 flex-1" : `${minHeightClass} ${maxHeightClass}`
+          } ${contentClass} overflow-y-auto outline-none empty:before:text-slate-400 empty:before:content-[attr(data-placeholder)]`}
         />
       </div>
 

@@ -9,8 +9,6 @@ import {
   CloudOff,
   FilePlus2,
   Loader2,
-  PanelLeftClose,
-  PanelLeftOpen,
   RefreshCw,
   Star,
   ScanEye,
@@ -70,9 +68,9 @@ export function NoteEditorPage() {
   const [cardPrefill, setCardPrefill] = useState<string | null>(null);
   /** which slide the right-hand panel is showing */
   const [activeSlide, setActiveSlide] = useState(0);
-  const [slideTab, setSlideTab] = useState<
-    "note" | "all" | "outline" | "starred"
-  >("note");
+  const [slideTab, setSlideTab] = useState<"all" | "outline" | "starred">("all");
+  /** whether the middle column is writing about this slide or the lecture */
+  const [noteScope, setNoteScope] = useState<"slide" | "lecture">("slide");
   const [online, setOnline] = useState(navigator.onLine);
 
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -436,7 +434,10 @@ export function NoteEditorPage() {
     // One slide shows at a time now, so coming back from an occlusion means
     // selecting that slide rather than scrolling the page to it.
     const index = note.slides.findIndex((sl) => sl.id === id);
-    if (index >= 0) setActiveSlide(index);
+    if (index >= 0) {
+      setActiveSlide(index);
+      setNoteScope("slide");
+    }
   }, [note]);
 
   const uploadInlineImage = useCallback(
@@ -499,10 +500,11 @@ export function NoteEditorPage() {
   // Slides can be replaced with a shorter deck while a later one is selected,
   // so the index is clamped on the way out rather than trusted.
   const slideIndex = Math.max(0, Math.min(activeSlide, note.slides.length - 1));
+  const scope = note.slides.length > 0 ? noteScope : "lecture";
 
   return (
-    <Layout>
-      <div className="mb-3 flex items-center justify-between gap-3">
+    <Layout wide>
+      <div className="mb-2 flex items-center justify-between gap-3">
         <button
           onClick={() => navigate("/notes")}
           className="flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-800"
@@ -530,21 +532,14 @@ export function NoteEditorPage() {
         </div>
       </div>
 
-      <div className="mb-4 flex flex-wrap items-center gap-2">
-        {note.slides.length > 0 && (
-          <button
-            onClick={() => setSlideTab((t) => (t === "all" ? "note" : "all"))}
-            title={slideTab === "all" ? "Back to the current slide" : "Show every slide"}
-            className="rounded-lg border border-slate-300 bg-white p-2 text-slate-500 hover:bg-slate-50"
-          >
-            {slideTab === "all" ? <PanelLeftClose size={15} /> : <PanelLeftOpen size={15} />}
-          </button>
-        )}
+      {/* One line: title, class, and the actions — the page needs its height
+          for the slide and the writing, not for three rows of chrome. */}
+      <div className="mb-2 flex flex-wrap items-center gap-2">
         <input
           value={note.title}
           onChange={(e) => scheduleSave({ ...latest.current!, title: e.target.value })}
           placeholder="Lecture title"
-          className="min-w-0 flex-1 rounded-lg border border-transparent bg-transparent px-2 py-1 text-2xl font-bold text-slate-900 outline-none focus:border-slate-300"
+          className="min-w-0 flex-1 rounded-lg border border-transparent bg-transparent px-2 py-1 text-xl font-bold text-slate-900 outline-none focus:border-slate-300"
         />
         <input
           value={note.className}
@@ -552,11 +547,8 @@ export function NoteEditorPage() {
             scheduleSave({ ...latest.current!, className: e.target.value })
           }
           placeholder="Class"
-          className="w-36 rounded-lg border border-slate-300 px-2 py-1.5 text-sm outline-none focus:border-indigo-500"
+          className="w-32 rounded-lg border border-slate-300 px-2 py-1.5 text-xs outline-none focus:border-indigo-500"
         />
-      </div>
-
-      <div className="mb-3 flex flex-wrap gap-2">
         <button
           onMouseDown={(e) => e.preventDefault() /* keep the text selection */}
           onClick={() => {
@@ -569,22 +561,19 @@ export function NoteEditorPage() {
             }
             setCardPrefill(html);
           }}
-          className="flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-1.5 text-sm font-medium text-indigo-700 hover:bg-indigo-100"
+          className="flex items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-2.5 py-1.5 text-xs font-medium text-indigo-700 hover:bg-indigo-100"
           title="Highlight text in your notes, then click to make a flashcard from it"
         >
-          <Scissors size={14} /> Make card from selection
+          <Scissors size={13} /> Make card
         </button>
-        <label className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50">
+        <label className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50">
           {slideProgress ? (
-            <Loader2 size={14} className="animate-spin" />
+            <Loader2 size={13} className="animate-spin" />
           ) : (
-            <FilePlus2 size={14} />
+            <FilePlus2 size={13} />
           )}
-          <span className="truncate">
-            {slideProgress ??
-              (note.slides.length > 0
-                ? "Add more slides"
-                : "Add lecture slides (PDF or PPTX)")}
+          <span className="max-w-[14rem] truncate">
+            {slideProgress ?? (note.slides.length > 0 ? "Add slides" : "Add slides (PDF or PPTX)")}
           </span>
           <input
             type="file"
@@ -595,9 +584,9 @@ export function NoteEditorPage() {
           />
         </label>
         {note.slides.length > 0 && (
-          <label className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50">
-            <RefreshCw size={14} />
-            <span className="truncate">Replace slides</span>
+          <label className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-2.5 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50">
+            <RefreshCw size={13} />
+            <span>Replace</span>
             <input
               type="file"
               accept=".pdf,.pptx,application/pdf,application/vnd.openxmlformats-officedocument.presentationml.presentation"
@@ -612,294 +601,298 @@ export function NoteEditorPage() {
       </div>
 
       {/*
-        Split view: notes on the left, one slide at a time on the right. The
-        old layout stacked every slide down the page, so following a lecture
-        meant scrolling past slides you weren't writing about.
+        Three full-height columns, edge to edge: the slide, what you're
+        writing about it, and a way to get to any other slide. The page used
+        to sit in a centred column with a tall empty box in it, which wasted
+        most of a laptop screen.
       */}
-      <div
-        className={`grid gap-5 ${
-          note.slides.length > 0 ? "lg:grid-cols-[45fr_55fr]" : ""
-        }`}
-      >
-        <div className="order-2 min-w-0 lg:order-1">
-          <p className="mb-1.5 px-1 text-[11px] font-bold uppercase tracking-wide text-slate-400">
-            Lecture notes
-          </p>
-          <div className="rounded-2xl border border-slate-200 bg-white p-1 shadow-sm">
-            <RichTextEditor
-              value={note.content}
-              onChange={(html) => scheduleSave({ ...latest.current!, content: html })}
-              placeholder="Type your lecture notes here… Select text to get a quick format bar, or press Tab to indent."
-              full
-              stickyToolbar
-              wordCount
-              // Grows with what you write instead of reserving a tall empty box.
-              minHeightClass="min-h-[200px]"
-              maxHeightClass="max-h-none"
-              contentClass="px-5 py-4 text-[16px] leading-[1.65]"
-              onUploadImage={uploadInlineImage}
-            />
-          </div>
-        </div>
+      <div className="grid h-[calc(100vh-9.5rem)] min-h-[32rem] grid-cols-1 gap-3 lg:grid-cols-[minmax(0,44fr)_minmax(0,35fr)_minmax(0,21fr)]">
+        {/* ---------- the slide ---------- */}
+        {note.slides.length > 0 ? (
+          <section
+            tabIndex={0}
+            onKeyDown={(e) => {
+              if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
+                e.preventDefault();
+                setActiveSlide((i) =>
+                  Math.max(
+                    0,
+                    Math.min(note.slides.length - 1, i + (e.key === "ArrowRight" ? 1 : -1))
+                  )
+                );
+              }
+            }}
+            className="relative order-1 flex min-h-0 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-indigo-50/50 outline-none focus:border-indigo-300"
+          >
+            <div className="flex items-center justify-between gap-2 px-3 py-2">
+              <span className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-bold tabular-nums text-slate-600 shadow-sm">
+                {slideIndex + 1}
+                <span className="font-medium text-slate-400">/{note.slides.length}</span>
+              </span>
+              <div className="flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-1 py-0.5 shadow-sm">
+                <button
+                  onClick={() =>
+                    updateSlide(note.slides[slideIndex].id, {
+                      important: !note.slides[slideIndex].important,
+                    })
+                  }
+                  title={
+                    note.slides[slideIndex].important
+                      ? "Important — remove the flag"
+                      : "Flag this slide as important"
+                  }
+                  className={`rounded-md p-1.5 transition ${
+                    note.slides[slideIndex].important
+                      ? "text-amber-500"
+                      : "text-slate-300 hover:text-amber-500"
+                  }`}
+                >
+                  <Star
+                    size={15}
+                    fill={note.slides[slideIndex].important ? "currentColor" : "none"}
+                  />
+                </button>
+                <button
+                  onMouseDown={(e) => e.preventDefault()}
+                  onClick={() => {
+                    const html = captureSelection();
+                    if (!html) {
+                      alert("Highlight text in the notes first, then press this.");
+                      return;
+                    }
+                    setCardPrefill(html);
+                  }}
+                  title="Make a card from the highlighted notes"
+                  className="rounded-md p-1.5 text-slate-400 transition hover:text-indigo-600"
+                >
+                  <Scissors size={15} />
+                </button>
+                <SlideToOcclusionButton
+                  decks={decks}
+                  slideNumber={slideIndex + 1}
+                  onPick={(deckId) =>
+                    slideToOcclusion(note.slides[slideIndex], slideIndex, deckId)
+                  }
+                />
+                <button
+                  onClick={() => removeSlide(note.slides[slideIndex].id)}
+                  className="rounded-md p-1.5 text-slate-300 transition hover:text-red-500"
+                  title="Remove slide"
+                >
+                  <Trash2 size={15} />
+                </button>
+              </div>
+            </div>
 
-        {note.slides.length > 0 && (
-          <div className="order-1 min-w-0 lg:order-2">
-            <div className="lg:sticky lg:top-[70px]">
-              <div className="mb-2 flex items-center gap-1 rounded-xl border border-slate-200 bg-white p-1 text-xs font-semibold shadow-sm">
-                {(
-                  [
-                    ["note", "Slide note"],
-                    ["all", "All slides"],
-                    ["outline", "Outline"],
-                    ["starred", starredCount ? `Starred ${starredCount}` : "Starred"],
-                  ] as [typeof slideTab, string][]
-                ).map(([id, label]) => (
+            <div className="relative flex min-h-0 flex-1 items-center justify-center px-10 pb-10">
+              <img
+                src={note.slides[slideIndex].imageUrl}
+                alt={`Slide ${slideIndex + 1}`}
+                className="max-h-full max-w-full rounded-xl border border-slate-200 bg-white object-contain shadow-sm"
+              />
+            </div>
+
+            <SlideArrow
+              side="left"
+              disabled={slideIndex === 0}
+              onClick={() => setActiveSlide((i) => Math.max(0, i - 1))}
+            />
+            <SlideArrow
+              side="right"
+              disabled={slideIndex >= note.slides.length - 1}
+              onClick={() =>
+                setActiveSlide((i) => Math.min(note.slides.length - 1, i + 1))
+              }
+            />
+          </section>
+        ) : (
+          <section className="order-1 flex min-h-[16rem] flex-col items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-6 text-center">
+            <FilePlus2 size={22} className="mb-2 text-slate-300" />
+            <p className="text-sm font-medium text-slate-500">No slides yet</p>
+            <p className="mt-1 max-w-xs text-xs leading-relaxed text-slate-400">
+              Add a PDF or PowerPoint above and each slide becomes its own page
+              to write against.
+            </p>
+          </section>
+        )}
+
+        {/* ---------- what you're writing ---------- */}
+        <section className="order-2 flex min-h-0 flex-col overflow-hidden rounded-2xl border border-slate-200 border-t-2 border-t-indigo-500 bg-white shadow-md">
+          <div className="flex items-center gap-1 border-b border-slate-100 px-2 py-1.5">
+            {(
+              [
+                ["slide", note.slides.length > 0 ? `Slide ${slideIndex + 1}` : "Slide"],
+                ["lecture", "Lecture notes"],
+              ] as ["slide" | "lecture", string][]
+            ).map(([id, label]) => (
+              <button
+                key={id}
+                onClick={() => setNoteScope(id)}
+                disabled={id === "slide" && note.slides.length === 0}
+                className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition disabled:opacity-30 ${
+                  scope === id
+                    ? "bg-indigo-50 text-indigo-700"
+                    : "text-slate-500 enabled:hover:bg-slate-50"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <div className="min-h-0 flex-1 p-2">
+            {scope === "slide" ? (
+              <RichTextEditor
+                key={note.slides[slideIndex].id}
+                value={note.slides[slideIndex].note}
+                onChange={(html) => updateSlide(note.slides[slideIndex].id, { note: html })}
+                placeholder={`Notes for slide ${slideIndex + 1}…`}
+                full
+                fill
+                onUploadImage={uploadInlineImage}
+                contentClass="px-5 py-4 text-[16px] leading-[1.65]"
+              />
+            ) : (
+              <RichTextEditor
+                value={note.content}
+                onChange={(html) => scheduleSave({ ...latest.current!, content: html })}
+                placeholder="Notes for the whole lecture… Select text for a quick format bar, or press Tab to indent."
+                full
+                fill
+                wordCount
+                onUploadImage={uploadInlineImage}
+                contentClass="px-5 py-4 text-[16px] leading-[1.65]"
+              />
+            )}
+          </div>
+        </section>
+
+        {/* ---------- getting anywhere else ---------- */}
+        <aside className="order-3 flex min-h-0 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+          <div className="flex items-center gap-0.5 border-b border-slate-100 px-1.5 py-1.5">
+            {(
+              [
+                ["all", "Slides"],
+                ["outline", "Outline"],
+                ["starred", starredCount ? `★ ${starredCount}` : "★"],
+              ] as [typeof slideTab, string][]
+            ).map(([id, label]) => (
+              <button
+                key={id}
+                onClick={() => setSlideTab(id)}
+                className={`flex-1 rounded-lg px-1.5 py-1.5 text-[11px] font-semibold transition ${
+                  slideTab === id
+                    ? id === "starred"
+                      ? "bg-amber-50 text-amber-700"
+                      : "bg-indigo-50 text-indigo-700"
+                    : "text-slate-500 hover:bg-slate-50"
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            {slideTab === "starred" ? (
+              starred.length === 0 ? (
+                <p className="px-3 py-8 text-center text-[11px] leading-relaxed text-slate-400">
+                  Nothing flagged yet. Use the{" "}
+                  <Star size={10} className="inline text-amber-400" /> on a slide,
+                  or highlight a phrase and press the star in the toolbar.
+                </p>
+              ) : (
+                starred.map((item) => (
                   <button
-                    key={id}
-                    onClick={() => setSlideTab(id)}
-                    className={`flex-1 rounded-lg px-2 py-1.5 transition ${
-                      slideTab === id
-                        ? "bg-indigo-50 text-indigo-700"
-                        : "text-slate-500 hover:bg-slate-50"
+                    key={item.key}
+                    onClick={() => {
+                      if (item.slide !== null) {
+                        setActiveSlide(item.slide);
+                        setNoteScope("slide");
+                      } else {
+                        setNoteScope("lecture");
+                      }
+                    }}
+                    className="flex w-full items-start gap-1.5 border-b border-amber-50 px-2.5 py-2 text-left last:border-b-0 hover:bg-amber-50/60"
+                  >
+                    <Star
+                      size={11}
+                      fill={item.whole ? "currentColor" : "none"}
+                      className="mt-0.5 shrink-0 text-amber-500"
+                    />
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-[11px] leading-snug text-slate-700">
+                        {item.text.length > 90 ? item.text.slice(0, 90) + "…" : item.text}
+                      </span>
+                      <span className="mt-0.5 block text-[10px] font-semibold uppercase tracking-wide text-amber-600/70">
+                        {item.slide === null
+                          ? "Lecture"
+                          : item.whole
+                            ? `Slide ${item.slide + 1} — whole`
+                            : `Slide ${item.slide + 1}`}
+                      </span>
+                    </span>
+                  </button>
+                ))
+              )
+            ) : slideTab === "outline" ? (
+              note.slides.map((slide, i) => {
+                const line = slide.note.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+                return (
+                  <button
+                    key={slide.id}
+                    onClick={() => {
+                      setActiveSlide(i);
+                      setNoteScope("slide");
+                    }}
+                    className={`flex w-full items-baseline gap-2 border-b border-slate-50 px-2.5 py-2 text-left text-[11px] last:border-b-0 hover:bg-slate-50 ${
+                      i === slideIndex ? "bg-indigo-50/60" : ""
                     }`}
                   >
-                    {label}
+                    <span className="w-5 shrink-0 font-bold text-slate-400">{i + 1}</span>
+                    <span className={line ? "truncate text-slate-700" : "italic text-slate-300"}>
+                      {line || "—"}
+                    </span>
+                    {slide.important && (
+                      <Star size={10} fill="currentColor" className="ml-auto shrink-0 text-amber-500" />
+                    )}
+                  </button>
+                );
+              })
+            ) : (
+              <div className="grid grid-cols-2 gap-1.5 p-2">
+                {note.slides.map((slide, i) => (
+                  <button
+                    key={slide.id}
+                    onClick={() => {
+                      setActiveSlide(i);
+                      setNoteScope("slide");
+                    }}
+                    className={`group relative block overflow-hidden rounded-lg border transition ${
+                      i === slideIndex
+                        ? "border-indigo-400 ring-2 ring-indigo-100"
+                        : slide.important
+                          ? "border-amber-300"
+                          : "border-slate-200 hover:border-indigo-300"
+                    }`}
+                    title={`Go to slide ${i + 1}`}
+                  >
+                    {slide.important && (
+                      <Star
+                        size={11}
+                        fill="currentColor"
+                        className="absolute right-1 top-1 text-amber-500 drop-shadow"
+                      />
+                    )}
+                    <img src={slide.imageUrl} alt="" loading="lazy" className="block w-full" />
+                    <span className="block bg-slate-50 py-0.5 text-[10px] font-semibold text-slate-500 group-hover:bg-indigo-50 group-hover:text-indigo-600">
+                      {i + 1}
+                    </span>
                   </button>
                 ))}
               </div>
-
-              {slideTab === "all" ? (
-                <div className="max-h-[calc(100vh-160px)] overflow-y-auto rounded-2xl border border-slate-200 bg-white p-2 shadow-sm">
-                  <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-2">
-                    {note.slides.map((slide, i) => (
-                      <button
-                        key={slide.id}
-                        onClick={() => {
-                          setActiveSlide(i);
-                          setSlideTab("note");
-                        }}
-                        className={`group relative block overflow-hidden rounded-lg border transition ${
-                          i === slideIndex
-                            ? "border-indigo-400 ring-2 ring-indigo-100"
-                            : slide.important
-                              ? "border-amber-300"
-                              : "border-slate-200 hover:border-indigo-300"
-                        }`}
-                        title={`Go to slide ${i + 1}`}
-                      >
-                        {slide.important && (
-                          <Star
-                            size={12}
-                            fill="currentColor"
-                            className="absolute right-1 top-1 text-amber-500 drop-shadow"
-                          />
-                        )}
-                        <img src={slide.imageUrl} alt="" loading="lazy" className="block w-full" />
-                        <span className="block bg-slate-50 py-0.5 text-[10px] font-semibold text-slate-500 group-hover:bg-indigo-50 group-hover:text-indigo-600">
-                          {i + 1}
-                          {slide.note.replace(/<[^>]*>/g, "").trim() && " ·"}
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              ) : slideTab === "outline" ? (
-                <div className="max-h-[calc(100vh-160px)] overflow-y-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
-                  {note.slides.map((slide, i) => {
-                    const line = slide.note.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
-                    return (
-                      <button
-                        key={slide.id}
-                        onClick={() => {
-                          setActiveSlide(i);
-                          setSlideTab("note");
-                        }}
-                        className={`flex w-full items-baseline gap-2 border-b border-slate-50 px-3 py-2 text-left text-xs last:border-b-0 hover:bg-slate-50 ${
-                          i === slideIndex ? "bg-indigo-50/60" : ""
-                        }`}
-                      >
-                        <span className="w-6 shrink-0 font-bold text-slate-400">{i + 1}</span>
-                        <span className={line ? "truncate text-slate-700" : "italic text-slate-300"}>
-                          {line || "no notes yet"}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-              ) : slideTab === "starred" ? (
-                <div className="max-h-[calc(100vh-160px)] overflow-y-auto rounded-2xl border border-amber-200 bg-white shadow-sm">
-                  {starred.length === 0 ? (
-                    <p className="px-4 py-8 text-center text-xs leading-relaxed text-slate-400">
-                      Nothing flagged yet. Use the{" "}
-                      <Star size={11} className="inline text-amber-400" /> on a
-                      slide for the whole thing, or highlight a phrase and press
-                      the star in the toolbar.
-                    </p>
-                  ) : (
-                    starred.map((item) => (
-                      <button
-                        key={item.key}
-                        onClick={() => {
-                          if (item.slide !== null) {
-                            setActiveSlide(item.slide);
-                            setSlideTab("note");
-                          }
-                        }}
-                        className="flex w-full items-start gap-2 border-b border-amber-50 px-3 py-2 text-left last:border-b-0 hover:bg-amber-50/60"
-                      >
-                        <Star
-                          size={12}
-                          fill={item.whole ? "currentColor" : "none"}
-                          className="mt-0.5 shrink-0 text-amber-500"
-                        />
-                        <span className="min-w-0 flex-1">
-                          <span className="block text-xs leading-snug text-slate-700">
-                            {item.text.length > 160
-                              ? item.text.slice(0, 160) + "…"
-                              : item.text}
-                          </span>
-                          <span className="mt-0.5 block text-[10px] font-semibold uppercase tracking-wide text-amber-600/70">
-                            {item.slide === null
-                              ? "Lecture notes"
-                              : item.whole
-                                ? `Slide ${item.slide + 1} — whole slide`
-                                : `Slide ${item.slide + 1}`}
-                          </span>
-                        </span>
-                      </button>
-                    ))
-                  )}
-                </div>
-              ) : (
-                <>
-                  {/* Arrow keys move between slides once the panel is focused. */}
-                  <div
-                    tabIndex={0}
-                    onKeyDown={(e) => {
-                      if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
-                        e.preventDefault();
-                        setActiveSlide((i) =>
-                          Math.max(
-                            0,
-                            Math.min(
-                              note.slides.length - 1,
-                              i + (e.key === "ArrowRight" ? 1 : -1)
-                            )
-                          )
-                        );
-                      }
-                    }}
-                    className="relative overflow-hidden rounded-2xl border border-slate-200 border-t-2 border-t-indigo-500 bg-white shadow-md outline-none focus:border-indigo-300"
-                  >
-                    <div className="flex items-center justify-between gap-2 border-b border-slate-100 px-4 py-2.5">
-                      <span className="text-sm font-bold text-slate-700">
-                        Slide {slideIndex + 1}
-                        <span className="ml-1 text-xs font-medium text-slate-400">
-                          of {note.slides.length}
-                        </span>
-                      </span>
-                      <div className="flex gap-1">
-                        <button
-                          onClick={() =>
-                            updateSlide(note.slides[slideIndex].id, {
-                              important: !note.slides[slideIndex].important,
-                            })
-                          }
-                          title={
-                            note.slides[slideIndex].important
-                              ? "Important — remove the flag"
-                              : "Flag this slide as important"
-                          }
-                          className={`rounded-lg p-1.5 transition ${
-                            note.slides[slideIndex].important
-                              ? "bg-amber-50 text-amber-500"
-                              : "text-slate-300 hover:bg-amber-50 hover:text-amber-500"
-                          }`}
-                        >
-                          <Star
-                            size={15}
-                            fill={
-                              note.slides[slideIndex].important
-                                ? "currentColor"
-                                : "none"
-                            }
-                          />
-                        </button>
-                        <button
-                          onMouseDown={(e) => e.preventDefault()}
-                          onClick={() => {
-                            const html = captureSelection();
-                            if (!html) {
-                              alert(
-                                "Highlight the text in this slide's notes first, then press this."
-                              );
-                              return;
-                            }
-                            setCardPrefill(html);
-                          }}
-                          className="flex items-center gap-1 rounded-lg border border-indigo-200 bg-indigo-50 px-2 py-1 text-xs font-medium text-indigo-700 transition hover:bg-indigo-100"
-                          title="Make a card from the text you've highlighted in this slide's notes"
-                        >
-                          <Scissors size={13} /> Make card
-                        </button>
-                        <SlideToOcclusionButton
-                          decks={decks}
-                          slideNumber={slideIndex + 1}
-                          onPick={(deckId) =>
-                            slideToOcclusion(note.slides[slideIndex], slideIndex, deckId)
-                          }
-                        />
-                        <button
-                          onClick={() => removeSlide(note.slides[slideIndex].id)}
-                          className="rounded-lg p-1.5 text-slate-300 hover:bg-red-50 hover:text-red-500"
-                          title="Remove slide"
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      </div>
-                    </div>
-
-                    <div className="relative bg-slate-50">
-                      <img
-                        src={note.slides[slideIndex].imageUrl}
-                        alt={`Slide ${slideIndex + 1}`}
-                        className="block max-h-[46vh] w-full object-contain"
-                      />
-                      <SlideArrow
-                        side="left"
-                        disabled={slideIndex === 0}
-                        onClick={() => setActiveSlide((i) => Math.max(0, i - 1))}
-                      />
-                      <SlideArrow
-                        side="right"
-                        disabled={slideIndex >= note.slides.length - 1}
-                        onClick={() =>
-                          setActiveSlide((i) => Math.min(note.slides.length - 1, i + 1))
-                        }
-                      />
-                    </div>
-                  </div>
-
-                  <div className="mt-2 rounded-2xl border border-slate-200 bg-white p-1 shadow-sm">
-                    <RichTextEditor
-                      key={note.slides[slideIndex].id}
-                      value={note.slides[slideIndex].note}
-                      onChange={(html) =>
-                        updateSlide(note.slides[slideIndex].id, { note: html })
-                      }
-                      placeholder={`Notes for slide ${slideIndex + 1}…`}
-                      full
-                      minHeightClass="min-h-24"
-                      maxHeightClass="max-h-[28vh]"
-                      contentClass="px-5 py-4 text-[16px] leading-[1.65]"
-                      onUploadImage={uploadInlineImage}
-                    />
-                  </div>
-                </>
-              )}
-            </div>
+            )}
           </div>
-        )}
+        </aside>
       </div>
 
       {cardPrefill !== null && (

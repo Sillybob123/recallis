@@ -4,7 +4,14 @@ import { Layers, LogOut, NotebookPen, Repeat, Zap } from "lucide-react";
 import { useAuth } from "../contexts/AuthContext";
 import { useStudyMode } from "../contexts/StudyModeContext";
 
-export function Layout({ children }: { children: ReactNode }) {
+export function Layout({
+  children,
+  wide = false,
+}: {
+  children: ReactNode;
+  /** Full-bleed: for pages that lay out their own columns to the edges. */
+  wide?: boolean;
+}) {
   const { user, logOut } = useAuth();
   const { studyMode } = useStudyMode();
   const navigate = useNavigate();
@@ -151,7 +158,13 @@ export function Layout({ children }: { children: ReactNode }) {
           )}
         </div>
       </header>
-      <main className="mx-auto max-w-6xl px-4 py-8 sm:px-6">{children}</main>
+      <main
+        className={
+          wide ? "px-3 pb-3 pt-3" : "mx-auto max-w-6xl px-4 py-8 sm:px-6"
+        }
+      >
+        {children}
+      </main>
     </div>
   );
 }
