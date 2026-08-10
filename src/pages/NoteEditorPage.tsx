@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { useAuth } from "../contexts/AuthContext";
 import { Layout } from "../components/Layout";
+import { RichText } from "../components/RichText";
 import { RichTextEditor } from "../components/RichTextEditor";
 import {
   createCard,
@@ -69,8 +70,6 @@ export function NoteEditorPage() {
   /** which slide the right-hand panel is showing */
   const [activeSlide, setActiveSlide] = useState(0);
   const [slideTab, setSlideTab] = useState<"all" | "outline" | "starred">("all");
-  /** whether the middle column is writing about this slide or the lecture */
-  const [noteScope, setNoteScope] = useState<"slide" | "lecture">("slide");
   const [online, setOnline] = useState(navigator.onLine);
 
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -434,10 +433,7 @@ export function NoteEditorPage() {
     // One slide shows at a time now, so coming back from an occlusion means
     // selecting that slide rather than scrolling the page to it.
     const index = note.slides.findIndex((sl) => sl.id === id);
-    if (index >= 0) {
-      setActiveSlide(index);
-      setNoteScope("slide");
-    }
+    if (index >= 0) setActiveSlide(index);
   }, [note]);
 
   const uploadInlineImage = useCallback(
@@ -500,7 +496,6 @@ export function NoteEditorPage() {
   // Slides can be replaced with a shorter deck while a later one is selected,
   // so the index is clamped on the way out rather than trusted.
   const slideIndex = Math.max(0, Math.min(activeSlide, note.slides.length - 1));
-  const scope = note.slides.length > 0 ? noteScope : "lecture";
 
   return (
     <Layout wide>
@@ -601,167 +596,207 @@ export function NoteEditorPage() {
       </div>
 
       {/*
-        Three full-height columns, edge to edge: the slide, what you're
-        writing about it, and a way to get to any other slide. The page used
-        to sit in a centred column with a tall empty box in it, which wasted
-        most of a laptop screen.
+        A landscape slide leaves most of its column empty, so the lecture-wide
+        notes sit underneath it rather than beside. The slide's own notes stay
+        in their own column, and everything typed against a slide also shows
+        up in the lecture notes as a labelled block — so the left column reads
+        as one running record of the lecture.
       */}
-      <div className="grid h-[calc(100vh-9.5rem)] min-h-[32rem] grid-cols-1 gap-3 lg:grid-cols-[minmax(0,44fr)_minmax(0,35fr)_minmax(0,21fr)]">
-        {/* ---------- the slide ---------- */}
-        {note.slides.length > 0 ? (
-          <section
-            tabIndex={0}
-            onKeyDown={(e) => {
-              if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
-                e.preventDefault();
-                setActiveSlide((i) =>
-                  Math.max(
-                    0,
-                    Math.min(note.slides.length - 1, i + (e.key === "ArrowRight" ? 1 : -1))
-                  )
-                );
-              }
-            }}
-            className="relative order-1 flex min-h-0 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-indigo-50/50 outline-none focus:border-indigo-300"
-          >
-            <div className="flex items-center justify-between gap-2 px-3 py-2">
-              <span className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-bold tabular-nums text-slate-600 shadow-sm">
-                {slideIndex + 1}
-                <span className="font-medium text-slate-400">/{note.slides.length}</span>
-              </span>
-              <div className="flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-1 py-0.5 shadow-sm">
-                <button
-                  onClick={() =>
-                    updateSlide(note.slides[slideIndex].id, {
-                      important: !note.slides[slideIndex].important,
-                    })
-                  }
-                  title={
-                    note.slides[slideIndex].important
-                      ? "Important — remove the flag"
-                      : "Flag this slide as important"
-                  }
-                  className={`rounded-md p-1.5 transition ${
-                    note.slides[slideIndex].important
-                      ? "text-amber-500"
-                      : "text-slate-300 hover:text-amber-500"
-                  }`}
-                >
-                  <Star
-                    size={15}
-                    fill={note.slides[slideIndex].important ? "currentColor" : "none"}
-                  />
-                </button>
-                <button
-                  onMouseDown={(e) => e.preventDefault()}
-                  onClick={() => {
-                    const html = captureSelection();
-                    if (!html) {
-                      alert("Highlight text in the notes first, then press this.");
-                      return;
+      <div className="grid h-[calc(100vh-9.5rem)] min-h-[34rem] grid-cols-1 gap-3 lg:grid-cols-[minmax(0,46fr)_minmax(0,32fr)_minmax(0,22fr)]">
+        {/* ---------- slide, then the lecture as a whole ---------- */}
+        <div className="order-1 flex min-h-0 flex-col gap-3">
+          {note.slides.length > 0 ? (
+            <section
+              tabIndex={0}
+              onKeyDown={(e) => {
+                if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
+                  e.preventDefault();
+                  setActiveSlide((i) =>
+                    Math.max(
+                      0,
+                      Math.min(note.slides.length - 1, i + (e.key === "ArrowRight" ? 1 : -1))
+                    )
+                  );
+                }
+              }}
+              className="relative flex shrink-0 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-indigo-50/50 outline-none focus:border-indigo-300"
+            >
+              <div className="flex items-center justify-between gap-2 px-3 py-2">
+                <span className="rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-bold tabular-nums text-slate-600 shadow-sm">
+                  {slideIndex + 1}
+                  <span className="font-medium text-slate-400">/{note.slides.length}</span>
+                </span>
+                <div className="flex items-center gap-1 rounded-lg border border-slate-200 bg-white px-1 py-0.5 shadow-sm">
+                  <button
+                    onClick={() =>
+                      updateSlide(note.slides[slideIndex].id, {
+                        important: !note.slides[slideIndex].important,
+                      })
                     }
-                    setCardPrefill(html);
-                  }}
-                  title="Make a card from the highlighted notes"
-                  className="rounded-md p-1.5 text-slate-400 transition hover:text-indigo-600"
-                >
-                  <Scissors size={15} />
-                </button>
-                <SlideToOcclusionButton
-                  decks={decks}
-                  slideNumber={slideIndex + 1}
-                  onPick={(deckId) =>
-                    slideToOcclusion(note.slides[slideIndex], slideIndex, deckId)
+                    title={
+                      note.slides[slideIndex].important
+                        ? "Important — remove the flag"
+                        : "Flag this slide as important"
+                    }
+                    className={`rounded-md p-1.5 transition ${
+                      note.slides[slideIndex].important
+                        ? "text-amber-500"
+                        : "text-slate-300 hover:text-amber-500"
+                    }`}
+                  >
+                    <Star
+                      size={15}
+                      fill={note.slides[slideIndex].important ? "currentColor" : "none"}
+                    />
+                  </button>
+                  <button
+                    onMouseDown={(e) => e.preventDefault()}
+                    onClick={() => {
+                      const html = captureSelection();
+                      if (!html) {
+                        alert("Highlight text in the notes first, then press this.");
+                        return;
+                      }
+                      setCardPrefill(html);
+                    }}
+                    title="Make a card from the highlighted notes"
+                    className="rounded-md p-1.5 text-slate-400 transition hover:text-indigo-600"
+                  >
+                    <Scissors size={15} />
+                  </button>
+                  <SlideToOcclusionButton
+                    decks={decks}
+                    slideNumber={slideIndex + 1}
+                    onPick={(deckId) =>
+                      slideToOcclusion(note.slides[slideIndex], slideIndex, deckId)
+                    }
+                  />
+                  <button
+                    onClick={() => removeSlide(note.slides[slideIndex].id)}
+                    className="rounded-md p-1.5 text-slate-300 transition hover:text-red-500"
+                    title="Remove slide"
+                  >
+                    <Trash2 size={15} />
+                  </button>
+                </div>
+              </div>
+              <div className="relative flex items-center justify-center px-10 pb-3">
+                <img
+                  src={note.slides[slideIndex].imageUrl}
+                  alt={`Slide ${slideIndex + 1}`}
+                  // Sized to the slide, not to the column: a 16:9 deck should
+                  // not stretch a panel to fill height it doesn't need.
+                  className="max-h-[38vh] w-full rounded-xl border border-slate-200 bg-white object-contain shadow-sm"
+                />
+                <SlideArrow
+                  side="left"
+                  disabled={slideIndex === 0}
+                  onClick={() => setActiveSlide((i) => Math.max(0, i - 1))}
+                />
+                <SlideArrow
+                  side="right"
+                  disabled={slideIndex >= note.slides.length - 1}
+                  onClick={() =>
+                    setActiveSlide((i) => Math.min(note.slides.length - 1, i + 1))
                   }
                 />
-                <button
-                  onClick={() => removeSlide(note.slides[slideIndex].id)}
-                  className="rounded-md p-1.5 text-slate-300 transition hover:text-red-500"
-                  title="Remove slide"
-                >
-                  <Trash2 size={15} />
-                </button>
               </div>
-            </div>
+            </section>
+          ) : (
+            <section className="flex shrink-0 flex-col items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-6 text-center">
+              <FilePlus2 size={22} className="mb-2 text-slate-300" />
+              <p className="text-sm font-medium text-slate-500">No slides yet</p>
+              <p className="mt-1 max-w-xs text-xs leading-relaxed text-slate-400">
+                Add a PDF or PowerPoint above and each slide becomes its own
+                page to write against.
+              </p>
+            </section>
+          )}
 
-            <div className="relative flex min-h-0 flex-1 items-center justify-center px-10 pb-10">
-              <img
-                src={note.slides[slideIndex].imageUrl}
-                alt={`Slide ${slideIndex + 1}`}
-                className="max-h-full max-w-full rounded-xl border border-slate-200 bg-white object-contain shadow-sm"
-              />
-            </div>
-
-            <SlideArrow
-              side="left"
-              disabled={slideIndex === 0}
-              onClick={() => setActiveSlide((i) => Math.max(0, i - 1))}
-            />
-            <SlideArrow
-              side="right"
-              disabled={slideIndex >= note.slides.length - 1}
-              onClick={() =>
-                setActiveSlide((i) => Math.min(note.slides.length - 1, i + 1))
-              }
-            />
-          </section>
-        ) : (
-          <section className="order-1 flex min-h-[16rem] flex-col items-center justify-center rounded-2xl border border-dashed border-slate-300 bg-slate-50 p-6 text-center">
-            <FilePlus2 size={22} className="mb-2 text-slate-300" />
-            <p className="text-sm font-medium text-slate-500">No slides yet</p>
-            <p className="mt-1 max-w-xs text-xs leading-relaxed text-slate-400">
-              Add a PDF or PowerPoint above and each slide becomes its own page
-              to write against.
+          <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+            <p className="shrink-0 border-b border-slate-100 px-3 py-2 text-[11px] font-bold uppercase tracking-wide text-slate-400">
+              Lecture notes
             </p>
-          </section>
-        )}
+            <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-2">
+              {/* Typed here rather than against a slide — indigo, so it reads
+                  as the through-line of the lecture. */}
+              <div className="rounded-xl border border-indigo-200 bg-indigo-50/40 p-1">
+                <RichTextEditor
+                  value={note.content}
+                  onChange={(html) =>
+                    scheduleSave({ ...latest.current!, content: html })
+                  }
+                  placeholder="Notes for the lecture as a whole…"
+                  full
+                  onUploadImage={uploadInlineImage}
+                  minHeightClass="min-h-[7rem]"
+                  maxHeightClass="max-h-none"
+                  contentClass="px-4 py-3 text-[15px] leading-[1.6] text-indigo-950"
+                />
+              </div>
 
-        {/* ---------- what you're writing ---------- */}
+              {/* Everything written against a slide, in slide order. */}
+              {note.slides.map((slide, i) =>
+                slide.note.replace(/<[^>]*>/g, "").trim() ? (
+                  // A div, not a button: these mirror the note's own markup,
+                  // which can contain links and checkboxes — and a button
+                  // cannot legally contain either.
+                  <div
+                    key={slide.id}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => setActiveSlide(i)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        setActiveSlide(i);
+                      }
+                    }}
+                    title={`Go to slide ${i + 1}`}
+                    className={`block w-full cursor-pointer rounded-xl border px-3 py-2 text-left transition hover:border-indigo-300 ${
+                      i === slideIndex
+                        ? "border-indigo-300 bg-indigo-50/30"
+                        : "border-slate-200 bg-white"
+                    }`}
+                  >
+                    <span className="mb-1 flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-wide text-slate-400">
+                      Slide {i + 1}
+                      {slide.important && (
+                        <Star size={10} fill="currentColor" className="text-amber-500" />
+                      )}
+                    </span>
+                    <RichText
+                      html={slide.note}
+                      className="text-[14px] leading-[1.55] text-slate-700"
+                    />
+                  </div>
+                ) : null
+              )}
+            </div>
+          </section>
+        </div>
+
+        {/* ---------- this slide ---------- */}
         <section className="order-2 flex min-h-0 flex-col overflow-hidden rounded-2xl border border-slate-200 border-t-2 border-t-indigo-500 bg-white shadow-md">
-          <div className="flex items-center gap-1 border-b border-slate-100 px-2 py-1.5">
-            {(
-              [
-                ["slide", note.slides.length > 0 ? `Slide ${slideIndex + 1}` : "Slide"],
-                ["lecture", "Lecture notes"],
-              ] as ["slide" | "lecture", string][]
-            ).map(([id, label]) => (
-              <button
-                key={id}
-                onClick={() => setNoteScope(id)}
-                disabled={id === "slide" && note.slides.length === 0}
-                className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition disabled:opacity-30 ${
-                  scope === id
-                    ? "bg-indigo-50 text-indigo-700"
-                    : "text-slate-500 enabled:hover:bg-slate-50"
-                }`}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
+          <p className="shrink-0 border-b border-slate-100 px-3 py-2 text-[11px] font-bold uppercase tracking-wide text-slate-400">
+            {note.slides.length > 0 ? `Slide ${slideIndex + 1} notes` : "Slide notes"}
+          </p>
           <div className="min-h-0 flex-1 p-2">
-            {scope === "slide" ? (
+            {note.slides.length > 0 ? (
               <RichTextEditor
                 key={note.slides[slideIndex].id}
                 value={note.slides[slideIndex].note}
                 onChange={(html) => updateSlide(note.slides[slideIndex].id, { note: html })}
-                placeholder={`Notes for slide ${slideIndex + 1}…`}
+                placeholder={`What was said about slide ${slideIndex + 1}…`}
                 full
                 fill
                 onUploadImage={uploadInlineImage}
                 contentClass="px-5 py-4 text-[16px] leading-[1.65]"
               />
             ) : (
-              <RichTextEditor
-                value={note.content}
-                onChange={(html) => scheduleSave({ ...latest.current!, content: html })}
-                placeholder="Notes for the whole lecture… Select text for a quick format bar, or press Tab to indent."
-                full
-                fill
-                wordCount
-                onUploadImage={uploadInlineImage}
-                contentClass="px-5 py-4 text-[16px] leading-[1.65]"
-              />
+              <p className="px-4 py-8 text-center text-xs text-slate-400">
+                Add slides and this is where you'll write about each one.
+              </p>
             )}
           </div>
         </section>
@@ -804,14 +839,7 @@ export function NoteEditorPage() {
                 starred.map((item) => (
                   <button
                     key={item.key}
-                    onClick={() => {
-                      if (item.slide !== null) {
-                        setActiveSlide(item.slide);
-                        setNoteScope("slide");
-                      } else {
-                        setNoteScope("lecture");
-                      }
-                    }}
+                    onClick={() => item.slide !== null && setActiveSlide(item.slide)}
                     className="flex w-full items-start gap-1.5 border-b border-amber-50 px-2.5 py-2 text-left last:border-b-0 hover:bg-amber-50/60"
                   >
                     <Star
@@ -840,10 +868,7 @@ export function NoteEditorPage() {
                 return (
                   <button
                     key={slide.id}
-                    onClick={() => {
-                      setActiveSlide(i);
-                      setNoteScope("slide");
-                    }}
+                    onClick={() => setActiveSlide(i)}
                     className={`flex w-full items-baseline gap-2 border-b border-slate-50 px-2.5 py-2 text-left text-[11px] last:border-b-0 hover:bg-slate-50 ${
                       i === slideIndex ? "bg-indigo-50/60" : ""
                     }`}
@@ -863,10 +888,7 @@ export function NoteEditorPage() {
                 {note.slides.map((slide, i) => (
                   <button
                     key={slide.id}
-                    onClick={() => {
-                      setActiveSlide(i);
-                      setNoteScope("slide");
-                    }}
+                    onClick={() => setActiveSlide(i)}
                     className={`group relative block overflow-hidden rounded-lg border transition ${
                       i === slideIndex
                         ? "border-indigo-400 ring-2 ring-indigo-100"
