@@ -126,22 +126,34 @@ body {
   margin: 0.15em 0;
 }
 .prose-card :where(ul) {
-  list-style: disc outside;
+  /* longhand: the shorthand minifies to "list-style: outside", which is
+     correct but relies on disc being the initial value */
+  list-style-type: disc;
 }
 .prose-card :where(ul ul) {
-  list-style: circle outside;
+  /* longhand: the shorthand minifies to "list-style: outside", which is
+     correct but relies on disc being the initial value */
+  list-style-type: circle;
 }
 .prose-card :where(ul ul ul) {
-  list-style: square outside;
+  /* longhand: the shorthand minifies to "list-style: outside", which is
+     correct but relies on disc being the initial value */
+  list-style-type: square;
 }
 .prose-card :where(ol) {
-  list-style: decimal outside;
+  /* longhand: the shorthand minifies to "list-style: outside", which is
+     correct but relies on disc being the initial value */
+  list-style-type: decimal;
 }
 .prose-card :where(ol ol) {
-  list-style: lower-alpha outside;
+  /* longhand: the shorthand minifies to "list-style: outside", which is
+     correct but relies on disc being the initial value */
+  list-style-type: lower-alpha;
 }
 .prose-card :where(ol ol ol) {
-  list-style: lower-roman outside;
+  /* longhand: the shorthand minifies to "list-style: outside", which is
+     correct but relies on disc being the initial value */
+  list-style-type: lower-roman;
 }
 .prose-card :where(b, strong) {
   font-weight: 700;

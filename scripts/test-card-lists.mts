@@ -21,18 +21,18 @@ const rule = (selector: string) =>
 
 check(
   "bulleted lists get a marker",
-  /list-style:\s*disc/.test(rule(".prose-card :where(ul)")),
+  /list-style-type:\s*disc/.test(rule(".prose-card :where(ul)")),
   rule(".prose-card :where(ul)").replace(/\s+/g, " ")
 );
 check(
   "numbered lists get numbers",
-  /list-style:\s*decimal/.test(rule(".prose-card :where(ol)")),
+  /list-style-type:\s*decimal/.test(rule(".prose-card :where(ol)")),
   rule(".prose-card :where(ol)").replace(/\s+/g, " ")
 );
 check(
   "nested bullets change shape",
-  /list-style:\s*circle/.test(rule(".prose-card :where(ul ul)")) &&
-    /list-style:\s*square/.test(rule(".prose-card :where(ul ul ul)"))
+  /list-style-type:\s*circle/.test(rule(".prose-card :where(ul ul)")) &&
+    /list-style-type:\s*square/.test(rule(".prose-card :where(ul ul ul)"))
 );
 check(
   "nested numbering changes style",
