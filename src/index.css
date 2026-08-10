@@ -76,16 +76,16 @@ body {
   color: #2563eb;
   text-decoration: underline;
 }
-.prose-card :where(ul.checklist) {
+.prose-card ul.checklist {
   list-style: none;
   padding-left: 0.25em;
 }
-.prose-card :where(ul.checklist li) {
+.prose-card ul.checklist li {
   display: flex;
   align-items: flex-start;
   gap: 0.5em;
 }
-.prose-card :where(ul.checklist input[type="checkbox"]) {
+.prose-card ul.checklist input[type="checkbox"] {
   margin-top: 0.3em;
   accent-color: #4f46e5;
 }
@@ -111,8 +111,37 @@ body {
   margin: 0.5rem auto;
   display: block;
 }
+/*
+ * Imported cards are full of bulleted and numbered lists, and Tailwind's
+ * preflight strips list markers from every ul/ol on the page. Without these
+ * the list still imports — it just renders as indented plain lines with no
+ * bullets or numbers at all.
+ */
 .prose-card :where(ul, ol) {
-  padding-left: 1.25rem;
+  padding-left: 1.5rem;
+  margin: 0.4em 0;
+}
+.prose-card :where(li) {
+  display: list-item;
+  margin: 0.15em 0;
+}
+.prose-card :where(ul) {
+  list-style: disc outside;
+}
+.prose-card :where(ul ul) {
+  list-style: circle outside;
+}
+.prose-card :where(ul ul ul) {
+  list-style: square outside;
+}
+.prose-card :where(ol) {
+  list-style: decimal outside;
+}
+.prose-card :where(ol ol) {
+  list-style: lower-alpha outside;
+}
+.prose-card :where(ol ol ol) {
+  list-style: lower-roman outside;
 }
 .prose-card :where(b, strong) {
   font-weight: 700;

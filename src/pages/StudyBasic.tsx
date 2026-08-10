@@ -128,6 +128,14 @@ function fastThresholdMs(item: StudyItem): number {
     FAST_ANSWER_BASE_MS + (words / READING_WPM) * 60000
   );
 }
+/** Anki's grading keys, which its users already have in their fingers. */
+const ANKI_GRADE_KEYS: Record<string, Rating> = {
+  "1": "again",
+  "2": "hard",
+  "3": "good",
+  "4": "easy",
+};
+
 /** Correct answers a Quizlet card needs before it leaves the session. */
 const MASTERY = 2;
 /**
@@ -1195,19 +1203,72 @@ export function StudyBasic() {
         return;
       }
       if (e.metaKey || e.ctrlKey || e.altKey) return;
+
+      // Escape closes whatever is open, and otherwise leaves the session.
+      // Modals do their own thing, so it is left to them.
+      if (e.key === "Escape" && !showEdit && !showSettings) {
+        if (moreOpen || reviewOpen || gradingOpen || rootsOpen) {
+          setMoreOpen(false);
+          setReviewOpen(false);
+          setGradingOpen(false);
+          setRootsOpen(false);
+          return;
+        }
+        e.preventDefault();
+        if (canGoBack) navigate(-1);
+        else navigate(deckId ? `/deck/${deckId}` : "/decks");
+        return;
+      }
+
       if (!current || showEdit || showSettings || moreOpen) return;
       if (e.key === "e" || e.key === "E") {
         e.preventDefault();
         openEditor();
         return;
       }
+
+      // Anki review keys, matching Anki's own 1–4 grading. Bury/suspend/mark
+      // use unambiguous letters rather than Anki's =/@/! which differ by
+      // version and keyboard layout.
+      if (studyMode === "anki") {
+        const rating = ANKI_GRADE_KEYS[e.key];
+        if (rating) {
+          // Anki ignores the grade keys until the answer is showing, so that
+          // a stray keypress can't grade a card you haven't read.
+          if (!flipped) return;
+          e.preventDefault();
+          gradeSrs(rating);
+          return;
+        }
+        if (e.key === "b" || e.key === "B") {
+          e.preventDefault();
+          actions.buryCard();
+          return;
+        }
+        if (e.key === "s" || e.key === "S") {
+          e.preventDefault();
+          actions.suspendCard();
+          return;
+        }
+        if (e.key === "m" || e.key === "M") {
+          e.preventDefault();
+          actions.markNote();
+          return;
+        }
+        if (e.key === "z" || e.key === "Z") {
+          e.preventDefault();
+          actions.previousCard();
+          return;
+        }
+      }
+
       if ((e.key === "s" || e.key === "S") && studyMode === "quizlet") {
         e.preventDefault();
         toggleStar();
         return;
       }
       if (!isFlashcardContext) return;
-      if (e.key === " " || e.code === "Space") {
+      if (e.key === " " || e.code === "Space" || e.key === "Enter") {
         e.preventDefault();
         if (!flipped) {
           captureGuessTime();
@@ -1408,8 +1469,8 @@ export function StudyBasic() {
     </div>
   );
 
-  /** How this mode grades, on demand instead of as a wall of small print. */
-  const gradingButton = studyMode === "quizlet" && current && (
+  /** How this mode works and what the keys do, on demand. */
+  const gradingButton = current && (
     <div className="relative shrink-0">
       <button
         onClick={() => setGradingOpen((o) => !o)}
@@ -1422,6 +1483,45 @@ export function StudyBasic() {
         <>
           <div className="fixed inset-0 z-20" onClick={() => setGradingOpen(false)} />
           <div className="absolute right-0 top-9 z-30 w-72 rounded-xl border border-slate-200 bg-white p-3 text-xs leading-relaxed text-slate-600 shadow-xl">
+            {studyMode === "anki" ? (
+              <>
+                <p className="mb-2 font-semibold text-slate-800">Keyboard</p>
+                <ul className="space-y-1">
+                  <li>
+                    <Kbd>Space</Kbd> show answer, then Good
+                  </li>
+                  <li>
+                    <Kbd>1</Kbd>
+                    <Kbd>2</Kbd>
+                    <Kbd>3</Kbd>
+                    <Kbd>4</Kbd> Again / Hard / Good / Easy
+                  </li>
+                  <li>
+                    <Kbd>E</Kbd> edit this card
+                  </li>
+                  <li>
+                    <Kbd>B</Kbd> bury until tomorrow
+                  </li>
+                  <li>
+                    <Kbd>S</Kbd> suspend until you unsuspend it
+                  </li>
+                  <li>
+                    <Kbd>M</Kbd> mark the note
+                  </li>
+                  <li>
+                    <Kbd>Z</Kbd> or <Kbd>⌘Z</Kbd> undo the last answer
+                  </li>
+                  <li>
+                    <Kbd>Esc</Kbd> back to the deck
+                  </li>
+                </ul>
+                <p className="mt-2 border-t border-slate-100 pt-2 text-slate-400">
+                  Grading uses FSRS-6. Bury hides a card until tomorrow;
+                  suspend takes it out of reviews until you say otherwise.
+                </p>
+              </>
+            ) : (
+              <>
             <p className="mb-2 font-semibold text-slate-800">
               {mode === "learn" ? "Learn" : "Smart shuffle"}
             </p>
@@ -1454,6 +1554,8 @@ export function StudyBasic() {
             <p className="mt-2 border-t border-slate-100 pt-2 text-slate-400">
               Your Anki-mode schedule is untouched.
             </p>
+              </>
+            )}
           </div>
         </>
       )}
