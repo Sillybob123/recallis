@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import {
+  AlertTriangle,
   ArrowLeft,
   Check,
   ChevronLeft,
@@ -30,6 +31,12 @@ import {
   deleteNoteSlideFiles,
   watchDecks,
 } from "../lib/firestore";
+import {
+  clearDraft,
+  draftIsUnsaved,
+  loadDraft,
+  saveDraft,
+} from "../lib/noteDrafts";
 import type { CardData, Deck, Note, NoteSlide } from "../types";
 import {
   findDeckByPath,
@@ -41,6 +48,13 @@ import { uid } from "../lib/uid";
 import { htmlToText } from "../lib/text";
 
 type SaveState = "saved" | "saving" | "dirty" | "offline";
+
+/** How long after you stop typing the note goes to Firestore. */
+const SAVE_DEBOUNCE_MS = 1200;
+const RETRY_BASE_MS = 2000;
+const RETRY_MAX_MS = 30000;
+/** How long to wait for the server before saying so and retrying. */
+const PERSIST_TIMEOUT_MS = 8000;
 
 export function NoteEditorPage() {
   const { noteId } = useParams();
@@ -60,17 +74,71 @@ export function NoteEditorPage() {
 
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const latest = useRef<Note | null>(null);
+  const savingRef = useRef(false);
+  const retryDelay = useRef(RETRY_BASE_MS);
+  const saveStateRef = useRef<SaveState>("saved");
+  /**
+   * Always the current flush. Retries and the loader reach the save through
+   * this rather than closing over it: flushNow and a separate retry helper
+   * referring to each other would each capture the other's first version, and
+   * quietly keep using a stale one once the note or user changed.
+   */
+  const flushRef = useRef<() => Promise<void>>(async () => {});
+  /** localStorage itself refused — the one case we can't quietly absorb */
+  const [draftFailed, setDraftFailed] = useState(false);
+  const [recovered, setRecovered] = useState(false);
 
   useEffect(() => {
     if (!user || !noteId) return;
-    getNote(user.uid, noteId).then((n) => {
-      if (!n) {
-        navigate("/notes");
-        return;
-      }
-      setNote(n);
-      latest.current = n;
-    });
+    getNote(user.uid, noteId)
+      .then((n) => {
+        if (!n) {
+          navigate("/notes");
+          return;
+        }
+        // A draft newer than the stored note means the last session ended
+        // before its save landed — a closed tab, a crash, a dead connection.
+        const draft = loadDraft(noteId);
+        if (draft && draftIsUnsaved(draft, n)) {
+          const recovered: Note = {
+            ...n,
+            title: draft.title,
+            className: draft.className,
+            content: draft.content,
+            slides: draft.slides,
+          };
+          setNote(recovered);
+          latest.current = recovered;
+          setRecovered(true);
+          setSaveState("dirty");
+          // Get it to the server now rather than waiting for a keystroke.
+          saveTimer.current = setTimeout(() => void flushRef.current(), 0);
+          return;
+        }
+        if (draft) clearDraft(noteId);
+        setNote(n);
+        latest.current = n;
+      })
+      .catch(() => {
+        // Couldn't reach the note. If there's a draft, it is the only copy
+        // of that work, so show it rather than an empty editor.
+        const draft = loadDraft(noteId);
+        if (!draft) return;
+        const offlineNote: Note = {
+          id: noteId,
+          title: draft.title,
+          className: draft.className,
+          content: draft.content,
+          slides: draft.slides,
+          cardsMade: 0,
+          createdAt: draft.savedAt,
+          updatedAt: draft.savedAt,
+        };
+        setNote(offlineNote);
+        latest.current = offlineNote;
+        setRecovered(true);
+        setSaveState("offline");
+      });
     return watchDecks(user.uid, setDecks);
   }, [user, noteId, navigate]);
 
@@ -88,8 +156,6 @@ export function NoteEditorPage() {
   const persist = useCallback(
     async (n: Note) => {
       if (!user || !noteId) return;
-      // Firestore's offline cache queues this write and syncs on reconnect,
-      // so an offline save still resolves — nothing typed is ever lost.
       await updateNote(user.uid, noteId, {
         title: n.title,
         className: n.className,
@@ -100,42 +166,123 @@ export function NoteEditorPage() {
     [user, noteId]
   );
 
-  /** Debounced autosave: persists ~1.2s after you stop typing. */
+  /**
+   * Pushes the note to Firestore and, once that is confirmed, drops the local
+   * draft. A failure schedules a retry rather than waiting for the next
+   * keystroke — someone who types a paragraph, loses signal and walks away
+   * would otherwise never have it saved at all.
+   */
+  function retryIn(delay: number) {
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    saveTimer.current = setTimeout(() => void flushRef.current(), delay);
+  }
+
+  const flushNow = useCallback(async (): Promise<void> => {
+    if (!latest.current || !noteId) return;
+    if (saveTimer.current) {
+      clearTimeout(saveTimer.current);
+      saveTimer.current = null;
+    }
+    if (savingRef.current) return; // one in flight; it re-checks on the way out
+    const attempt = latest.current;
+    savingRef.current = true;
+    setSaveState("saving");
+    try {
+      // Firestore's write promise only settles once the *server* has the
+      // change, so offline it never settles at all. Capping the wait keeps
+      // the indicator honest; the write itself carries on in the background
+      // and the draft simply stays until a later attempt is confirmed.
+      await Promise.race([
+        persist(attempt),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error("save timed out")), PERSIST_TIMEOUT_MS)
+        ),
+      ]);
+      retryDelay.current = RETRY_BASE_MS;
+      setSavedAt(new Date());
+      if (latest.current === attempt) {
+        // Nothing new since: this note really is on the server, so the local
+        // copy has done its job.
+        clearDraft(noteId);
+        setSaveState(navigator.onLine ? "saved" : "offline");
+      } else {
+        // More was typed while that was in flight. The draft already holds it
+        // and must not be cleared — it is the only copy of the newer text.
+        savingRef.current = false;
+        retryIn(0);
+        return;
+      }
+    } catch {
+      // Failed or timed out. The draft stays put, which is the whole point.
+      setSaveState(navigator.onLine ? "dirty" : "offline");
+      retryIn(retryDelay.current);
+      retryDelay.current = Math.min(retryDelay.current * 2, RETRY_MAX_MS);
+    } finally {
+      savingRef.current = false;
+    }
+  }, [persist, noteId]);
+
+  useEffect(() => {
+    flushRef.current = flushNow;
+  }, [flushNow]);
+
+  /**
+   * Every edit goes to localStorage on this tick, then to Firestore about a
+   * second later. The synchronous half is what survives a tab being closed,
+   * a crash, or a browser that never runs our unload handler.
+   */
   const scheduleSave = useCallback(
     (updated: Note) => {
       latest.current = updated;
       setNote(updated);
+      if (noteId && !saveDraft(noteId, updated)) setDraftFailed(true);
+      else setDraftFailed(false);
       setSaveState("dirty");
       if (saveTimer.current) clearTimeout(saveTimer.current);
-      saveTimer.current = setTimeout(async () => {
-        if (!latest.current) return;
-        setSaveState("saving");
-        try {
-          await persist(latest.current);
-          setSavedAt(new Date());
-          setSaveState(navigator.onLine ? "saved" : "offline");
-        } catch {
-          setSaveState("dirty"); // retried on the next edit
-        }
-      }, 1200);
+      saveTimer.current = setTimeout(() => void flushRef.current(), SAVE_DEBOUNCE_MS);
     },
-    [persist]
+    [noteId]
   );
 
-  // Flush any pending save when leaving the page or closing the tab.
   useEffect(() => {
-    function flush() {
-      if (saveTimer.current && latest.current) {
-        clearTimeout(saveTimer.current);
-        persist(latest.current).catch(() => {});
+    saveStateRef.current = saveState;
+  }, [saveState]);
+
+  // Coming back online is the moment a failed save is most likely to work.
+  useEffect(() => {
+    function retryOnline() {
+      setOnline(true);
+      if (latest.current) retryIn(0);
+    }
+    window.addEventListener("online", retryOnline);
+    return () => window.removeEventListener("online", retryOnline);
+  }, []);
+
+  // Leaving the page: save what we can, and say so if it might not land.
+  useEffect(() => {
+    function onHide() {
+      // Synchronous, so it completes even if the page is killed straight
+      // after. The Firestore write is started too but may not finish.
+      if (noteId && latest.current) saveDraft(noteId, latest.current);
+      if (saveTimer.current && latest.current) void flushRef.current();
+    }
+    function onBeforeUnload(e: BeforeUnloadEvent) {
+      onHide();
+      if (saveStateRef.current === "dirty" || saveStateRef.current === "saving") {
+        e.preventDefault();
       }
     }
-    window.addEventListener("beforeunload", flush);
+    window.addEventListener("beforeunload", onBeforeUnload);
+    window.addEventListener("pagehide", onHide);
+    document.addEventListener("visibilitychange", () => {
+      if (document.visibilityState === "hidden") onHide();
+    });
     return () => {
-      window.removeEventListener("beforeunload", flush);
-      flush();
+      window.removeEventListener("beforeunload", onBeforeUnload);
+      window.removeEventListener("pagehide", onHide);
+      onHide();
     };
-  }, [persist]);
+  }, [noteId]);
 
   async function handleSlideFile(file: File, replace = false) {
     if (!user || !noteId || !latest.current) return;
@@ -321,7 +468,25 @@ export function NoteEditorPage() {
         >
           <ArrowLeft size={15} /> All notes
         </button>
-        <SaveIndicator state={effectiveSave} savedAt={savedAt} />
+        <div className="flex items-center gap-3">
+          {recovered && (
+            <span
+              className="flex items-center gap-1.5 rounded-lg bg-amber-50 px-2 py-1 text-xs font-medium text-amber-700"
+              title="This browser had newer notes than the server did — the last save hadn't landed. They've been put back and are saving now."
+            >
+              <RefreshCw size={12} /> Restored unsaved notes
+            </span>
+          )}
+          {draftFailed && (
+            <span
+              className="flex items-center gap-1.5 rounded-lg bg-red-50 px-2 py-1 text-xs font-semibold text-red-700"
+              title="This browser refused to store a local copy (private browsing, or storage full). Your notes still save to the server, but there's no offline backup — copy anything important elsewhere."
+            >
+              <AlertTriangle size={12} /> No local backup
+            </span>
+          )}
+          <SaveIndicator state={effectiveSave} savedAt={savedAt} />
+        </div>
       </div>
 
       <div className="mb-4 flex flex-wrap items-center gap-2">
@@ -680,7 +845,14 @@ function SaveIndicator({
     );
   }
   if (state === "dirty") {
-    return <span className="text-xs font-medium text-slate-400">Editing…</span>;
+    return (
+      <span
+        className="text-xs font-medium text-slate-400"
+        title="Typed and kept on this device. Saving to the server shortly."
+      >
+        Editing…
+      </span>
+    );
   }
   return (
     <span className="flex items-center gap-1.5 text-xs font-medium text-emerald-600">
