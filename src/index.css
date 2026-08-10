@@ -125,6 +125,16 @@ body {
   display: list-item;
   margin: 0.15em 0;
 }
+/*
+ * Study cards centre their text, and an imported list inherits that — so each
+ * bullet's words centre inside their own row and the markers come out ragged.
+ * A list only reads as a list when its items share a left edge. Inheritance
+ * loses to any declared value, and no imported card sets alignment on the list
+ * itself, so this needs no !important to win.
+ */
+.prose-card :where(ul, ol, li) {
+  text-align: left;
+}
 .prose-card :where(ul) {
   /* longhand: the shorthand minifies to "list-style: outside", which is
      correct but relies on disc being the initial value */

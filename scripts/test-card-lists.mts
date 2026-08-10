@@ -47,6 +47,16 @@ check(
   "there is room for the marker to sit in",
   /padding-left/.test(rule(".prose-card :where(ul, ol)"))
 );
+check(
+  "lists are left-aligned even on a centred card",
+  /text-align:\s*left/.test(rule(".prose-card :where(ul, ol, li)")),
+  "otherwise every bullet's words centre in their own row"
+);
+check(
+  "and that rule out-specifies inheritance without !important",
+  !/text-align:\s*left\s*!important/.test(rule(".prose-card :where(ul, ol, li)")),
+  "no imported card sets alignment on the list itself"
+);
 
 // The checklist note type deliberately has no markers, and its rule comes
 // earlier in the file — so it needs the higher specificity to still win.
