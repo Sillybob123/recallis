@@ -3,9 +3,9 @@
 // Everything here is pure: given someone's settings, their plan, their
 // progress and the current instant, it decides which emails are due and what
 // each one should say. The browser uses it to preview and describe the
-// schedule; the sender (mailer/send.mts) uses the same functions to decide
-// what to actually deliver. One source of truth, and the decision is
-// testable without a mail server.
+// schedule; the Cloudflare Worker in worker/src/index.ts uses the same
+// functions to decide what to actually deliver. One source of truth, and the
+// decision is testable without a mail server.
 //
 // Times are always the user's local wall clock. Someone who asks for 18:00
 // means 18:00 where they are, so every comparison goes through their IANA
@@ -41,6 +41,11 @@ export interface EmailSettings {
   email: string;
   /** IANA zone, e.g. "Europe/Budapest" */
   timeZone: string;
+  /**
+   * Only write when something is actually unfinished. On by default: an
+   * email that arrives whether or not you did the work stops being read.
+   */
+  onlyWhenBehind: boolean;
   /** the daily nudge, and the time of day everything scheduled goes out */
   daily: { enabled: boolean; atMinutes: number; days: number[] };
   /** the week-ahead plan */
@@ -61,6 +66,7 @@ export const DEFAULT_EMAIL_SETTINGS: EmailSettings = {
   enabled: false,
   email: "",
   timeZone: "UTC",
+  onlyWhenBehind: true,
   daily: { enabled: true, atMinutes: 18 * 60, days: [1, 2, 3, 4, 5] },
   weekly: { enabled: true, weekday: 0, atMinutes: 17 * 60 },
   exam: { enabled: true, leadDays: [7, 3, 1] },
@@ -293,6 +299,10 @@ export function dueEmails(
     const unfinished = todays.filter(
       (s) => sessionCompletion(progress, s, tasks) < 1
     );
+    // Everything today ticked, and they asked only to hear when it isn't:
+    // the whole email is skipped, tomorrow's preview included. An email that
+    // arrives whether or not you did the work stops being read.
+    const quiet = unfinished.length === 0 && settings.onlyWhenBehind;
     const sections: EmailSection[] = [];
     if (unfinished.length) {
       sections.push({
@@ -300,7 +310,7 @@ export function dueEmails(
         tone: "alert",
         lines: unfinished.map((s) => lineFor(s, progress, tasks, tz)),
       });
-    } else if (todays.length) {
+    } else if (todays.length && !quiet) {
       sections.push({
         title: "Today",
         tone: "good",
@@ -308,7 +318,7 @@ export function dueEmails(
         lines: todays.map((s) => lineFor(s, progress, tasks, tz)),
       });
     }
-    if (tomorrows.length) {
+    if (tomorrows.length && !quiet) {
       sections.push({
         title: "Tomorrow — worth previewing tonight",
         lines: tomorrows.map((s) => lineFor(s, progress, tasks, tz)),
@@ -406,6 +416,8 @@ export function dueEmails(
       const outstanding = covers.filter(
         (s) => sessionCompletion(progress, s, tasks) < 1
       );
+      // Nothing outstanding and they only want chasing: stay quiet.
+      if (outstanding.length === 0 && settings.onlyWhenBehind) continue;
       jobs.push({
         kind: "exam",
         key,
@@ -530,7 +542,10 @@ export function describeSchedule(settings: EmailSettings): string[] {
               .sort()
               .map((d) => WEEKDAY_NAMES[d].slice(0, 3))
               .join(", ")}`;
-    out.push(`What's left from today, ${days} at ${formatTime(settings.daily.atMinutes)}.`);
+    out.push(
+      `What's left from today, ${days} at ${formatTime(settings.daily.atMinutes)}` +
+        (settings.onlyWhenBehind ? ", and only when something is unfinished." : ".")
+    );
   }
   if (settings.weekly.enabled) {
     out.push(

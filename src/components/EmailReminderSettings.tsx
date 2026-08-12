@@ -257,6 +257,16 @@ export function EmailReminderSettings({
                 </div>
               </div>
             )}
+            {s.enabled && (
+              <div className="mt-3 border-t border-slate-100 pt-3">
+                <Toggle
+                  on={s.onlyWhenBehind}
+                  onChange={(v) => patch({ onlyWhenBehind: v })}
+                  label="Only when something isn't done"
+                  hint="Tick everything off for the day and no email goes out. Leave this off to get the all-clear too."
+                />
+              </div>
+            )}
           </div>
 
           {s.enabled && (
@@ -595,8 +605,9 @@ export function EmailReminderSettings({
                   </div>
                 ) : (
                   <p className="text-xs text-slate-400">
-                    Nothing scheduled today, so no daily email would go out —
-                    they're only sent when there's something to say.
+                    Nothing would go out today — either there's nothing on, or
+                    it's all ticked off and you asked only to hear when it
+                    isn't.
                   </p>
                 )}
               </section>
@@ -604,9 +615,9 @@ export function EmailReminderSettings({
               <p className="flex items-start gap-2 rounded-xl bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-800">
                 <AlertTriangle size={14} className="mt-0.5 shrink-0" />
                 <span>
-                  Emails are sent by a job that runs every half hour, so one
-                  scheduled for 18:00 arrives shortly after — not to the minute.
-                  Nothing is ever sent twice.
+                  Emails go out from a scheduled job that wakes every fifteen
+                  minutes, so one set for 18:00 arrives shortly after rather
+                  than to the minute. Nothing is ever sent twice.
                 </span>
               </p>
             </>
@@ -622,7 +633,7 @@ export function EmailReminderSettings({
             <button
               onClick={() => save({ testRequested: Date.now() })}
               className="flex items-center gap-1.5 text-sm font-medium text-slate-500 hover:text-indigo-600"
-              title="Sends one example email on the next run"
+              title="Sends one example email within about fifteen minutes"
             >
               <Send size={14} /> Save &amp; send me a test
             </button>

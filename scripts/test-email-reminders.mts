@@ -21,7 +21,7 @@ import {
   encodeFields,
   decodeValue,
   encodeValue,
-} from "../mailer/firestoreRest.mts";
+} from "../worker/src/firestore";
 
 let failures = 0;
 const check = (name: string, ok: boolean, detail = "") => {
@@ -87,6 +87,9 @@ const settings = (over: Partial<EmailSettings> = {}): EmailSettings => ({
   enabled: true,
   email: "student@example.edu",
   timeZone: TZ,
+  // Most cases below are about scheduling, so the all-clear email is left
+  // on; the "only when behind" rule gets its own section.
+  onlyWhenBehind: false,
   daily: { enabled: true, atMinutes: 18 * 60, days: [0, 1, 2, 3, 4, 5, 6] },
   weekly: { enabled: false, weekday: 0, atMinutes: 17 * 60 },
   exam: { enabled: false, leadDays: [7] },
@@ -330,6 +333,52 @@ console.log("\nreminders you set yourself:");
   check(
     "and says so when there's nothing left",
     dueEmails(attached, plan, allAnki, evening)[0].sections[0].tone === "good"
+  );
+}
+
+// ---------- only when something is undone ----------
+// The default, and the reason the emails stay worth opening: finish the day
+// and nothing arrives.
+console.log("\nonly when something isn't done:");
+{
+  const chase = settings({ onlyWhenBehind: true });
+  check("with work outstanding it still writes", dueEmails(chase, plan, {}, evening).length === 1);
+
+  const done: Record<string, boolean> = {};
+  for (const id of ["s1", "s2"]) {
+    for (const t of DEFAULT_TASKS) done[progressKey(id, t.id)] = true;
+  }
+  check(
+    "with today finished, nothing goes out",
+    dueEmails(chase, plan, done, evening).length === 0,
+    "not even tomorrow's preview — that's the point of the setting"
+  );
+  check(
+    "while with it switched off, the all-clear arrives",
+    dueEmails(settings({ onlyWhenBehind: false }), plan, done, evening).length === 1
+  );
+
+  // The same rule applies to the exam email.
+  const examOnly = settings({
+    onlyWhenBehind: true,
+    daily: { enabled: false, atMinutes: 18 * 60, days: [] },
+    exam: { enabled: true, leadDays: [7] },
+  });
+  const allDone: Record<string, boolean> = {};
+  for (const id of ["s1", "s2", "s3"]) {
+    for (const t of DEFAULT_TASKS) allDone[progressKey(id, t.id)] = true;
+  }
+  check(
+    "an exam you're ready for doesn't write either",
+    dueEmails(examOnly, plan, allDone, evening).length === 0
+  );
+  check(
+    "but one you aren't does",
+    dueEmails(examOnly, plan, {}, evening).length === 1
+  );
+  check(
+    "and it's mentioned in the description",
+    describeSchedule(chase)[0].includes("only when something is unfinished")
   );
 }
 

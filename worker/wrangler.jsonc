@@ -1,0 +1,31 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "recallis-reminders",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-01",
+
+  // Every quarter of an hour. Nothing is sent unless someone's chosen time
+  // has passed and the email hasn't already gone today, so a frequent tick
+  // costs nothing and keeps "18:00" close to 18:00.
+  "triggers": {
+    "crons": ["*/15 * * * *"]
+  },
+
+  // Cloudflare sends the mail itself — no provider account, no API key.
+  // The domain has to be onboarded once:
+  //   npx wrangler email sending enable recallis.org
+  // If Email Sending isn't available on the account yet, set a RESEND_API_KEY
+  // secret instead and the Worker uses that without any other change.
+  "send_email": [{ "name": "EMAIL" }],
+
+  "vars": {
+    "MAIL_FROM": "reminders@recallis.org",
+    "MAIL_FROM_NAME": "Recallis"
+  },
+
+  // FIREBASE_SERVICE_ACCOUNT is a secret, set with:
+  //   npx wrangler secret put FIREBASE_SERVICE_ACCOUNT
+  // It is never in this file and never in the repository.
+
+  "observability": { "enabled": true }
+}
