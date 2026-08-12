@@ -177,7 +177,13 @@ export class Firestore {
       if (pageToken) url.searchParams.set("pageToken", pageToken);
       this.requests++;
       const res = await fetch(url.toString(), { headers: this.headers() });
-      if (!res.ok) throw new Error(`List ${collection} failed (${res.status})`);
+      // Google's reason (API disabled, missing role, wrong project) is in
+      // the body and contains no credential, so it belongs in the error.
+      if (!res.ok) {
+        throw new Error(
+          `List ${collection} failed (${res.status}): ${(await res.text()).slice(0, 400)}`
+        );
+      }
       const body = (await res.json()) as {
         documents?: { name: string; fields?: Record<string, RestValue> }[];
         nextPageToken?: string;
@@ -195,7 +201,11 @@ export class Firestore {
     this.requests++;
     const res = await fetch(`${this.base()}/${path}`, { headers: this.headers() });
     if (res.status === 404) return null;
-    if (!res.ok) throw new Error(`Get ${path} failed (${res.status})`);
+    if (!res.ok) {
+      throw new Error(
+        `Get ${path} failed (${res.status}): ${(await res.text()).slice(0, 400)}`
+      );
+    }
     const body = (await res.json()) as { fields?: Record<string, RestValue> };
     return decodeFields(body.fields);
   }
