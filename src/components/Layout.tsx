@@ -5,19 +5,13 @@ import {
   Layers,
   LogOut,
   MessageSquare,
-  Settings,
+  UserRound,
   NotebookPen,
   Repeat,
   Zap,
 } from "lucide-react";
 import { useAuth } from "../contexts/AuthContext";
 import { FeedbackModal } from "./FeedbackModal";
-import { StudySettingsModal } from "./StudySettingsModal";
-import {
-  loadAnkiSettings,
-  loadQuizletSettings,
-  SETTINGS_CHANGED,
-} from "../lib/settings";
 import { useStudyMode } from "../contexts/StudyModeContext";
 
 export function Layout({
@@ -31,7 +25,6 @@ export function Layout({
   const { user, logOut } = useAuth();
   const { studyMode } = useStudyMode();
   const [feedbackOpen, setFeedbackOpen] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
   const navigate = useNavigate();
   const { pathname } = useLocation();
 
@@ -168,7 +161,7 @@ export function Layout({
                 name={user.displayName}
                 email={user.email}
                 onFeedback={() => setFeedbackOpen(true)}
-                onSettings={() => setSettingsOpen(true)}
+                onSettings={() => navigate("/account")}
                 onLogOut={async () => {
                   await logOut();
                   navigate("/login");
@@ -179,20 +172,7 @@ export function Layout({
         </div>
       </header>
       {feedbackOpen && <FeedbackModal onClose={() => setFeedbackOpen(false)} />}
-      {settingsOpen && (
-        <StudySettingsModal
-          studyMode={studyMode}
-          anki={loadAnkiSettings()}
-          quizlet={loadQuizletSettings()}
-          onChange={() => {
-            // Pages hold settings in state; this tells whichever is behind
-            // the dialog to read them again rather than showing counts
-            // computed under the old limits.
-            window.dispatchEvent(new Event(SETTINGS_CHANGED));
-          }}
-          onClose={() => setSettingsOpen(false)}
-        />
-      )}
+
       <main
         className={
           wide ? "px-3 pb-3 pt-3" : "mx-auto max-w-6xl px-4 py-8 sm:px-6"
@@ -278,13 +258,13 @@ function ProfileMenu({
               )}
             </div>
             <MenuItem
-              icon={<Settings size={14} />}
+              icon={<UserRound size={14} />}
               onClick={() => {
                 setOpen(false);
                 onSettings();
               }}
             >
-              Study settings
+              Account &amp; stats
             </MenuItem>
             <MenuItem
               icon={<MessageSquare size={14} />}

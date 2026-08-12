@@ -132,6 +132,7 @@ export function saveAnkiSettings(s: AnkiSettings) {
   localStorage.setItem("ankiSettings", JSON.stringify(s));
   applyClozeColors(s);
   pushSettingsRemote();
+  announceSettingsChange();
 }
 
 /**
@@ -139,6 +140,17 @@ export function saveAnkiSettings(s: AnkiSettings) {
  * showing them — the profile menu can be opened over anything.
  */
 export const SETTINGS_CHANGED = "recallis:settings-changed";
+
+/**
+ * Pages keep settings in state, so a save made anywhere has to tell them to
+ * read again — otherwise a deck list left open goes on showing counts
+ * worked out under the old daily limit.
+ */
+function announceSettingsChange() {
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new Event(SETTINGS_CHANGED));
+  }
+}
 
 export function loadRemoteMapping(): RemoteMapping {
   // Nested objects can't be merged by the shallow `load` helper, so each
@@ -164,6 +176,7 @@ export function loadQuizletSettings(): QuizletSettings {
 export function saveQuizletSettings(s: QuizletSettings) {
   localStorage.setItem("quizletSettings", JSON.stringify(s));
   pushSettingsRemote();
+  announceSettingsChange();
 }
 
 // ---------- cross-device sync ----------

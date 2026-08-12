@@ -15,6 +15,7 @@ import {
   getDoc,
   setDoc,
   getCountFromServer,
+  limit,
 } from "firebase/firestore";
 import {
   ref,
@@ -1011,6 +1012,39 @@ export async function getTodayRevlog(
     })
   );
   return out;
+}
+
+/**
+ * Every review in a window, for the stats page.
+ *
+ * Capped per deck and taken newest-first, because a year of a heavy user's
+ * reviews is a lot of documents and a stats page is not worth an unbounded
+ * read. The caller is told when the cap bit so it can say so rather than
+ * quietly under-reporting.
+ */
+export async function getRevlogSince(
+  uid: string,
+  deckIds: string[],
+  since: number,
+  perDeckLimit = 4000
+): Promise<{ entries: ReviewLogEntry[]; truncated: boolean }> {
+  const entries: ReviewLogEntry[] = [];
+  let truncated = false;
+  await Promise.all(
+    deckIds.map(async (deckId) => {
+      const snap = await getDocs(
+        query(
+          revlogCol(uid, deckId),
+          where("at", ">=", since),
+          orderBy("at", "desc"),
+          limit(perDeckLimit)
+        )
+      );
+      if (snap.size === perDeckLimit) truncated = true;
+      for (const d of snap.docs) entries.push(d.data() as ReviewLogEntry);
+    })
+  );
+  return { entries, truncated };
 }
 
 // ---------- Spaced repetition state ----------
