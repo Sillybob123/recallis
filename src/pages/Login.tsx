@@ -53,7 +53,7 @@ export function Login() {
   return (
     <AuthLayout
       title="Welcome back"
-      subtitle="Log in to pick up where you left off."
+      subtitle="Your decks, notes and schedule are where you left them."
       footer={
         <>
           New to Recallis?{" "}

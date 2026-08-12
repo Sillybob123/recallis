@@ -52,7 +52,7 @@ export function DeleteDeckModal({
       id: "anki",
       icon: <Repeat size={15} className="text-emerald-600" />,
       title: "Remove from Anki only",
-      body: "Stops appearing for scheduled review, but stays available to cram in Quizlet. Its review history is kept.",
+      body: "Stops appearing for scheduled review, but stays available to repeat in Quizlet. Its review history is kept.",
     },
     {
       id: "both",

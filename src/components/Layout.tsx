@@ -84,7 +84,7 @@ export function Layout({
         ? "Decks"
         : suffix === "Anki"
           ? "Anki · spaced"
-          : "Quizlet · cram";
+          : "Quizlet · repeat";
 
   return (
     <div className={`min-h-screen ${theme}`} style={{ background: "var(--page-bg)" }}>
@@ -183,7 +183,7 @@ export function Layout({
                         ? "bg-red-600 text-white"
                         : "bg-white text-slate-500 hover:bg-slate-50"
                     }`}
-                    title="Cram freely without touching your schedule"
+                    title="Repeat cards as often as you like — your schedule is untouched"
                   >
                     <Zap size={12} /> <span className="hidden sm:inline">Quizlet</span>
                   </Link>

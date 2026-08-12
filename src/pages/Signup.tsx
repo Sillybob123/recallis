@@ -48,8 +48,8 @@ export function Signup() {
 
   return (
     <AuthLayout
-      title="Create your account"
-      subtitle={`Open to the University of Maryland School of Medicine — sign up with your ${ALLOWED_EMAIL_DOMAIN} address.`}
+      title="Make your account"
+      subtitle={`Free, and takes a few seconds. Recallis is open to the University of Maryland School of Medicine for now, so sign up with your ${ALLOWED_EMAIL_DOMAIN} address.`}
       footer={
         <>
           Already have an account?{" "}

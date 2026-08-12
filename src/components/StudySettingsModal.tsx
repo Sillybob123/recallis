@@ -65,7 +65,7 @@ export function StudySettingsModal({
             <p className="text-xs text-slate-500">
               {studyMode === "anki"
                 ? "How spaced repetition schedules your cards."
-                : "How cram sessions ask and grade you."}
+                : "How repeat sessions ask and grade you."}
             </p>
           </div>
           <button
