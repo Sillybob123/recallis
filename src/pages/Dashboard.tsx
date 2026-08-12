@@ -40,6 +40,7 @@ import {
 } from "../lib/deckPath";
 import { DeckRows, MenuItem } from "../components/DeckTree";
 import type { Deck } from "../types";
+import { DeckLabel } from "../components/DeckLabel";
 
 const COLORS = ["#6366f1", "#0ea5e9", "#10b981", "#f59e0b", "#ef4444", "#a855f7", "#ec4899"];
 
@@ -547,9 +548,7 @@ function TrashModal({
                         style={{ backgroundColor: deck.color }}
                       />
                       <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-medium text-slate-800">
-                          {normalizeDeckPath(deck.name)}
-                        </p>
+                        <DeckLabel name={deck.name} className="block" />
                         <p
                           className={`text-xs ${left <= 3 ? "text-amber-600" : "text-slate-400"}`}
                         >

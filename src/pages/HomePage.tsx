@@ -17,9 +17,9 @@ import { Layout } from "../components/Layout";
 import { watchDecks, watchNotes } from "../lib/firestore";
 import { computeAllDeckCounts, type DeckCounts } from "../lib/deckCounts";
 import { getTodayAnkiStats } from "../lib/settings";
-import { normalizeDeckPath } from "../lib/deckPath";
 import type { Deck, Note } from "../types";
 import { stripHtmlInline } from "../lib/text";
+import { DeckLabel } from "../components/DeckLabel";
 
 function greeting(): string {
   const h = new Date().getHours();
@@ -293,7 +293,10 @@ export function HomePage() {
             </Link>
           </div>
 
-          <div className="grid gap-5 lg:grid-cols-2">
+          {/* min-w-0 on the items: a grid track's automatic minimum is the
+              item's min-content, so without it a long row inside can widen
+              the column past the screen. */}
+          <div className="grid gap-5 lg:grid-cols-2 [&>*]:min-w-0">
             {/* Start here */}
             <section className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
               <h2 className="mb-3 flex items-center gap-1.5 text-sm font-bold text-slate-700">
@@ -312,9 +315,7 @@ export function HomePage() {
                         to={`/deck/${deck.id}/study`}
                         className="flex items-center gap-3 rounded-lg px-2 py-2 transition hover:bg-slate-50"
                       >
-                        <span className="min-w-0 flex-1 truncate text-sm font-medium text-slate-800">
-                          {normalizeDeckPath(deck.name)}
-                        </span>
+                        <DeckLabel name={deck.name} className="flex-1" />
                         <span className="flex shrink-0 gap-2 text-xs font-bold">
                           <span className="text-sky-500">{c!.newCount}</span>
                           <span className="text-orange-500">{c!.learnCount}</span>

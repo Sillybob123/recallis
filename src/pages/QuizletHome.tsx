@@ -24,6 +24,7 @@ import {
   type DeckNode,
 } from "../lib/deckPath";
 import type { Deck } from "../types";
+import { DeckLabel } from "../components/DeckLabel";
 
 /**
  * One deck row and its subdecks. A row studies everything beneath it, so the
@@ -285,14 +286,7 @@ export function QuizletHome() {
                       to={`/deck/${deck.id}/study?format=learn`}
                       className="flex items-center gap-3 rounded-lg px-2 py-2 transition hover:bg-white"
                     >
-                      <span className="min-w-0 flex-1 truncate text-sm font-medium text-slate-800">
-                        {deckLeafName(deck.name)}
-                        {deckParentPath(deck.name) && (
-                          <span className="ml-1.5 text-xs font-normal text-slate-400">
-                            {splitDeckPath(deckParentPath(deck.name)).join(" › ")}
-                          </span>
-                        )}
-                      </span>
+                      <DeckLabel name={deck.name} className="flex-1" />
                       {p!.shaky > 0 && (
                         <span className="shrink-0 text-xs font-semibold text-amber-700">
                           {p!.shaky} shaky
