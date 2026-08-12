@@ -6,6 +6,7 @@ import {
   CalendarPlus,
   Check,
   Loader2,
+  Mail,
   Plus,
   SlidersHorizontal,
   Trash2,
@@ -13,6 +14,7 @@ import {
 } from "lucide-react";
 import { useAuth } from "../contexts/AuthContext";
 import { Layout } from "../components/Layout";
+import { EmailReminderSettings } from "../components/EmailReminderSettings";
 import {
   fetchPlannerPlan,
   fetchPlannerProgress,
@@ -85,6 +87,7 @@ export function PlannerPage() {
   );
   const [weekFilter, setWeekFilter] = useState<number | "all">("all");
   const [editingRoutine, setEditingRoutine] = useState(false);
+  const [editingEmail, setEditingEmail] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -291,6 +294,13 @@ export function PlannerPage() {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <button
+            onClick={() => setEditingEmail(true)}
+            title="Schedule what gets emailed to you, and when"
+            className="flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-600 transition hover:bg-slate-50"
+          >
+            <Mail size={14} /> Email reminders
+          </button>
+          <button
             onClick={() => setEditingRoutine(true)}
             title="Choose the columns — the routine you run on every session"
             className="flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-600 transition hover:bg-slate-50"
@@ -359,6 +369,16 @@ export function PlannerPage() {
             ✕
           </button>
         </div>
+      )}
+
+      {editingEmail && user && (
+        <EmailReminderSettings
+          uid={user.uid}
+          accountEmail={user.email ?? ""}
+          plan={plan}
+          progress={progress}
+          onClose={() => setEditingEmail(false)}
+        />
       )}
 
       {editingRoutine && (

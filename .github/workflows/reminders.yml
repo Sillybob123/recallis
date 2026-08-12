@@ -1,0 +1,63 @@
+# Sends the planner's email reminders.
+#
+# Setup, once (nothing here contains a secret — they all live in the repo's
+# Settings → Secrets and variables → Actions):
+#
+#   Secrets:
+#     FIREBASE_SERVICE_ACCOUNT  the JSON from Firebase console → Project
+#                               settings → Service accounts → Generate new
+#                               private key. Paste the whole file.
+#     RESEND_API_KEY            from resend.com. The free tier covers this
+#                               comfortably; any provider with a REST API
+#                               would do, it's one function in send.mts.
+#
+#   Variables:
+#     MAIL_FROM                 e.g. "Recallis <reminders@recallis.org>".
+#                               The domain must be verified with the mail
+#                               provider or everything lands in spam.
+#
+# Then run it once by hand with dry_run = true and read the log: it will
+# print what it would send without sending anything.
+#
+# Two things worth knowing about GitHub's scheduler: it runs late under load
+# (a 30-minute cron can drift by 10+ minutes), and it disables itself in a
+# repository with no commits for 60 days. Neither loses a reminder — every
+# email carries a dedupe key, so a late run still sends, and only once.
+
+name: Study reminders
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Decide and print, but send nothing"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  # Overlapping runs would both read the same unsent keys.
+  group: reminders
+  cancel-in-progress: false
+
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Send what's due
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          MAIL_FROM: ${{ vars.MAIL_FROM }}
+          DRY_RUN: ${{ inputs.dry_run && '1' || '' }}
+        run: npx tsx mailer/send.mts

@@ -26,6 +26,7 @@ import {
 import { db, storage } from "../firebase";
 import { normalizeCardData } from "./cloze";
 import type { PlannerPlan, PlannerProgress } from "./planner";
+import { DEFAULT_EMAIL_SETTINGS, type EmailSettings } from "./emailReminders";
 import type { Card, CardData, Deck, OcclusionSheet, OcclusionShape } from "../types";
 
 function toMillis(v: unknown): number {
@@ -871,6 +872,42 @@ export async function setPlannerProgressBulk(
   await setDoc(
     doc(db, "users", uid, "planner", "progress"),
     { done: entries },
+    { merge: true }
+  );
+}
+
+// ---------- Email reminders ----------
+// These live in a top-level collection rather than under users/{uid} because
+// the sender has to find everyone with reminders due without walking every
+// account. The rules still limit each document to its owner; the sender uses
+// a service account, which is the only thing that reads across users.
+
+export async function fetchEmailSettings(
+  uid: string
+): Promise<EmailSettings | null> {
+  const snap = await getDoc(doc(db, "emailReminders", uid));
+  if (!snap.exists()) return null;
+  const data = snap.data() as Partial<EmailSettings>;
+  // Merged over the defaults so a document written by an older version of
+  // the app can't leave a field undefined.
+  return {
+    ...DEFAULT_EMAIL_SETTINGS,
+    ...data,
+    daily: { ...DEFAULT_EMAIL_SETTINGS.daily, ...(data.daily ?? {}) },
+    weekly: { ...DEFAULT_EMAIL_SETTINGS.weekly, ...(data.weekly ?? {}) },
+    exam: { ...DEFAULT_EMAIL_SETTINGS.exam, ...(data.exam ?? {}) },
+    custom: data.custom ?? [],
+    sent: data.sent ?? {},
+  };
+}
+
+export async function saveEmailSettings(uid: string, settings: EmailSettings) {
+  // merge:true so the sender's `sent` bookkeeping isn't wiped by someone
+  // saving their settings from another tab.
+  const { sent: _ignored, ...editable } = settings;
+  await setDoc(
+    doc(db, "emailReminders", uid),
+    { ...editable, uid, updatedAt: Date.now() },
     { merge: true }
   );
 }

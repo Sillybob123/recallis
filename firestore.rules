@@ -8,5 +8,13 @@ service cloud.firestore {
     match /users/{uid}/{document=**} {
       allow read, write: if request.auth != null && request.auth.uid == uid;
     }
+
+    // Email reminder settings sit at the top level so the scheduled sender
+    // can list everyone with reminders due. It reads with a service account,
+    // which bypasses these rules; signed-in users still only reach their own
+    // document, and nobody can list the collection from a browser.
+    match /emailReminders/{uid} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
   }
 }
