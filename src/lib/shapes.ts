@@ -23,6 +23,24 @@ export function isAnnotation(s: OcclusionShape): boolean {
   return s.annotation === true || ANNOTATION_KINDS.includes(shapeKind(s));
 }
 
+/**
+ * A cover hides something for good: it is drawn on every side of every card
+ * and never becomes a question of its own. That is what makes it useful for
+ * a spoiler printed on the slide.
+ */
+export function isCover(s: OcclusionShape): boolean {
+  return s.cover === true;
+}
+
+/** Whether this shape is asked as a question. Covers and marks are not. */
+export function isCardShape(s: OcclusionShape): boolean {
+  return !isAnnotation(s) && !isCover(s);
+}
+
+export function coversOf(shapes: OcclusionShape[]): OcclusionShape[] {
+  return shapes.filter(isCover);
+}
+
 /** The shapes that actually cover something up. */
 export function masksOf(shapes: OcclusionShape[]): OcclusionShape[] {
   return shapes.filter((s) => !isAnnotation(s));
@@ -93,8 +111,9 @@ export function buildUnits(shapes: OcclusionShape[]): ShapeUnit[] {
   const units: ShapeUnit[] = [];
   const groupSlot = new Map<string, number>();
   for (const s of shapes) {
-    // An arrow pointing at something is not a question about it.
-    if (isAnnotation(s)) continue;
+    // An arrow pointing at something is not a question about it, and a
+    // cover exists precisely so that it is never asked.
+    if (!isCardShape(s)) continue;
     if (s.groupId) {
       const existing = groupSlot.get(s.groupId);
       if (existing === undefined) {

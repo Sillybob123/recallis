@@ -90,6 +90,12 @@ export interface OcclusionShape {
   annotation?: boolean;
   /** annotations only: line thickness as a fraction of the image width */
   weight?: number;
+  /**
+   * A cover: always painted over, on the question and the answer alike, and
+   * never asked. For the spoiler printed on the slide — the label you don't
+   * want giving the answer away while you're being asked something else.
+   */
+  cover?: boolean;
 }
 
 export interface OcclusionSheet {

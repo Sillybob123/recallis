@@ -5,6 +5,7 @@ import {
   arrowHead,
   DEFAULT_ANNOTATION_COLOR,
   isAnnotation,
+  isCover,
   shapeColor,
   shapeKind,
   shapeOpacity,
@@ -52,8 +53,10 @@ export function ShapeOverlay({
     >
       {shapes.map((s) => {
         if (isAnnotation(s)) return <Annotation key={s.id} shape={s} />;
-        const hidden = hiddenIds.has(s.id);
-        const outlined = outlineIds?.has(s.id) ?? false;
+        // A cover is painted whatever the card is asking, including on the
+        // answer — revealing it would be the spoiler it exists to prevent.
+        const hidden = hiddenIds.has(s.id) || isCover(s);
+        const outlined = !isCover(s) && (outlineIds?.has(s.id) ?? false);
         if (!hidden && !outlined) return null;
         const isTarget = targetIds.has(s.id);
         const common = outlined

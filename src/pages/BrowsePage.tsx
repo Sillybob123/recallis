@@ -39,7 +39,7 @@ import type { ReviewLogEntry } from "../lib/firestore";
 import type { StudyItem } from "../lib/studyItems";
 import { normalizeDeckPath, splitDeckPath } from "../lib/deckPath";
 import { addTags, normalizeTags, removeTags, tagMatches } from "../lib/tags";
-import { isAnnotation } from "../lib/shapes";
+import { isCardShape } from "../lib/shapes";
 import {
   formatDelay,
   newSrsState,
@@ -273,8 +273,8 @@ export function BrowsePage() {
       const seenGroups = new Set<string>();
       let unitIndex = 0;
       for (const shape of sheet.shapes) {
-            // Arrows and labels aren't cards, so they aren't rows either.
-            if (isAnnotation(shape)) continue;
+            // Arrows, labels and covers aren't cards, so they aren't rows.
+            if (!isCardShape(shape)) continue;
             let unitKey: string;
             if (shape.groupId) {
               if (seenGroups.has(shape.groupId)) continue;

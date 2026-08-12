@@ -6,9 +6,10 @@ import { serializeAnkiFile } from "./ankiTsv";
 import {
   annotationsOf,
   buildUnits,
+  coversOf,
   drawAnnotationOnCanvas,
   fillShapeOnCanvas,
-  isAnnotation,
+  isCardShape,
 } from "./shapes";
 import { EXPORT_QUALITY, exportDimensions } from "./exportImage";
 import { formatTagString } from "./tags";
@@ -97,30 +98,35 @@ function drawPromptText(
 /** Draws the base image with the given normalized shapes filled solid (masked). */
 async function bakeMasked(
   img: HTMLImageElement,
-  shapes: OcclusionShape[]
+  shapes: OcclusionShape[],
+  /** the whole sheet, for the covers and marks that belong on every card */
+  all: OcclusionShape[] = shapes
 ): Promise<Blob> {
   const canvas = exportCanvas(img);
   const ctx = canvas.getContext("2d")!;
   ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
   for (const s of shapes) {
-    if (isAnnotation(s)) continue;
+    if (!isCardShape(s)) continue;
+    fillShapeOnCanvas(ctx, s, canvas.width, canvas.height);
+  }
+  for (const s of coversOf(all)) {
     fillShapeOnCanvas(ctx, s, canvas.width, canvas.height);
   }
   // Text-box prompts are part of the question, so they bake into the image
   // and survive the trip to Anki without any special note type.
   for (const s of shapes) {
-    if (!isAnnotation(s) && s.textPrompt) {
+    if (isCardShape(s) && s.textPrompt) {
       drawPromptText(ctx, s, canvas.width, canvas.height);
     }
   }
   // Arrows, stars and labels go on last so a mask can't cover them.
-  for (const s of annotationsOf(shapes)) {
+  for (const s of annotationsOf(all)) {
     drawAnnotationOnCanvas(ctx, s, canvas.width, canvas.height);
   }
   return canvasToBlob(canvas);
 }
 
-/** The answer image: nothing covered, but still marked up. */
+/** The answer image: the masks lifted, but covers and marks still on it. */
 async function bakeOriginal(
   img: HTMLImageElement,
   shapes: OcclusionShape[] = []
@@ -128,6 +134,9 @@ async function bakeOriginal(
   const canvas = exportCanvas(img);
   const ctx = canvas.getContext("2d")!;
   ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+  for (const s of coversOf(shapes)) {
+    fillShapeOnCanvas(ctx, s, canvas.width, canvas.height);
+  }
   for (const s of annotationsOf(shapes)) {
     drawAnnotationOnCanvas(ctx, s, canvas.width, canvas.height);
   }
@@ -198,7 +207,7 @@ export async function exportDeckToAnki(
         const answerLabel = unitShapes.some((s) => s.textPrompt)
           ? ""
           : unit.label ?? "";
-        const qBlob = await bakeMasked(img, unitShapes);
+        const qBlob = await bakeMasked(img, unitShapes, sheet.shapes);
         const qName = `occ_${sheet.id}_${unit.key.replace(/[^a-z0-9-]/gi, "")}_q.jpg`;
         media.file(qName, qBlob);
         mediaCount++;

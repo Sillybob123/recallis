@@ -4,6 +4,9 @@
 // pick up.
 import {
   annotationsOf,
+  coversOf,
+  isCardShape,
+  isCover,
   arrowEnds,
   arrowHead,
   boxesIntersect,
@@ -87,6 +90,35 @@ console.log("\nannotations never become cards:");
     withGroup[0].shapeIds.join() === "m1,m2",
     withGroup[0].shapeIds.join()
   );
+}
+
+// ---------- covers ----------
+// A cover exists to hide a spoiler printed on the slide. If it were ever
+// revealed, or ever asked, it would be doing the opposite of its job.
+console.log("\ncovers:");
+{
+  const cover = box("c", { cover: true });
+  check("a cover is not an annotation", !isAnnotation(cover), "it hides, it doesn't mark");
+  check("but it is a cover", isCover(cover));
+  check("and it is never a card", !isCardShape(cover));
+  check("while an ordinary mask is", isCardShape(box("m")));
+  check("and so is a text-prompt mask", isCardShape(box("t", { textPrompt: true })));
+
+  const shapes = [box("m1"), box("c1", { cover: true }), box("m2"), box("a1", { kind: "arrow" })];
+  check("covers make no cards", buildUnits(shapes).map((u) => u.key).join() === "m1,m2");
+  check("coversOf finds them", coversOf(shapes).length === 1);
+  check(
+    "a sheet of covers alone is not a sheet of cards",
+    buildUnits([box("c1", { cover: true }), box("c2", { cover: true })]).length === 0
+  );
+
+  // A cover inside a group must not drag the group into existence either.
+  const grouped = buildUnits([
+    box("m1", { groupId: "g" }),
+    box("c1", { cover: true, groupId: "g" }),
+  ]);
+  check("a group of one mask and one cover is one card", grouped.length === 1);
+  check("made of just the mask", grouped[0].shapeIds.join() === "m1");
 }
 
 // ---------- geometry ----------

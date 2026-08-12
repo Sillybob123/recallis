@@ -8,8 +8,11 @@ import {
   Copy,
   Group,
   MessageSquare,
+  Eye,
+  EyeOff,
   MousePointer2,
   Pentagon,
+  Redo2,
   Square,
   Star,
   Trash2,
@@ -33,6 +36,8 @@ import {
   DEFAULT_ANNOTATION_COLOR,
   DEFAULT_MASK_COLOR,
   isAnnotation,
+  isCardShape,
+  isCover,
   polygonBounds,
   shapeColor,
   shapeKind,
@@ -42,6 +47,9 @@ import {
 } from "../lib/shapes";
 import type { OcclusionShape, ShapeKind } from "../types";
 import { uid } from "../lib/uid";
+
+/** Covers default to near-black: unambiguous, and clearly not a mask. */
+const COVER_COLOR = "#0f172a";
 
 const MASK_COLORS = [DEFAULT_MASK_COLOR, "#ef4444", "#10b981", "#f59e0b", "#a855f7", "#ec4899", "#334155"];
 
@@ -53,7 +61,8 @@ type Tool =
   | "textbox"
   | "note"
   | "arrow"
-  | "star";
+  | "star"
+  | "cover";
 
 /** The tools that mark the image up instead of covering it. */
 const ANNOTATION_TOOLS: Tool[] = ["note", "arrow", "star"];
@@ -67,6 +76,8 @@ interface DragState {
   shapeId?: string;
   vertexIndex?: number;
   moved?: boolean;
+  /** set once this drag has recorded its undo step */
+  snapshotted?: boolean;
   /** marquee only: the selection at drag start, for shift-adding */
   baseSelection?: Set<string>;
 }
@@ -182,6 +193,68 @@ export function OcclusionEditor() {
     shapesRef.current = shapes;
   }, [shapes]);
 
+  // ---------- undo ----------
+  // Snapshots of the whole shape list, taken before each edit. There are
+  // rarely more than a few dozen shapes, so copying the lot is simpler and
+  // more reliable than describing every edit as an invertible operation.
+  const historyRef = useRef<OcclusionShape[][]>([]);
+  const futureRef = useRef<OcclusionShape[][]>([]);
+  const coalesceRef = useRef<{ tag: string; at: number } | null>(null);
+  const [historyTick, setHistoryTick] = useState(0);
+
+  const copyShapes = (list: OcclusionShape[]) =>
+    list.map((s) => (s.points ? { ...s, points: s.points.map((p) => ({ ...p })) } : { ...s }));
+
+  /**
+   * Records the state to come back to. `tag` coalesces a run of edits that
+   * are really one gesture — typing a label shouldn't cost you thirty
+   * undos to get past.
+   */
+  const snapshot = useCallback((tag = "") => {
+    const now = Date.now();
+    if (
+      tag &&
+      coalesceRef.current &&
+      coalesceRef.current.tag === tag &&
+      now - coalesceRef.current.at < 800
+    ) {
+      coalesceRef.current.at = now;
+      return;
+    }
+    coalesceRef.current = tag ? { tag, at: now } : null;
+    historyRef.current.push(copyShapes(shapesRef.current));
+    if (historyRef.current.length > 120) historyRef.current.shift();
+    futureRef.current = [];
+    setHistoryTick((t) => t + 1);
+  }, []);
+
+  const undo = useCallback(() => {
+    const previous = historyRef.current.pop();
+    if (!previous) return;
+    futureRef.current.push(copyShapes(shapesRef.current));
+    coalesceRef.current = null;
+    setShapes(previous);
+    // Anything that no longer exists can't stay selected.
+    const alive = new Set(previous.map((s) => s.id));
+    setSelectedIds((prev) => new Set([...prev].filter((id) => alive.has(id))));
+    setHistoryTick((t) => t + 1);
+  }, []);
+
+  const redo = useCallback(() => {
+    const next = futureRef.current.pop();
+    if (!next) return;
+    historyRef.current.push(copyShapes(shapesRef.current));
+    coalesceRef.current = null;
+    setShapes(next);
+    const alive = new Set(next.map((s) => s.id));
+    setSelectedIds((prev) => new Set([...prev].filter((id) => alive.has(id))));
+    setHistoryTick((t) => t + 1);
+  }, []);
+
+  const canUndo = historyRef.current.length > 0;
+  const canRedo = futureRef.current.length > 0;
+  void historyTick;
+
   const containerRef = useRef<HTMLDivElement>(null);
   const isEditing = Boolean(sheetId);
 
@@ -247,11 +320,15 @@ export function OcclusionEditor() {
   }
 
   function deleteSelected() {
+    if (!selectedIds.size) return;
+    snapshot();
     setShapes((prev) => prev.filter((s) => !selectedIds.has(s.id)));
     setSelectedIds(new Set());
   }
 
   function duplicateSelected() {
+    if (!selectedIds.size) return;
+    snapshot();
     const groupRemap = new Map<string, string>();
     const clones: OcclusionShape[] = [];
     for (const s of shapes) {
@@ -279,6 +356,7 @@ export function OcclusionEditor() {
       .filter((s) => selectedIds.has(s.id) && !isAnnotation(s))
       .map((s) => s.id);
     if (maskIds.length < 2) return;
+    snapshot();
     const gid = uid();
     const inGroup = new Set(maskIds);
     setShapes((prev) =>
@@ -287,6 +365,8 @@ export function OcclusionEditor() {
   }
 
   function ungroupSelected() {
+    if (!selectedIds.size) return;
+    snapshot();
     setShapes((prev) =>
       prev.map((s) =>
         selectedIds.has(s.id) ? { ...s, groupId: undefined } : s
@@ -295,6 +375,7 @@ export function OcclusionEditor() {
   }
 
   function applyColor(color: string) {
+    if (selectedIds.size) snapshot("color");
     // Masks and annotations keep separate defaults — you don't want the
     // colour you picked for an arrow to become the colour of your masks.
     if (ANNOTATION_TOOLS.includes(tool)) setAnnotationColor(color);
@@ -307,6 +388,7 @@ export function OcclusionEditor() {
   }
 
   function applyOpacity(opacity: number) {
+    if (selectedIds.size) snapshot("opacity");
     setDefaultOpacity(opacity);
     if (selectedIds.size) {
       setShapes((prev) =>
@@ -316,6 +398,7 @@ export function OcclusionEditor() {
   }
 
   function updateLabel(id: string, label: string) {
+    snapshot(`label:${id}`);
     setShapes((prev) => prev.map((s) => (s.id === id ? { ...s, label } : s)));
   }
 
@@ -331,6 +414,14 @@ export function OcclusionEditor() {
         setPolyDraft([]);
         setPolyHover(null);
         setSelectedIds(new Set());
+      } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "z") {
+        // Shift-Z redoes, matching every drawing tool people already use.
+        e.preventDefault();
+        if (e.shiftKey) redo();
+        else undo();
+      } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "y") {
+        e.preventDefault();
+        redo();
       } else if ((e.metaKey || e.ctrlKey) && e.key === "d") {
         e.preventDefault();
         duplicateSelected();
@@ -346,6 +437,7 @@ export function OcclusionEditor() {
 
   function commitPolygon() {
     if (polyDraft.length >= 3) {
+      snapshot();
       const b = polygonBounds(polyDraft);
       const id = uid();
       setShapes((prev) => [
@@ -390,6 +482,7 @@ export function OcclusionEditor() {
       tool === "rect" ||
       tool === "ellipse" ||
       tool === "textbox" ||
+      tool === "cover" ||
       ANNOTATION_TOOLS.includes(tool)
     ) {
       setSelectedIds(new Set());
@@ -420,6 +513,7 @@ export function OcclusionEditor() {
         shape.textPrompt ? shape.label ?? "" : ""
       );
       if (asked === null) return;
+      snapshot();
       const text = asked.trim();
       setShapes((prev) =>
         prev.map((sh) =>
@@ -477,6 +571,13 @@ export function OcclusionEditor() {
   useEffect(() => {
     if (!drag) return;
 
+    /** One history entry per drag, recorded the moment it starts changing. */
+    function beginDragEdit() {
+      if (drag!.snapshotted) return;
+      drag!.snapshotted = true;
+      snapshot();
+    }
+
     function onMove(e: PointerEvent) {
       const pos = relPos(e.clientX, e.clientY);
       const dx = pos.x - drag!.startX;
@@ -498,6 +599,9 @@ export function OcclusionEditor() {
           setSelectedIds(caught);
         }
       } else if (drag!.mode === "move" && drag!.originals) {
+        // Taken on the first real movement, not at pointer-down: clicking a
+        // shape to select it must not cost an undo that does nothing.
+        beginDragEdit();
         drag!.moved = true;
         setShapes((prev) =>
           prev.map((s) => {
@@ -506,6 +610,7 @@ export function OcclusionEditor() {
           })
         );
       } else if (drag!.mode === "resize" && drag!.originals && drag!.shapeId) {
+        beginDragEdit();
         const orig = drag!.originals.get(drag!.shapeId)!;
         const nw = clamp(orig.w + dx, 0.015, 1 - orig.x);
         const nh = clamp(orig.h + dy, 0.015, 1 - orig.y);
@@ -531,6 +636,7 @@ export function OcclusionEditor() {
         drag!.shapeId &&
         drag!.vertexIndex !== undefined
       ) {
+        beginDragEdit();
         const orig = drag!.originals.get(drag!.shapeId)!;
         if (!orig.points) return;
         const points = orig.points.map((p, i) =>
@@ -559,6 +665,7 @@ export function OcclusionEditor() {
         const w = Math.abs(pos.x - drag!.startX);
         const h = Math.abs(pos.y - drag!.startY);
         if (ANNOTATION_TOOLS.includes(tool)) {
+          snapshot();
           const id = uid();
           const from = { x: drag!.startX, y: drag!.startY };
           const to = { x: pos.x, y: pos.y };
@@ -624,6 +731,7 @@ export function OcclusionEditor() {
           return;
         }
         if (w > 0.01 && h > 0.01) {
+          snapshot();
           const id = uid();
           let label = "";
           let textPrompt: boolean | undefined;
@@ -648,8 +756,11 @@ export function OcclusionEditor() {
               y,
               w,
               h,
-              color: defaultColor,
-              opacity: defaultOpacity,
+              // A cover is opaque by default: a half-see-through spoiler is
+              // still a spoiler.
+              color: tool === "cover" ? COVER_COLOR : defaultColor,
+              opacity: tool === "cover" ? 1 : defaultOpacity,
+              cover: tool === "cover" ? true : undefined,
               label,
               textPrompt,
             },
@@ -680,7 +791,7 @@ export function OcclusionEditor() {
       alert(
         shapes.length === 0
           ? "Draw at least one mask over something you want to hide."
-          : "This sheet only has annotations on it. Add at least one mask — arrows, stars and notes are never asked as questions."
+          : "Nothing on this sheet is asked as a question. Add at least one mask — covers, arrows, stars and notes are never questions."
       );
       return;
     }
@@ -770,6 +881,7 @@ export function OcclusionEditor() {
                       ["ellipse", Circle, "Ellipse"],
                       ["polygon", Pentagon, "Polygon (click points, click first point or press Enter to close)"],
                       ["textbox", Type, "Text box — hides what's behind it and shows a question on the box (e.g. \"What is the coracoid process?\")"],
+                      ["cover", EyeOff, "Cover — hides something for good. Never revealed, never asked. For the spoiler printed on the slide."],
                     ] as const
                   ).map(([t, Icon, tip]) => (
                     <button
@@ -859,6 +971,22 @@ export function OcclusionEditor() {
                 </label>
 
                 <div className="ml-auto flex gap-1">
+                  <button
+                    onClick={undo}
+                    disabled={!canUndo}
+                    title="Undo (⌘Z)"
+                    className="rounded-lg border border-slate-200 p-2 text-slate-500 hover:bg-slate-50 disabled:opacity-40"
+                  >
+                    <Undo2 size={15} />
+                  </button>
+                  <button
+                    onClick={redo}
+                    disabled={!canRedo}
+                    title="Redo (⇧⌘Z)"
+                    className="rounded-lg border border-slate-200 p-2 text-slate-500 hover:bg-slate-50 disabled:opacity-40"
+                  >
+                    <Redo2 size={15} />
+                  </button>
                   <button
                     onClick={duplicateSelected}
                     disabled={!selectedIds.size}
@@ -984,15 +1112,15 @@ export function OcclusionEditor() {
                   })}
 
                   {/* drafts */}
-                  {draft && (tool === "rect" || tool === "textbox") && (
+                  {draft && (tool === "rect" || tool === "textbox" || tool === "cover") && (
                     <rect
                       x={draft.x * 100}
                       y={draft.y * 100}
                       width={draft.w * 100}
                       height={draft.h * 100}
-                      fill={defaultColor}
+                      fill={tool === "cover" ? COVER_COLOR : defaultColor}
                       fillOpacity={0.35}
-                      stroke={defaultColor}
+                      stroke={tool === "cover" ? COVER_COLOR : defaultColor}
                       strokeDasharray="4 3"
                       vectorEffect="non-scaling-stroke"
                     />
@@ -1158,7 +1286,9 @@ export function OcclusionEditor() {
                           ? "Click or drag to place a star. Stars are never asked as questions."
                           : tool === "note"
                             ? "Drag a box and type your note. Notes stay visible on every card."
-                            : "Drag on the image to draw. Switch to the arrow tool to move/resize."}
+                            : tool === "cover"
+                              ? "Drag over anything that shouldn't be seen. Covers stay on for every card and are never asked."
+                              : "Drag on the image to draw. Switch to the arrow tool to move/resize."}
               </p>
 
               {!isEditing && (
@@ -1182,16 +1312,17 @@ export function OcclusionEditor() {
         <div className="space-y-4">
           <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
             <h3 className="mb-2 text-sm font-bold text-slate-700">
-              Masks ({shapes.length})
-              {buildUnits(shapes).length !== shapes.length && (
-                <span className="ml-1 font-normal text-slate-400">
-                  · {buildUnits(shapes).length} cards
-                </span>
-              )}
+              Shapes ({shapes.length})
+              <span className="ml-1 font-normal text-slate-400">
+                · {buildUnits(shapes).length} card
+                {buildUnits(shapes).length === 1 ? "" : "s"}
+                {shapes.some((s) => !isCardShape(s)) &&
+                  ` · ${shapes.filter((s) => !isCardShape(s)).length} never asked`}
+              </span>
             </h3>
             {shapes.length === 0 ? (
               <p className="text-xs text-slate-400">
-                No masks yet — draw one on the image.
+                Nothing here yet — draw a mask on the image.
               </p>
             ) : (
               <ul className="max-h-96 space-y-2 overflow-y-auto">
@@ -1210,6 +1341,16 @@ export function OcclusionEditor() {
                       style={{ backgroundColor: shapeColor(s) }}
                     />
                     <span className="text-xs text-slate-400">{i + 1}</span>
+                    {isCover(s) && (
+                      <span className="shrink-0 rounded bg-slate-800 px-1 text-[10px] font-bold text-white">
+                        cover
+                      </span>
+                    )}
+                    {isAnnotation(s) && (
+                      <span className="shrink-0 rounded bg-rose-100 px-1 text-[10px] font-bold text-rose-600">
+                        mark
+                      </span>
+                    )}
                     {s.groupId && (
                       <span className="rounded bg-slate-200 px-1 text-[10px] font-bold text-slate-600">
                         {groupBadges.get(s.groupId)}
@@ -1222,9 +1363,42 @@ export function OcclusionEditor() {
                       placeholder="Label (optional)"
                       className="min-w-0 flex-1 bg-transparent text-sm outline-none"
                     />
+                    {!isAnnotation(s) && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          snapshot();
+                          setShapes((prev) =>
+                            prev.map((x) =>
+                              x.id === s.id
+                                ? {
+                                    ...x,
+                                    cover: isCover(x) ? undefined : true,
+                                    color: isCover(x) ? defaultColor : COVER_COLOR,
+                                    opacity: isCover(x) ? defaultOpacity : 1,
+                                  }
+                                : x
+                            )
+                          );
+                        }}
+                        title={
+                          isCover(s)
+                            ? "Make this a question again"
+                            : "Never reveal this — hide it on every card"
+                        }
+                        className={`shrink-0 ${
+                          isCover(s)
+                            ? "text-slate-700"
+                            : "text-slate-300 hover:text-slate-600"
+                        }`}
+                      >
+                        {isCover(s) ? <EyeOff size={14} /> : <Eye size={14} />}
+                      </button>
+                    )}
                     <button
                       onClick={(e) => {
                         e.stopPropagation();
+                        snapshot();
                         setShapes((prev) => prev.filter((x) => x.id !== s.id));
                       }}
                       className="text-slate-300 hover:text-red-500"
