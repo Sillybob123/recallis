@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from "react";
-import { X } from "lucide-react";
+import { RotateCcw, X } from "lucide-react";
 import {
   CLOZE_COLORS,
   formatSteps,
@@ -18,12 +18,19 @@ export function StudySettingsModal({
   quizlet,
   onChange,
   onClose,
+  onResetProgress,
 }: {
   studyMode: StudyMode;
   anki: AnkiSettings;
   quizlet: QuizletSettings;
   onChange: (anki: AnkiSettings, quizlet: QuizletSettings) => void;
   onClose: () => void;
+  /**
+   * Offered only while a cram run is actually in progress: starting the
+   * deck again from the top. Absent from the deck list, where there is no
+   * run to restart.
+   */
+  onResetProgress?: () => void;
 }) {
   const [a, setA] = useState<AnkiSettings>({ ...anki });
   const [q, setQ] = useState<QuizletSettings>({ ...quizlet });
@@ -307,7 +314,25 @@ export function StudySettingsModal({
           )}
         </div>
 
-        <div className="flex shrink-0 items-center justify-end gap-2 border-t border-slate-200 px-6 py-4">
+        <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 border-t border-slate-200 px-6 py-4">
+          {onResetProgress && (
+            <button
+              onClick={() => {
+                if (
+                  !confirm(
+                    "Start this deck again from the top?\n\nEverything you've got right in this run is forgotten and every card comes back. Your Anki schedule isn't touched."
+                  )
+                ) {
+                  return;
+                }
+                onResetProgress();
+              }}
+              title="Forget this run and take the whole deck again"
+              className="mr-auto flex items-center gap-1.5 rounded-lg border border-red-200 px-3.5 py-2.5 text-sm font-semibold text-red-600 transition hover:bg-red-50"
+            >
+              <RotateCcw size={14} /> Restart deck
+            </button>
+          )}
           <button
             onClick={onClose}
             className="rounded-lg border border-slate-300 px-4 py-2.5 text-sm font-medium text-slate-600 transition hover:bg-slate-50"

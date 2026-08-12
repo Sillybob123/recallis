@@ -2435,6 +2435,17 @@ export function StudyBasic() {
             refreshQueue();
           }}
           onClose={() => setShowSettings(false)}
+          // Only in a cram run: the Anki side has its own reset, per card,
+          // and throwing away a schedule is not the same act as starting a
+          // deck over.
+          onResetProgress={
+            studyMode === "quizlet"
+              ? () => {
+                  setShowSettings(false);
+                  startSession(false);
+                }
+              : undefined
+          }
         />
       )}
       {showEdit && current?.kind === "text" && (
