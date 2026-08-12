@@ -14,6 +14,7 @@ import {
   agendaFor,
   DEFAULT_TASKS,
   type PlannerProgress,
+  type PlannerSession,
 } from "../src/lib/planner";
 
 let failures = 0;
@@ -193,7 +194,8 @@ check(
 console.log("\nreal timetable rows:");
 {
   const { decodeEntities } = await import("../src/lib/ics");
-  const { mergeAssessmentWindows, dropSessionsBefore } = await import("../src/lib/planner");
+  const { mergeWindows, windowRole, dueAt, repairSessions, dropSessionsBefore } =
+    await import("../src/lib/planner");
 
   check(
     "an escaped ampersand is decoded",
@@ -241,17 +243,67 @@ console.log("\nreal timetable rows:");
       "Quiz - Radiology of the Thorax and Neck"
   );
 
-  // The open and close of one quiz are one assessment, due at the close.
-  const opens = new Date(2026, 7, 19, 9).getTime();
-  const closes = new Date(2026, 7, 21, 23).getTime();
-  const merged = mergeAssessmentWindows([
-    { id: "a", week: 1, kind: "assessment", topic: "Quiz - Radiology", start: opens, allDay: false },
-    { id: "b", week: 1, kind: "assessment", topic: "Quiz - Radiology", start: closes, allDay: false },
-    { id: "c", week: 1, kind: "lecture", topic: "Quiz - Radiology", start: opens, allDay: false },
+  check("a title ending in \"opens\" is the start of a window", windowRole("Quiz opens") === "opens");
+  check("and \"closes\" the end", windowRole("Quiz closes") === "closes");
+  check("\"due\" counts as the end too", windowRole("Essay due") === "closes");
+  check("an ordinary title has no role", windowRole("Thorax") === null);
+
+  // Opens and closes are one assignment with a window to do it in.
+  const opens = new Date(2026, 7, 13, 11, 30).getTime();
+  const closes = new Date(2026, 7, 13, 12, 31).getTime();
+  const merged = mergeWindows([
+    { role: "opens", session: { id: "a", week: 1, kind: "other", topic: "Pearls: Mediastinum", start: opens, allDay: false } },
+    { role: "closes", session: { id: "b", week: 1, kind: "other", topic: "Pearls: Mediastinum", start: closes, allDay: false } },
   ]);
-  check("the pair becomes one assessment", merged.filter((m) => m.kind === "assessment").length === 1);
-  check("dated at the deadline", merged[0].start === closes, "the close is what you work to");
-  check("and a lecture of the same name is left alone", merged.length === 2);
+  check("the pair becomes one row", merged.length === 1);
+  check("starting when it opens", merged[0].start === opens);
+  check("ending when it closes", merged[0].end === closes, "that's the deadline");
+  check("and it knows it's a window", merged[0].window === true);
+  check("so the due time is the close", dueAt(merged[0]) === closes);
+  check(
+    "while an ordinary session is due when it starts",
+    dueAt({ id: "x", week: 1, kind: "lecture", topic: "T", start: opens, allDay: false }) === opens
+  );
+
+  const twoDifferent = mergeWindows([
+    { role: null, session: { id: "a", week: 1, kind: "lecture", topic: "Anatomy", start: opens, allDay: false } },
+    { role: null, session: { id: "b", week: 1, kind: "lecture", topic: "Anatomy", start: closes, allDay: false } },
+  ]);
+  check(
+    "two real sessions with the same name both survive",
+    twoDifferent.length === 2,
+    "a repeated lecture is not a window"
+  );
+
+  // Repairing a plan stored by the older version, without a re-import.
+  const stored: PlannerSession[] = [
+    { id: "1", week: 1, kind: "assessment", topic: "Introduction/Health History/Vitals/Exam", start: opens, allDay: false },
+    { id: "2", week: 1, kind: "lab", topic: "Thoracic Surface Examination", start: opens, allDay: false },
+    { id: "3", week: 1, kind: "other", topic: "08.13.26 Pearls: Superior &amp; Middle Mediastinum opens", start: opens, allDay: false },
+    { id: "4", week: 1, kind: "other", topic: "08.13.26 Pearls: Superior &amp; Middle Mediastinum closes", start: closes, allDay: false },
+    { id: "5", week: 1, kind: "lecture", topic: "Vitals/Exam", start: opens, allDay: false, edited: true },
+  ];
+  const fixed = repairSessions(stored, decodeEntities);
+  check(
+    "the clinical skills class stops being an exam",
+    fixed.find((f) => f.id === "1")?.kind !== "assessment"
+  );
+  check(
+    "the lab stays a lab",
+    fixed.find((f) => f.id === "2")?.kind === "lab",
+    "relaxing only, never tightening"
+  );
+  check(
+    "the entity and date are cleaned up",
+    fixed.find((f) => f.id === "3")?.topic === "Pearls: Superior & Middle Mediastinum",
+    fixed.find((f) => f.id === "3")?.topic
+  );
+  check("and the pair is merged", fixed.filter((f) => f.topic.includes("Pearls")).length === 1);
+  check("with the closing time kept", fixed.find((f) => f.id === "3")?.end === closes);
+  check(
+    "a session you corrected by hand is untouched",
+    fixed.find((f) => f.id === "5")?.topic === "Vitals/Exam"
+  );
 
   // Starting fresh mid-semester.
   const past = { id: "p", week: 1, kind: "lecture" as const, topic: "Old", start: new Date(2026, 7, 1).getTime(), allDay: false };

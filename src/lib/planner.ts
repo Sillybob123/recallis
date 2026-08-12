@@ -28,6 +28,14 @@ export interface PlannerSession {
   end?: number;
   allDay: boolean;
   location?: string;
+  /**
+   * True when this came from an "opens"/"closes" pair. The calendar
+   * publishes those as two events; they are one piece of work, and `end` is
+   * the deadline you actually have to beat.
+   */
+  window?: boolean;
+  /** set when you correct what the parser guessed */
+  edited?: boolean;
 }
 
 export interface PlannerTask {
@@ -225,52 +233,124 @@ export function weekNumber(at: number, firstSessionAt: number): number {
 export function sessionsFromEvents(events: IcsEvent[]): PlannerSession[] {
   if (events.length === 0) return [];
   const first = events.reduce((min, e) => Math.min(min, e.start), Infinity);
-  return mergeAssessmentWindows(
+  return mergeWindows(
     events.map((e) => ({
-      id: e.uid,
-      week: weekNumber(e.start, first),
-      kind: classifySession(`${e.summary} ${e.description ?? ""}`),
-      topic: cleanTopic(e.summary),
-      start: e.start,
-      end: e.end,
-      allDay: e.allDay,
-      location: e.location,
+      role: windowRole(e.summary),
+      session: {
+        id: e.uid,
+        week: weekNumber(e.start, first),
+        kind: classifySession(`${e.summary} ${e.description ?? ""}`),
+        topic: cleanTopic(e.summary),
+        start: e.start,
+        end: e.end,
+        allDay: e.allDay,
+        location: e.location,
+      },
     }))
   );
 }
 
+export type WindowRole = "opens" | "closes" | null;
+
+const WINDOW_SUFFIX =
+  /\s*[-–—(]?\s*\b(opens?|closes?|due|window (?:opens?|closes?))\b\s*\)?\s*$/i;
+
+/** Whether a title is the start or the end of a submission window. */
+export function windowRole(summary: string): WindowRole {
+  const m = WINDOW_SUFFIX.exec(summary);
+  if (!m) return null;
+  return /open/i.test(m[1]) ? "opens" : "closes";
+}
+
 /**
- * A timed quiz is published as two events — one when it opens, one when it
- * closes — which reads as two exams a week apart. They're one assessment,
- * and the one that matters is the deadline, so the pair collapses to the
- * later of the two.
+ * Collapses "X opens" and "X closes" into one session running from the first
+ * to the second.
+ *
+ * Shown as two rows they read as two separate pieces of work, and the second
+ * one looks like it arrives after the first is due. They are one assignment
+ * with a window, and what you need to see is when it shuts.
  */
-export function mergeAssessmentWindows(
-  sessions: PlannerSession[]
+export function mergeWindows(
+  entries: { session: PlannerSession; role: WindowRole }[]
 ): PlannerSession[] {
-  const byTopic = new Map<string, PlannerSession>();
+  const byTopic = new Map<string, { session: PlannerSession; role: WindowRole }>();
   const out: PlannerSession[] = [];
-  for (const s of sessions) {
-    if (s.kind !== "assessment") {
-      out.push(s);
-      continue;
-    }
-    const key = s.topic.toLowerCase();
+
+  for (const entry of entries) {
+    const { session, role } = entry;
+    const key = session.topic.toLowerCase();
     const seen = byTopic.get(key);
-    if (!seen) {
-      byTopic.set(key, s);
-      out.push(s);
+
+    // Nothing to pair with, or a different piece of work with the same name
+    // and no window at all: keep it as its own row.
+    if (!seen || (role === null && seen.role === null && session.kind !== "assessment")) {
+      byTopic.set(key, entry);
+      out.push(session);
       continue;
     }
-    // Same assessment twice: keep the later instant, which is the deadline.
-    if (s.start > seen.start) {
-      seen.start = s.start;
-      seen.end = s.end;
-      seen.week = s.week;
-      seen.allDay = s.allDay;
+
+    if (role && seen.role && role !== seen.role) {
+      const opens = role === "opens" ? session : seen.session;
+      const closes = role === "closes" ? session : seen.session;
+      seen.session.start = opens.start;
+      // The "closes" event's own start is the moment the window shuts.
+      seen.session.end = closes.start;
+      seen.session.week = opens.week;
+      seen.session.allDay = opens.allDay && closes.allDay;
+      seen.session.window = true;
+      continue;
+    }
+
+    // Two events, same name, same role — or an assessment listed twice. Keep
+    // the later one, which is the deadline.
+    if (session.start > seen.session.start) {
+      seen.session.start = session.start;
+      seen.session.end = session.end;
+      seen.session.week = session.week;
+      seen.session.allDay = session.allDay;
     }
   }
   return out;
+}
+
+/** When the work is actually due: the end of a window, else the start. */
+export function dueAt(session: PlannerSession): number {
+  return session.window && session.end ? session.end : session.start;
+}
+
+/**
+ * Brings a plan stored by an older version up to date, in place of asking
+ * anyone to re-import.
+ *
+ * It repeats the cleanup that now happens on import — decode the entities,
+ * drop the date prefix, pair up opens/closes — and undoes one specific
+ * misreading: "exam" in a clinical-skills title. Classification is only ever
+ * relaxed here, never tightened, because the stored topic has already had
+ * its "Lab:" prefix stripped and re-running the full guess on it would turn
+ * "Thoracic Surface Examination" into an exam.
+ *
+ * Anything you corrected by hand is left exactly as you left it.
+ */
+export function repairSessions(
+  sessions: PlannerSession[],
+  decode: (s: string) => string
+): PlannerSession[] {
+  const entries = sessions.map((session) => {
+    if (session.edited) return { session, role: null as WindowRole };
+    const decoded = decode(session.topic);
+    const role = windowRole(decoded);
+    const topic = cleanTopic(decoded);
+    let kind = session.kind;
+    if (
+      kind === "assessment" &&
+      !DEFINITE_ASSESSMENT.test(topic.toLowerCase()) &&
+      CLINICAL_CONTEXT.test(topic.toLowerCase())
+    ) {
+      kind = classifySession(topic);
+    }
+    return { session: { ...session, topic, kind }, role };
+  });
+  return mergeWindows(entries);
 }
 
 /**
@@ -342,7 +422,7 @@ export function examOutlook(
   progress: PlannerProgress,
   now = Date.now()
 ): ExamOutlook[] {
-  const ordered = [...plan.sessions].sort((a, b) => a.start - b.start);
+  const ordered = [...plan.sessions].sort((a, b) => dueAt(a) - dueAt(b));
   const exams = ordered.filter((s) => s.kind === "assessment");
   const out: ExamOutlook[] = [];
   let previousExamAt = -Infinity;
@@ -359,7 +439,7 @@ export function examOutlook(
     );
     out.push({
       session: exam,
-      daysAway: Math.ceil((startOfDay(exam.start) - startOfDay(now)) / 86400000),
+      daysAway: Math.ceil((startOfDay(dueAt(exam)) - startOfDay(now)) / 86400000),
       covers,
       outstanding,
     });

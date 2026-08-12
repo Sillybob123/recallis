@@ -34,6 +34,7 @@ import {
   isDone,
   makeTaskId,
   progressKey,
+  repairSessions,
   SESSION_LABELS,
   sessionCompletion,
   sessionsFromEvents,
@@ -44,6 +45,7 @@ import {
   type PlannerProgress,
   type PlannerSession,
   type PlannerTask,
+  type SessionKind,
 } from "../lib/planner";
 import {
   loadReminderSettings,
@@ -72,12 +74,28 @@ function dayLabel(at: number): string {
     month: "short",
   });
 }
-function timeLabel(s: PlannerSession): string {
-  if (s.allDay) return "all day";
-  return new Date(s.start).toLocaleTimeString(undefined, {
+function timeOf(at: number): string {
+  return new Date(at).toLocaleTimeString(undefined, {
     hour: "numeric",
     minute: "2-digit",
   });
+}
+function timeLabel(s: PlannerSession): string {
+  if (s.allDay) return "all day";
+  // For a window, the time that matters is the one you have to beat.
+  if (s.window && s.end) return `due ${timeOf(s.end)}`;
+  return timeOf(s.start);
+}
+/** Day and time, spelling out a submission window as the span it is. */
+function whenLabel(s: PlannerSession): string {
+  if (s.allDay) return `${dayLabel(s.start)} · all day`;
+  if (s.window && s.end) {
+    const sameDay = dayLabel(s.start) === dayLabel(s.end);
+    return sameDay
+      ? `${dayLabel(s.start)} · ${timeOf(s.start)} – ${timeOf(s.end)}`
+      : `${dayLabel(s.start)} ${timeOf(s.start)} → due ${dayLabel(s.end)} ${timeOf(s.end)}`;
+  }
+  return `${dayLabel(s.start)} · ${timeOf(s.start)}`;
 }
 
 export function PlannerPage() {
@@ -95,6 +113,7 @@ export function PlannerPage() {
   const [editingEmail, setEditingEmail] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [showAllExams, setShowAllExams] = useState(false);
+  const [editingSession, setEditingSession] = useState<PlannerSession | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -113,10 +132,7 @@ export function PlannerPage() {
           ? {
               ...p,
               name: decodeEntities(p.name ?? ""),
-              sessions: (p.sessions ?? []).map((sn) => ({
-                ...sn,
-                topic: decodeEntities(sn.topic),
-              })),
+              sessions: repairSessions(p.sessions ?? [], decodeEntities),
             }
           : null
       );
@@ -319,6 +335,38 @@ export function PlannerPage() {
       }
     },
     [user]
+  );
+
+  /**
+   * Correcting what the import guessed. Marked as edited so the repair pass
+   * that runs on load never reverts a deliberate change.
+   */
+  const updateSession = useCallback(
+    (id: string, patch: Partial<PlannerSession>) => {
+      if (!plan) return;
+      setEditingSession(null);
+      void savePlan({
+        ...plan,
+        sessions: plan.sessions.map((s) =>
+          s.id === id ? { ...s, ...patch, edited: true } : s
+        ),
+        updatedAt: Date.now(),
+      });
+    },
+    [plan, savePlan]
+  );
+
+  const removeSession = useCallback(
+    (id: string) => {
+      if (!plan) return;
+      setEditingSession(null);
+      void savePlan({
+        ...plan,
+        sessions: plan.sessions.filter((s) => s.id !== id),
+        updatedAt: Date.now(),
+      });
+    },
+    [plan, savePlan]
   );
 
   const renamePlan = useCallback(
@@ -531,6 +579,15 @@ export function PlannerPage() {
         />
       )}
 
+      {editingSession && (
+        <SessionEditor
+          session={editingSession}
+          onCancel={() => setEditingSession(null)}
+          onSave={updateSession}
+          onDelete={removeSession}
+        />
+      )}
+
       {editingRoutine && (
         <RoutineEditor
           tasks={plan?.tasks?.length ? plan.tasks : DEFAULT_TASKS}
@@ -588,6 +645,20 @@ export function PlannerPage() {
                         Week {e.outstanding[0].week} →
                       </button>
                     )}
+                    <button
+                      onClick={() => updateSession(e.session.id, { kind: "other" })}
+                      title="This isn't an assessment — stop counting sessions towards it"
+                      className="shrink-0 rounded-md px-2 py-1 text-xs font-medium text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+                    >
+                      Not an exam
+                    </button>
+                    <button
+                      onClick={() => setEditingSession(e.session)}
+                      aria-label="Edit"
+                      className="shrink-0 text-slate-300 hover:text-slate-600"
+                    >
+                      <Pencil size={13} />
+                    </button>
                   </li>
                 ))}
               </ul>
@@ -657,6 +728,7 @@ export function PlannerPage() {
             progress={progress}
             onToggle={toggle}
             onToggleRow={toggleWholeSession}
+            onEdit={setEditingSession}
           />
 
         </>
@@ -840,6 +912,107 @@ function PlanTitle({
   );
 }
 
+/**
+ * Fixing a row the import got wrong.
+ *
+ * A parser working from titles alone will misread some of them, and the
+ * expensive mistake is a session wrongly called an assessment: the planner
+ * then counts everything before it as revision for an exam that doesn't
+ * exist. So the type is the first thing here, and it's one click.
+ */
+function SessionEditor({
+  session,
+  onCancel,
+  onSave,
+  onDelete,
+}: {
+  session: PlannerSession;
+  onCancel: () => void;
+  onSave: (id: string, patch: Partial<PlannerSession>) => void;
+  onDelete: (id: string) => void;
+}) {
+  const [topic, setTopic] = useState(session.topic);
+  const [kind, setKind] = useState<SessionKind>(session.kind);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
+      <div className="w-full max-w-md rounded-2xl bg-white p-5 shadow-xl">
+        <div className="mb-4 flex items-start justify-between gap-3">
+          <div>
+            <h2 className="text-lg font-bold text-slate-900">Fix this session</h2>
+            <p className="text-sm text-slate-500">
+              {whenLabel(session)}
+              {session.window && " — a window you work inside"}
+            </p>
+          </div>
+          <button onClick={onCancel} className="text-slate-400 hover:text-slate-600">
+            <X size={18} />
+          </button>
+        </div>
+
+        <label className="mb-3 block">
+          <span className="mb-1 block text-xs font-semibold text-slate-500">Title</span>
+          <input
+            value={topic}
+            onChange={(e) => setTopic(e.target.value)}
+            className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm outline-none focus:border-indigo-400"
+          />
+        </label>
+
+        <span className="mb-1 block text-xs font-semibold text-slate-500">Type</span>
+        <div className="mb-1 flex flex-wrap gap-1.5">
+          {(Object.keys(SESSION_LABELS) as SessionKind[]).map((k) => (
+            <button
+              key={k}
+              onClick={() => setKind(k)}
+              className={`rounded-lg px-2.5 py-1 text-xs font-semibold transition ${
+                kind === k
+                  ? k === "assessment"
+                    ? "bg-red-600 text-white"
+                    : "bg-indigo-600 text-white"
+                  : "bg-white text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50"
+              }`}
+            >
+              {SESSION_LABELS[k]}
+            </button>
+          ))}
+        </div>
+        <p className="mb-4 text-xs leading-relaxed text-slate-400">
+          Only an <b>Assessment</b> gets a countdown and pulls the sessions
+          before it in as revision.
+        </p>
+
+        <div className="flex items-center justify-between gap-2">
+          <button
+            onClick={() => {
+              if (confirm(`Remove "${session.topic}" from the planner?`)) {
+                onDelete(session.id);
+              }
+            }}
+            className="flex items-center gap-1 rounded-lg px-2 py-1.5 text-sm font-medium text-red-500 hover:bg-red-50"
+          >
+            <Trash2 size={14} /> Remove
+          </button>
+          <div className="flex gap-2">
+            <button
+              onClick={onCancel}
+              className="rounded-lg px-3 py-1.5 text-sm font-medium text-slate-500 hover:bg-slate-100"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={() => onSave(session.id, { topic: topic.trim() || session.topic, kind })}
+              className="rounded-lg bg-indigo-600 px-4 py-1.5 text-sm font-semibold text-white hover:bg-indigo-700"
+            >
+              Save
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function EmptyState({ onPick }: { onPick: () => void }) {
   return (
     <div className="rounded-2xl border border-dashed border-slate-300 bg-white px-6 py-12 text-center">
@@ -940,12 +1113,14 @@ function Grid({
   progress,
   onToggle,
   onToggleRow,
+  onEdit,
 }: {
   sessions: PlannerSession[];
   plan: PlannerPlan;
   progress: PlannerProgress;
   onToggle: (s: PlannerSession, t: PlannerTask) => void;
   onToggleRow: (s: PlannerSession) => void;
+  onEdit: (s: PlannerSession) => void;
 }) {
   if (sessions.length === 0) {
     return (
@@ -1007,8 +1182,16 @@ function Grid({
                       {s.topic}
                     </button>
                     <span className="shrink-0 text-[11px] text-slate-400">
-                      {dayLabel(s.start)} · {timeLabel(s)}
+                      {whenLabel(s)}
                     </span>
+                    <button
+                      onClick={() => onEdit(s)}
+                      aria-label={`Edit ${s.topic}`}
+                      title="Fix what the import guessed"
+                      className="shrink-0 text-slate-200 transition hover:text-slate-500"
+                    >
+                      <Pencil size={12} />
+                    </button>
                   </div>
                 </td>
                 {plan.tasks.map((t) => {
