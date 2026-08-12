@@ -165,5 +165,37 @@ console.log("\ncost:");
   );
 }
 
+// ---------- every piece of text in a box goes through this ----------
+// The failure this guards against is a second, hand-rolled shrink loop
+// appearing somewhere — which is what the on-mask prompt had, with a
+// different font and no way to break a long word, so a question could wrap
+// differently in an exported Anki card than it did on screen.
+console.log("\nnothing draws text its own way:");
+{
+  const { readFileSync } = await import("node:fs");
+  const files = [
+    "src/components/NoteBox.tsx",
+    "src/components/ShapeOverlay.tsx",
+    "src/pages/OcclusionEditor.tsx",
+    "src/lib/shapes.ts",
+    "src/lib/ankiExport.ts",
+  ];
+  for (const file of files) {
+    const src = readFileSync(file, "utf8");
+    const drawsText =
+      /fontSize|ctx\.font|fillText/.test(src) && !file.endsWith("fitText.ts");
+    if (!drawsText) continue;
+    check(`${file.split("/").pop()} uses the shared fitter`, src.includes("fitText"));
+    // The specific thing that was there before: a loop stepping the size
+    // down until the text happened to fit. Two of those in a codebase means
+    // two answers to the same question, and they drift.
+    check(
+      `${file.split("/").pop()} has no shrink loop of its own`,
+      !/for\s*\([^)]*size\s*=[^)]*size\s*-=/.test(src),
+      "one fitter, or the screen and the export disagree"
+    );
+  }
+}
+
 console.log(failures === 0 ? "\nAll cases passed." : `\n${failures} failing.`);
 process.exit(failures === 0 ? 0 : 1);

@@ -1,6 +1,7 @@
 import { useRef } from "react";
 import type { OcclusionShape } from "../types";
 import { NoteBox, useBoxSize } from "./NoteBox";
+import { canvasMeasure, fitText, FIT_FONT_STACK } from "../lib/fitText";
 import {
   annotationVisible,
   annotationWeight,
@@ -16,6 +17,8 @@ import {
 } from "../lib/shapes";
 
 const TARGET_COLOR = "#f59e0b";
+
+const promptMeasure = canvasMeasure(600);
 
 /**
  * Display-only SVG overlay for study views. Absolutely position over the
@@ -133,22 +136,65 @@ export function ShapeOverlay({
       />
     ))}
     {prompts.map((s) => (
-      <span
+      <PromptText
         key={`prompt-${s.id}`}
-        className="absolute flex items-center justify-center overflow-hidden p-1 text-center font-medium leading-tight text-white"
-        style={{
-          left: `${s.x * 100}%`,
-          top: `${s.y * 100}%`,
-          width: `${s.w * 100}%`,
-          height: `${s.h * 100}%`,
-          fontSize: "clamp(9px, 1.6vw, 15px)",
-          textShadow: "0 1px 2px rgba(0,0,0,0.55)",
-        }}
-      >
-        {s.label}
-      </span>
+        shape={s}
+        containerWidth={box.width}
+        containerHeight={box.height}
+      />
     ))}
     </div>
+  );
+}
+
+/**
+ * The question written across a covered mask.
+ *
+ * Fitted the same way a note is: it used to be a fixed responsive size with
+ * the overflow hidden, so a question longer than a few words was simply cut
+ * off mid-sentence — on the one card where you needed to read it.
+ */
+function PromptText({
+  shape,
+  containerWidth,
+  containerHeight,
+}: {
+  shape: OcclusionShape;
+  containerWidth: number;
+  containerHeight: number;
+}) {
+  if (containerWidth <= 0 || containerHeight <= 0) return null;
+  const fit = fitText(
+    shape.label ?? "",
+    shape.w * containerWidth,
+    shape.h * containerHeight,
+    promptMeasure,
+    // Smaller ceiling than a note: this sits on top of a mask, and reads as
+    // a prompt rather than a heading.
+    { max: 26, padding: 5 }
+  );
+  return (
+    <span
+      className="absolute flex flex-col items-center justify-center overflow-hidden text-center text-white"
+      style={{
+        left: `${shape.x * 100}%`,
+        top: `${shape.y * 100}%`,
+        width: `${shape.w * 100}%`,
+        height: `${shape.h * 100}%`,
+        fontFamily: FIT_FONT_STACK,
+        fontWeight: 600,
+        fontSize: `${fit.fontSize}px`,
+        lineHeight: fit.lineHeight,
+        textShadow: "0 1px 2px rgba(0,0,0,0.55)",
+        padding: 5,
+      }}
+    >
+      {fit.lines.map((line, i) => (
+        <span key={i} style={{ whiteSpace: "pre" }}>
+          {line}
+        </span>
+      ))}
+    </span>
   );
 }
 

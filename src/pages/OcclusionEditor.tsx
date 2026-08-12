@@ -24,6 +24,7 @@ import {
 import { useAuth } from "../contexts/AuthContext";
 import { Layout } from "../components/Layout";
 import { NoteBox, useBoxSize } from "../components/NoteBox";
+import { canvasMeasure, fitText, FIT_FONT_STACK } from "../lib/fitText";
 import {
   createOcclusionSheet,
   getOcclusionSheet,
@@ -51,6 +52,8 @@ import {
 } from "../lib/shapes";
 import type { OcclusionShape, ShapeKind } from "../types";
 import { uid } from "../lib/uid";
+
+const labelMeasure = canvasMeasure(600);
 
 /** Covers default to near-black: unambiguous, and clearly not a mask. */
 const COVER_COLOR = "#0f172a";
@@ -1279,25 +1282,44 @@ export function OcclusionEditor() {
                     />
                   ))}
 
-                {/* mask labels — annotations carry their own */}
-                {shapes.map(
-                  (s) =>
-                    s.label &&
-                    !isAnnotation(s) && (
-                      <span
-                        key={`lbl-${s.id}`}
-                        className="pointer-events-none absolute flex items-center justify-center overflow-hidden px-1 text-center text-[10px] font-medium text-white"
-                        style={{
-                          left: `${s.x * 100}%`,
-                          top: `${s.y * 100}%`,
-                          width: `${s.w * 100}%`,
-                          height: `${s.h * 100}%`,
-                        }}
-                      >
-                        {s.label}
-                      </span>
-                    )
-                )}
+                {/* mask labels — annotations carry their own. Fitted like
+                    everything else, so what you see here is what a card
+                    will show rather than a ten-pixel approximation. */}
+                {shapes.map((s) => {
+                  if (!s.label || isAnnotation(s)) return null;
+                  if (canvasSize.width <= 0) return null;
+                  const fit = fitText(
+                    s.label,
+                    s.w * canvasSize.width,
+                    s.h * canvasSize.height,
+                    labelMeasure,
+                    { max: 26, padding: 5 }
+                  );
+                  return (
+                    <span
+                      key={`lbl-${s.id}`}
+                      className="pointer-events-none absolute flex flex-col items-center justify-center overflow-hidden text-center text-white"
+                      style={{
+                        left: `${s.x * 100}%`,
+                        top: `${s.y * 100}%`,
+                        width: `${s.w * 100}%`,
+                        height: `${s.h * 100}%`,
+                        fontFamily: FIT_FONT_STACK,
+                        fontWeight: 600,
+                        fontSize: `${fit.fontSize}px`,
+                        lineHeight: fit.lineHeight,
+                        padding: 5,
+                        textShadow: "0 1px 2px rgba(0,0,0,0.5)",
+                      }}
+                    >
+                      {fit.lines.map((line, i) => (
+                        <span key={i} style={{ whiteSpace: "pre" }}>
+                          {line}
+                        </span>
+                      ))}
+                    </span>
+                  );
+                })}
 
                 {/* resize handles for single selection */}
                 {selectedShapes.length === 1 &&

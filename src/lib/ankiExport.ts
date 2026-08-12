@@ -3,6 +3,7 @@ import { ref, getBlob } from "firebase/storage";
 import { storage } from "../firebase";
 import type { Card, OcclusionSheet, OcclusionShape } from "../types";
 import { serializeAnkiFile } from "./ankiTsv";
+import { fitText, FIT_FONT_STACK } from "./fitText";
 import {
   annotationsForCard,
   annotationsOf,
@@ -50,6 +51,15 @@ function exportCanvas(img: HTMLImageElement): HTMLCanvasElement {
 }
 
 /** Word-wraps and centers a text-box mask's prompt inside its rectangle. */
+/**
+ * The question written across a covered mask, baked for export.
+ *
+ * Uses the same fitter as the screen, measured with this very context, so
+ * the exported card wraps where the studied card wrapped. It had its own
+ * shrink loop with a different font and no way to break a word too long for
+ * the line, which meant a long prompt could read differently in Anki than
+ * it did here.
+ */
 function drawPromptText(
   ctx: CanvasRenderingContext2D,
   s: OcclusionShape,
@@ -62,41 +72,37 @@ function drawPromptText(
   const boxY = s.y * H;
   const boxW = s.w * W;
   const boxH = s.h * H;
-  const pad = Math.min(boxW, boxH) * 0.08;
+  const padding = Math.max(Math.min(boxW, boxH) * 0.08, 4);
 
-  // Start large and shrink until the wrapped text fits the box.
-  for (let size = Math.floor(boxH * 0.45); size >= 9; size -= 2) {
-    ctx.font = `600 ${size}px "Helvetica Neue", Helvetica, Arial, sans-serif`;
-    const words = text.split(/\s+/);
-    const lines: string[] = [];
-    let line = "";
-    for (const word of words) {
-      const attempt = line ? `${line} ${word}` : word;
-      if (ctx.measureText(attempt).width <= boxW - pad * 2 || !line) {
-        line = attempt;
-      } else {
-        lines.push(line);
-        line = word;
-      }
-    }
-    lines.push(line);
-    const lineHeight = size * 1.2;
-    if (lines.length * lineHeight <= boxH - pad * 2 || size === 9) {
-      ctx.fillStyle = "#ffffff";
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-      ctx.shadowColor = "rgba(0,0,0,0.6)";
-      ctx.shadowBlur = 3;
-      const startY = boxY + boxH / 2 - ((lines.length - 1) * lineHeight) / 2;
-      lines.forEach((l, i) =>
-        ctx.fillText(l, boxX + boxW / 2, startY + i * lineHeight, boxW - pad * 2)
-      );
-      ctx.shadowBlur = 0;
-      ctx.textAlign = "start";
-      ctx.textBaseline = "alphabetic";
-      return;
-    }
-  }
+  const fit = fitText(
+    text,
+    boxW,
+    boxH,
+    (candidate, size) => {
+      ctx.font = `600 ${size}px ${FIT_FONT_STACK}`;
+      return ctx.measureText(candidate).width;
+    },
+    { max: Math.max(boxH * 0.45, 10), padding }
+  );
+
+  ctx.save();
+  // Clipped as well as fitted: a box too small for the smallest type stops
+  // at its own edge rather than writing over the image around it.
+  ctx.beginPath();
+  ctx.rect(boxX, boxY, boxW, boxH);
+  ctx.clip();
+  ctx.font = `600 ${fit.fontSize}px ${FIT_FONT_STACK}`;
+  ctx.fillStyle = "#ffffff";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.shadowColor = "rgba(0,0,0,0.6)";
+  ctx.shadowBlur = 3;
+  const step = fit.fontSize * fit.lineHeight;
+  const startY = boxY + boxH / 2 - ((fit.lines.length - 1) * step) / 2;
+  fit.lines.forEach((line, i) => {
+    ctx.fillText(line, boxX + boxW / 2, startY + i * step);
+  });
+  ctx.restore();
 }
 
 /** Draws the base image with the given normalized shapes filled solid (masked). */
