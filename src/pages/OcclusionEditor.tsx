@@ -1396,8 +1396,10 @@ export function OcclusionEditor() {
                 <div className="mt-2 flex flex-wrap items-center gap-2 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs text-indigo-800">
                   <Link2 size={14} className="shrink-0" />
                   <span className="min-w-0 flex-1">
-                    Click the masks that this one should appear with. It stays
-                    off every other card, and is never asked on its own.
+                    Click the masks this should appear with. On every other
+                    card it isn't there at all, and it is never asked on its
+                    own — so a black box can hide the word that gives one
+                    particular question away, without hiding it on the rest.
                     {(() => {
                       const n = shapes.find((x) => x.id === linking)?.showsWith?.length ?? 0;
                       return n ? ` Attached to ${n} so far.` : "";
@@ -1428,7 +1430,7 @@ export function OcclusionEditor() {
                             : tool === "explain"
                               ? "Drag a box and type the explanation. It stays hidden until the answer is revealed — link it to a mask to show it on just that card. The text shrinks to fit; drag the handles to resize the box."
                               : tool === "cover"
-                              ? "Drag over anything that shouldn't be seen. Covers stay on for every card and are never asked."
+                              ? "Drag over anything that shouldn't be seen. A cover is never asked and never revealed — link it to a mask to hide it on that card only."
                               : "Drag on the image to draw. Switch to the arrow tool to move/resize."}
               </p>
 
@@ -1490,9 +1492,9 @@ export function OcclusionEditor() {
                     {isCompanion(s) && (
                       <span
                         className="shrink-0 rounded bg-indigo-100 px-1 text-[10px] font-bold text-indigo-700"
-                        title={`Only covered while ${s.showsWith!.length} particular mask${
-                          s.showsWith!.length === 1 ? " is" : "s are"
-                        } being asked`}
+                        title={`Only on the ${s.showsWith!.length} card${
+                          s.showsWith!.length === 1 ? "" : "s"
+                        } this is linked to — absent from the rest`}
                       >
                         with {s.showsWith!.length}
                       </span>
@@ -1520,8 +1522,7 @@ export function OcclusionEditor() {
                       placeholder="Label (optional)"
                       className="min-w-0 flex-1 bg-transparent text-sm outline-none"
                     />
-                    {!isCover(s) && (
-                      <button
+                    <button
                         onClick={(e) => {
                           e.stopPropagation();
                           setLinking(linking === s.id ? null : s.id);
@@ -1532,9 +1533,11 @@ export function OcclusionEditor() {
                             ? `Only shown on ${s.showsWith!.length} card${
                                 s.showsWith!.length === 1 ? "" : "s"
                               } — click to change which`
-                            : isAnnotation(s)
-                              ? "Only show this on certain cards"
-                              : "Only show this mask on certain cards"
+                            : isCover(s)
+                              ? "Only cover this on certain cards"
+                              : isAnnotation(s)
+                                ? "Only show this on certain cards"
+                                : "Only show this mask on certain cards"
                         }
                         className={`shrink-0 ${
                           linking === s.id
@@ -1546,7 +1549,6 @@ export function OcclusionEditor() {
                       >
                         <Link2 size={14} />
                       </button>
-                    )}
                     {isAnnotation(s) && (
                       <button
                         onClick={(e) => {

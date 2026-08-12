@@ -51,6 +51,32 @@ export function coversOf(shapes: OcclusionShape[]): OcclusionShape[] {
   return shapes.filter(isCover);
 }
 
+/**
+ * Whether a shape that hides something without being asked belongs on the
+ * card currently showing.
+ *
+ * A plain cover is on every card — that is what "never revealed" means. Tie
+ * one to particular masks and it appears only while one of those is the
+ * question: the neighbouring label that gives away this card, and nothing
+ * to do with any other.
+ */
+export function hiderVisible(
+  shape: OcclusionShape,
+  unitShapeIds: Iterable<string>
+): boolean {
+  if (!isCompanion(shape)) return true;
+  const asked = new Set(unitShapeIds);
+  return shape.showsWith!.some((id) => asked.has(id));
+}
+
+/** The covers painted on a given card. */
+export function coversFor(
+  shapes: OcclusionShape[],
+  unitShapeIds: Iterable<string>
+): OcclusionShape[] {
+  return shapes.filter((s) => isCover(s) && hiderVisible(s, unitShapeIds));
+}
+
 /** The shapes that actually cover something up. */
 export function masksOf(shapes: OcclusionShape[]): OcclusionShape[] {
   return shapes.filter((s) => !isAnnotation(s));
@@ -214,6 +240,9 @@ export function companionsFor(
     // Annotations can carry showsWith too, but they are drawn rather than
     // covered — they never belong in a set of things to fill in.
     if (isAnnotation(s)) continue;
+    // A cover carrying the same link is still a cover — never revealed —
+    // so it is collected by coversFor rather than here.
+    if (isCover(s)) continue;
     if (isCompanion(s) && s.showsWith!.some((id) => asked.has(id))) out.add(s.id);
   }
   return out;
@@ -272,15 +301,22 @@ export function occlusionVisibility(
 ): OcclusionVisibility {
   const target = new Set(unitShapeIds);
   const companions = companionsFor(shapes, target);
-  const askable = shapes.filter((s) => !isAnnotation(s));
+  // Covers stay on through the answer, but only the ones that belong to
+  // this card — a cover tied to another mask isn't on this card at all.
+  const covers = new Set(coversFor(shapes, target).map((s) => s.id));
+  const askable = shapes.filter((s) => !isAnnotation(s) && !isCover(s));
+  const everyCover = new Set(shapes.filter(isCover).map((s) => s.id));
 
   if (!revealed) {
     return {
       target,
       hidden:
         mode === "hideOne"
-          ? new Set([...target, ...companions])
-          : new Set(askable.map((s) => s.id)),
+          ? new Set([...target, ...companions, ...covers])
+          : new Set([
+              ...askable.map((s) => s.id).filter((id) => !everyCover.has(id)),
+              ...covers,
+            ]),
     };
   }
   return {
@@ -289,13 +325,16 @@ export function occlusionVisibility(
     hidden:
       mode === "hideAll"
         ? // The answer is showing, so this card's masks lift — and so do the
-          // companions that were only hiding to protect this question.
-          new Set(
-            askable
+          // companions that were only hiding to protect this question. The
+          // covers stay: revealing one would be the spoiler it exists to
+          // prevent.
+          new Set([
+            ...askable
               .map((s) => s.id)
-              .filter((id) => !target.has(id) && !companions.has(id))
-          )
-        : new Set(),
+              .filter((id) => !target.has(id) && !companions.has(id)),
+            ...covers,
+          ])
+        : new Set(covers),
   };
 }
 

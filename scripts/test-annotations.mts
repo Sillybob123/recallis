@@ -8,6 +8,8 @@ import {
   annotationsForCard,
   annotationVisible,
   companionsFor,
+  coversFor,
+  hiderVisible,
   isCardShape,
   isCompanion,
   isCover,
@@ -248,6 +250,74 @@ console.log("\nexplanations:");
     "visibility is decided per shape too",
     !annotationVisible(explain, { revealed: false, unitShapeIds: [] }) &&
       annotationVisible(explain, { revealed: true, unitShapeIds: [] })
+  );
+}
+
+// ---------- a black box tied to one card ----------
+// The case that started this: a cover hides a word for good, and linking it
+// to particular masks makes it hide that word only while those masks are
+// being asked. On every other card it is not there at all.
+console.log("\na cover tied to particular masks:");
+{
+  const m1 = box("m1", { x: 0.1, y: 0.1, w: 0.1, h: 0.1 });
+  const m2 = box("m2", { x: 0.4, y: 0.1, w: 0.1, h: 0.1 });
+  const always = box("c0", { cover: true, x: 0.8, y: 0.8, w: 0.1, h: 0.1 });
+  const forM1 = box("c1", { cover: true, showsWith: ["m1"], x: 0.7, y: 0.1, w: 0.1, h: 0.1 });
+  const shapes = [m1, m2, always, forM1];
+
+  check("it is still a cover", isCover(forM1));
+  check("and still never asked", !isCardShape(forM1));
+  check(
+    "so the sheet makes two cards",
+    buildUnits(shapes).map((u) => u.key).join() === "m1,m2"
+  );
+
+  check("a plain cover is on every card", hiderVisible(always, ["m2"]));
+  check("a linked one only on its own", hiderVisible(forM1, ["m1"]));
+  check("and not on another", !hiderVisible(forM1, ["m2"]));
+  check(
+    "coversFor picks the right ones",
+    coversFor(shapes, ["m1"]).map((c) => c.id).sort().join() === "c0,c1",
+    coversFor(shapes, ["m1"]).map((c) => c.id).join()
+  );
+  check(
+    "and leaves the linked one out elsewhere",
+    coversFor(shapes, ["m2"]).map((c) => c.id).join() === "c0"
+  );
+
+  // Asking m1: its own mask plus the black box that would give it away.
+  const askM1 = occlusionVisibility(shapes, ["m1"], "hideOne", false);
+  check(
+    "asking m1 covers m1 and both boxes",
+    [...askM1.hidden].sort().join() === "c0,c1,m1",
+    [...askM1.hidden].sort().join()
+  );
+  const askM2 = occlusionVisibility(shapes, ["m2"], "hideOne", false);
+  check(
+    "asking m2 leaves the linked box off",
+    [...askM2.hidden].sort().join() === "c0,m2",
+    "that word is fair game on this card"
+  );
+
+  // A cover is never revealed — that is the whole point of it.
+  const answered = occlusionVisibility(shapes, ["m1"], "hideOne", true);
+  check(
+    "the answer lifts the mask but not the boxes",
+    [...answered.hidden].sort().join() === "c0,c1",
+    [...answered.hidden].sort().join()
+  );
+  check("and outlines what was asked", [...(answered.outline ?? [])].join() === "m1");
+
+  const allAnswered = occlusionVisibility(shapes, ["m1"], "hideAll", true);
+  check(
+    "hide-all keeps them too",
+    allAnswered.hidden.has("c0") && allAnswered.hidden.has("c1") && !allAnswered.hidden.has("m1")
+  );
+  const allAsked = occlusionVisibility(shapes, ["m2"], "hideAll", false);
+  check(
+    "and hide-all on another card still omits the linked box",
+    !allAsked.hidden.has("c1"),
+    "it belongs to m1's card only"
   );
 }
 

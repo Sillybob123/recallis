@@ -74,7 +74,10 @@ export function ShapeOverlay({
         }
         // A cover is painted whatever the card is asking, including on the
         // answer — revealing it would be the spoiler it exists to prevent.
-        const hidden = hiddenIds.has(s.id) || isCover(s);
+        // occlusionVisibility already worked out what is covered on this
+        // card, covers included — asking again here would be a second rule
+        // to keep in step with the first.
+        const hidden = hiddenIds.has(s.id);
         const outlined = !isCover(s) && (outlineIds?.has(s.id) ?? false);
         if (!hidden && !outlined) return null;
         const isTarget = targetIds.has(s.id);

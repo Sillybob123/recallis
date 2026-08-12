@@ -12,9 +12,11 @@ import {
   drawAnnotationOnCanvas,
   fillShapeOnCanvas,
   companionsFor,
+  coversFor,
   isAnnotation,
   isCardShape,
   isCompanion,
+  isCover,
 } from "./shapes";
 import { EXPORT_QUALITY, exportDimensions } from "./exportImage";
 import { formatTagString } from "./tags";
@@ -112,7 +114,9 @@ async function bakeMasked(
   /** the whole sheet, for the covers and marks that belong on every card */
   all: OcclusionShape[] = shapes,
   /** the annotations this particular card should carry */
-  marks: OcclusionShape[] = annotationsOf(all)
+  marks: OcclusionShape[] = annotationsOf(all),
+  /** the covers this particular card should carry */
+  covers: OcclusionShape[] = coversOf(all)
 ): Promise<Blob> {
   const canvas = exportCanvas(img);
   const ctx = canvas.getContext("2d")!;
@@ -121,7 +125,8 @@ async function bakeMasked(
     if (!isCardShape(s)) continue;
     fillShapeOnCanvas(ctx, s, canvas.width, canvas.height);
   }
-  for (const s of coversOf(all)) {
+  // Only this card's covers: one tied to another mask isn't on this card.
+  for (const s of covers) {
     fillShapeOnCanvas(ctx, s, canvas.width, canvas.height);
   }
   // Text-box prompts are part of the question, so they bake into the image
@@ -142,12 +147,13 @@ async function bakeMasked(
 async function bakeOriginal(
   img: HTMLImageElement,
   shapes: OcclusionShape[] = [],
-  marks: OcclusionShape[] = annotationsOf(shapes)
+  marks: OcclusionShape[] = annotationsOf(shapes),
+  covers: OcclusionShape[] = coversOf(shapes)
 ): Promise<Blob> {
   const canvas = exportCanvas(img);
   const ctx = canvas.getContext("2d")!;
   ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-  for (const s of coversOf(shapes)) {
+  for (const s of covers) {
     fillShapeOnCanvas(ctx, s, canvas.width, canvas.height);
   }
   for (const s of marks) {
@@ -208,7 +214,11 @@ export async function exportDeckToAnki(
       // same on every card — an explanation held back until the reveal, or
       // one tied to particular masks, makes each answer its own picture.
       const perCardAnswers = sheet.shapes.some(
-        (s) => isAnnotation(s) && (s.onReveal || isCompanion(s))
+        (s) =>
+          (isAnnotation(s) && (s.onReveal || isCompanion(s))) ||
+          // A cover tied to particular masks is on some answers and not
+          // others, so those answers can't be one shared image.
+          (isCover(s) && isCompanion(s))
       );
       let sharedAnswerName = "";
       if (!perCardAnswers) {
@@ -242,7 +252,8 @@ export async function exportDeckToAnki(
           annotationsForCard(sheet.shapes, {
             revealed: false,
             unitShapeIds: unit.shapeIds,
-          })
+          }),
+          coversFor(sheet.shapes, unit.shapeIds)
         );
 
         let answerName = sharedAnswerName;
@@ -256,7 +267,8 @@ export async function exportDeckToAnki(
               annotationsForCard(sheet.shapes, {
                 revealed: true,
                 unitShapeIds: unit.shapeIds,
-              })
+              }),
+              coversFor(sheet.shapes, unit.shapeIds)
             )
           );
           mediaCount++;
