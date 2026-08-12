@@ -166,13 +166,13 @@ export function DeckRows({
 
         {counts && (
           <>
-            <span className="w-6 text-right text-[11px] font-bold text-sky-500 sm:w-9 sm:text-xs">
+            <span className="w-9 text-right text-[11px] font-bold text-sky-500 sm:text-xs">
               {totals?.newCount ?? "–"}
             </span>
-            <span className="w-6 text-right text-[11px] font-bold text-orange-500 sm:w-9 sm:text-xs">
+            <span className="w-9 text-right text-[11px] font-bold text-orange-500 sm:text-xs">
               {totals?.learnCount ?? "–"}
             </span>
-            <span className="w-6 text-right text-[11px] font-bold text-emerald-600 sm:w-9 sm:text-xs">
+            <span className="w-9 text-right text-[11px] font-bold text-emerald-600 sm:text-xs">
               {totals?.dueCount ?? "–"}
             </span>
           </>

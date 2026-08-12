@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   ArrowRight,
-  CalendarClock,
   FileText,
   Layers,
   NotebookPen,
@@ -12,7 +11,6 @@ import {
   Zap,
 } from "lucide-react";
 import { useAuth } from "../contexts/AuthContext";
-import { useStudyMode } from "../contexts/StudyModeContext";
 import { Layout } from "../components/Layout";
 import { watchDecks, watchNotes } from "../lib/firestore";
 import { computeAllDeckCounts, type DeckCounts } from "../lib/deckCounts";
@@ -34,7 +32,6 @@ function plainText(html: string): string {
 
 export function HomePage() {
   const { user } = useAuth();
-  const { studyMode } = useStudyMode();
   const [decks, setDecks] = useState<Deck[] | null>(null);
   const [notes, setNotes] = useState<Note[] | null>(null);
   const [counts, setCounts] = useState<Map<string, DeckCounts>>(new Map());
@@ -211,50 +208,50 @@ export function HomePage() {
                 </Link>
               )}
             </div>
-            <div className="flex flex-wrap items-center gap-x-5 gap-y-1 border-t border-slate-100 bg-slate-50 px-5 py-2.5 text-xs text-slate-500">
-              <span className="flex items-center gap-1.5">
-                <Layers size={13} />
-                <b className="text-slate-700">{library.cards}</b> cards
-                {library.accuracy !== null && (
-                  <>
-                    {" · "}
-                    <b className="text-slate-700">
-                      {Math.round(library.accuracy * 100)}%
-                    </b>{" "}
-                    correct so far
-                  </>
-                )}
-              </span>
-              <span className="flex items-center gap-1.5">
-                <CalendarClock size={13} />
-                {today.count > 0 ? (
-                  <>
-                    Studied <b className="text-slate-700">{today.count}</b> card
-                    {today.count === 1 ? "" : "s"} in{" "}
-                    <b className="text-slate-700">{Math.round(today.ms / 1000)}s</b> today
-                    <span className="text-slate-400">
-                      {" "}
-                      ({(today.ms / 1000 / today.count).toFixed(1)}s/card)
-                    </span>
-                  </>
-                ) : (
-                  "No reviews yet today"
-                )}
-              </span>
-              <span>
-                <b className="text-slate-700">{totals.dueTomorrow}</b> due tomorrow
-              </span>
-              <span>
-                {decks!.length} deck{decks!.length === 1 ? "" : "s"} ·{" "}
-                {notes!.length} note{notes!.length === 1 ? "" : "s"}
-              </span>
-              <span className="ml-auto">
-                Studying in{" "}
-                <b className={studyMode === "anki" ? "text-emerald-600" : "text-red-600"}>
-                  {studyMode === "anki" ? "Anki" : "Quizlet"}
-                </b>{" "}
-                mode
-              </span>
+            {/* Four facts, each a label over a value. As one wrapping
+                sentence these ran into each other — "83% correct so far No
+                reviews yet today" reads as one statement about today. A grid
+                gives each its own cell, so they stay separate however narrow
+                the screen. */}
+            <div className="grid grid-cols-2 gap-x-4 gap-y-2.5 border-t border-slate-100 bg-slate-50 px-5 py-3 sm:grid-cols-4">
+              <Fact
+                label="Today"
+                value={
+                  today.count > 0
+                    ? `${today.count} card${today.count === 1 ? "" : "s"}`
+                    : "Nothing yet"
+                }
+                note={
+                  today.count > 0
+                    ? `${Math.round(today.ms / 1000)}s · ${(
+                        today.ms /
+                        1000 /
+                        today.count
+                      ).toFixed(1)}s a card`
+                    : undefined
+                }
+              />
+              <Fact
+                label="Tomorrow"
+                value={`${totals.dueTomorrow} due`}
+                note={totals.dueTomorrow === 0 ? "A clear day" : undefined}
+              />
+              <Fact
+                label="Recalled"
+                value={
+                  library.accuracy === null
+                    ? "—"
+                    : `${Math.round(library.accuracy * 100)}%`
+                }
+                note={library.accuracy === null ? "No answers yet" : "of all answers"}
+              />
+              <Fact
+                label="Library"
+                value={`${library.cards} card${library.cards === 1 ? "" : "s"}`}
+                note={`${decks!.length} deck${decks!.length === 1 ? "" : "s"} · ${
+                  notes!.length
+                } note${notes!.length === 1 ? "" : "s"}`}
+              />
             </div>
           </section>
 
@@ -382,6 +379,27 @@ export function HomePage() {
         </div>
       )}
     </Layout>
+  );
+}
+
+/** One labelled figure in the strip under Today. */
+function Fact({
+  label,
+  value,
+  note,
+}: {
+  label: string;
+  value: string;
+  note?: string;
+}) {
+  return (
+    <div className="min-w-0">
+      <p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">
+        {label}
+      </p>
+      <p className="truncate text-sm font-semibold text-slate-800">{value}</p>
+      {note && <p className="truncate text-[11px] text-slate-400">{note}</p>}
+    </div>
   );
 }
 

@@ -43,7 +43,7 @@ export function Layout({
 
   const theme = inNotes
     ? "theme-notes"
-    : isHome
+    : isHome || inDecks
       ? "theme-home"
       : inAnki
         ? "theme-anki"
@@ -51,11 +51,17 @@ export function Layout({
           ? "theme-anki"
           : "theme-quizlet";
 
+  /*
+    A deck belongs to neither mode — Anki and Quizlet are two ways of going
+    through the same cards. Claiming "Recallis Anki" while you're looking at
+    the deck list says something untrue about where you are, so the decks
+    section is neutral, the way the overview is.
+  */
   const suffix = inNotes
     ? "Notes"
-    : isHome
+    : isHome || inDecks
       ? ""
-      : inAnki || (inDecks && studyMode === "anki")
+      : inAnki
         ? "Anki"
         : "Quizlet";
   // The Anki nav stays lit on /browse too — Browse is part of that section.
@@ -64,9 +70,11 @@ export function Layout({
     ? "Lectures"
     : isHome
       ? "Overview"
-      : suffix === "Anki"
-        ? "Anki · spaced"
-        : "Quizlet · cram";
+      : inDecks
+        ? "Decks"
+        : suffix === "Anki"
+          ? "Anki · spaced"
+          : "Quizlet · cram";
 
   return (
     <div className={`min-h-screen ${theme}`} style={{ background: "var(--page-bg)" }}>
