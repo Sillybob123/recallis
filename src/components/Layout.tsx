@@ -1,4 +1,5 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import {
   CalendarCheck,
@@ -120,7 +121,11 @@ export function Layout({
           </Link>
 
           {user && (
-            <div className="scrollbar-none flex min-w-0 items-center gap-2 overflow-x-auto text-sm">
+            <div className="flex min-w-0 items-center gap-2 text-sm">
+              {/* The nav scrolls sideways on a narrow screen; the profile
+                  button sits outside it, because an overflow container
+                  clips any menu that hangs below it. */}
+              <div className="scrollbar-none flex min-w-0 items-center gap-2 overflow-x-auto">
               <NavPill to="/decks" active={inDecks} activeClass="bg-slate-800">
                 <Layers size={12} /> <span className="hidden sm:inline">Decks</span>
               </NavPill>
@@ -155,6 +160,7 @@ export function Layout({
                 >
                   <Zap size={12} /> <span className="hidden sm:inline">Quizlet</span>
                 </Link>
+                </div>
               </div>
 
               <ProfileMenu
@@ -214,83 +220,116 @@ function ProfileMenu({
   onLogOut: () => void;
 }) {
   const [open, setOpen] = useState(false);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const [anchor, setAnchor] = useState({ top: 0, right: 0 });
+
+  /**
+   * The menu is rendered into the body rather than beside its button.
+   *
+   * Two ancestors make the obvious approach fail. The header is a
+   * horizontally scrolling strip, which clips anything hanging below it —
+   * no amount of z-index escapes an overflow. And the header has a
+   * backdrop-blur, which makes it the containing block for fixed-position
+   * descendants, so even `position: fixed` would resolve against the header
+   * instead of the viewport. A portal sidesteps both.
+   */
+  const place = useCallback(() => {
+    const rect = buttonRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    setAnchor({
+      top: rect.bottom + 8,
+      right: Math.max(window.innerWidth - rect.right, 8),
+    });
+  }, []);
 
   useEffect(() => {
     if (!open) return;
+    place();
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") setOpen(false);
     };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open]);
+    // Kept under the button if the page moves beneath it.
+    window.addEventListener("resize", place);
+    window.addEventListener("scroll", place, true);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("resize", place);
+      window.removeEventListener("scroll", place, true);
+    };
+  }, [open, place]);
 
   return (
-    <div className="relative shrink-0">
+    <>
       <button
+        ref={buttonRef}
         onClick={() => setOpen((v) => !v)}
         aria-haspopup="menu"
         aria-expanded={open}
         title={name || email || "Account"}
-        className="flex h-8 w-8 items-center justify-center rounded-full text-xs font-bold text-white transition hover:opacity-90"
+        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-bold text-white transition hover:opacity-90"
         style={{ backgroundColor: "var(--accent)" }}
       >
         {initialsOf(name, email)}
       </button>
 
-      {open && (
-        <>
-          <button
-            aria-hidden
-            tabIndex={-1}
-            onClick={() => setOpen(false)}
-            className="fixed inset-0 z-40 cursor-default"
-          />
-          <div
-            role="menu"
-            className="absolute right-0 z-50 mt-2 w-60 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg"
-          >
-            <div className="border-b border-slate-100 px-3 py-2.5">
-              <p className="truncate text-sm font-semibold text-slate-800">
-                {name || "Your account"}
-              </p>
-              {email && (
-                <p className="truncate text-xs text-slate-400">{email}</p>
-              )}
-            </div>
-            <MenuItem
-              icon={<UserRound size={14} />}
-              onClick={() => {
-                setOpen(false);
-                onSettings();
-              }}
+      {open &&
+        createPortal(
+          <>
+            <button
+              aria-hidden
+              tabIndex={-1}
+              onClick={() => setOpen(false)}
+              className="fixed inset-0 z-[60] cursor-default"
+            />
+            <div
+              role="menu"
+              style={{ top: anchor.top, right: anchor.right }}
+              className="fixed z-[61] w-60 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-xl"
             >
-              Account &amp; stats
-            </MenuItem>
-            <MenuItem
-              icon={<MessageSquare size={14} />}
-              onClick={() => {
-                setOpen(false);
-                onFeedback();
-              }}
-            >
-              Send feedback
-            </MenuItem>
-            <div className="border-t border-slate-100">
+              <div className="border-b border-slate-100 px-3 py-2.5">
+                <p className="truncate text-sm font-semibold text-slate-800">
+                  {name || "Your account"}
+                </p>
+                {email && (
+                  <p className="truncate text-xs text-slate-400">{email}</p>
+                )}
+              </div>
               <MenuItem
-                icon={<LogOut size={14} />}
-                danger
+                icon={<UserRound size={14} />}
                 onClick={() => {
                   setOpen(false);
-                  onLogOut();
+                  onSettings();
                 }}
               >
-                Log out
+                Account &amp; stats
               </MenuItem>
+              <MenuItem
+                icon={<MessageSquare size={14} />}
+                onClick={() => {
+                  setOpen(false);
+                  onFeedback();
+                }}
+              >
+                Send feedback
+              </MenuItem>
+              <div className="border-t border-slate-100">
+                <MenuItem
+                  icon={<LogOut size={14} />}
+                  danger
+                  onClick={() => {
+                    setOpen(false);
+                    onLogOut();
+                  }}
+                >
+                  Log out
+                </MenuItem>
+              </div>
             </div>
-          </div>
-        </>
-      )}
-    </div>
+          </>,
+          document.body
+        )}
+    </>
   );
 }
 
