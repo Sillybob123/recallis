@@ -77,13 +77,36 @@ function parseProperty(line: string): Property | null {
   return { name: name.toUpperCase(), params, value };
 }
 
+/**
+ * Some timetables put HTML-escaped text in the summary — a course called
+ * "Vitals & Exam" arrives as "Vitals &amp; Exam" and, left alone, is shown
+ * that way for the rest of the semester. Ampersand is decoded last so
+ * "&amp;lt;" doesn't turn into a tag.
+ */
+export function decodeEntities(text: string): string {
+  if (!text.includes("&")) return text;
+  return text
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&(?:quot|#34);/gi, '"')
+    .replace(/&(?:apos|#0?39);/gi, "'")
+    .replace(/&(?:lt|#60);/gi, "<")
+    .replace(/&(?:gt|#62);/gi, ">")
+    .replace(/&#(\d+);/g, (_, d) => {
+      const code = Number(d);
+      return code > 0 && code < 0x110000 ? String.fromCodePoint(code) : _;
+    })
+    .replace(/&amp;/gi, "&");
+}
+
 /** Text values escape commas, semicolons and newlines. */
 function unescapeText(value: string): string {
-  return value
-    .replace(/\\n/gi, "\n")
-    .replace(/\\,/g, ",")
-    .replace(/\\;/g, ";")
-    .replace(/\\\\/g, "\\");
+  return decodeEntities(
+    value
+      .replace(/\\n/gi, "\n")
+      .replace(/\\,/g, ",")
+      .replace(/\\;/g, ";")
+      .replace(/\\\\/g, "\\")
+  );
 }
 
 /**

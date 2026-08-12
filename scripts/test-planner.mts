@@ -187,6 +187,84 @@ check(
   cleanTopic("Anatomic Nomenclature") === "Anatomic Nomenclature"
 );
 
+// ---------- the ones the real timetable got wrong ----------
+// Every case here is a row that was mislabelled or unreadable on a real
+// imported calendar.
+console.log("\nreal timetable rows:");
+{
+  const { decodeEntities } = await import("../src/lib/ics");
+  const { mergeAssessmentWindows, dropSessionsBefore } = await import("../src/lib/planner");
+
+  check(
+    "an escaped ampersand is decoded",
+    decodeEntities("Write Up/Presentation &amp; Vitals") ===
+      "Write Up/Presentation & Vitals"
+  );
+  check("and a numeric entity", decodeEntities("Caf&#233;") === "Café");
+  check("text without entities is untouched", decodeEntities("Thorax") === "Thorax");
+  check(
+    "a double-escaped tag doesn't become one",
+    decodeEntities("&amp;lt;b&amp;gt;") === "&lt;b&gt;"
+  );
+
+  check(
+    "a clinical skills class is not an exam",
+    classifySession("Introduction/Health History/Vitals/Exam") !== "assessment",
+    "\"exam\" here means examining a patient"
+  );
+  check(
+    "nor is the write-up that goes with it",
+    classifySession("Write Up/Presentation & Vitals/Basics of Exam") !== "assessment"
+  );
+  check(
+    "while a quiz still is",
+    classifySession("08.19.26 Quiz - Radiology of the Thorax and Neck opens") ===
+      "assessment"
+  );
+  check(
+    "and a practical exam still is",
+    classifySession("Anatomy Practical Exam") === "assessment",
+    "the guard must not swallow the real ones"
+  );
+  check("a bare exam with no clinical context still counts",
+    classifySession("Exam 2") === "assessment");
+
+  check(
+    "a leading date is stripped from the topic",
+    cleanTopic("08.19.26 Quiz - Radiology of the Thorax and Neck") ===
+      "Quiz - Radiology of the Thorax and Neck",
+    cleanTopic("08.19.26 Quiz - Radiology of the Thorax and Neck")
+  );
+  check(
+    "so is the opens/closes suffix",
+    cleanTopic("08.19.26 Quiz - Radiology of the Thorax and Neck closes") ===
+      "Quiz - Radiology of the Thorax and Neck"
+  );
+
+  // The open and close of one quiz are one assessment, due at the close.
+  const opens = new Date(2026, 7, 19, 9).getTime();
+  const closes = new Date(2026, 7, 21, 23).getTime();
+  const merged = mergeAssessmentWindows([
+    { id: "a", week: 1, kind: "assessment", topic: "Quiz - Radiology", start: opens, allDay: false },
+    { id: "b", week: 1, kind: "assessment", topic: "Quiz - Radiology", start: closes, allDay: false },
+    { id: "c", week: 1, kind: "lecture", topic: "Quiz - Radiology", start: opens, allDay: false },
+  ]);
+  check("the pair becomes one assessment", merged.filter((m) => m.kind === "assessment").length === 1);
+  check("dated at the deadline", merged[0].start === closes, "the close is what you work to");
+  check("and a lecture of the same name is left alone", merged.length === 2);
+
+  // Starting fresh mid-semester.
+  const past = { id: "p", week: 1, kind: "lecture" as const, topic: "Old", start: new Date(2026, 7, 1).getTime(), allDay: false };
+  const today = { id: "t", week: 3, kind: "lecture" as const, topic: "Today", start: new Date(2026, 7, 12, 9).getTime(), allDay: false };
+  const later = { id: "l", week: 4, kind: "lecture" as const, topic: "Later", start: new Date(2026, 7, 20).getTime(), allDay: false };
+  const kept = dropSessionsBefore([past, today, later], new Date(2026, 7, 12, 15).getTime());
+  check(
+    "clearing the past keeps today",
+    kept.map((k) => k.id).join() === "t,l",
+    "cutting at midnight, not at the current moment"
+  );
+}
+
 // ---------- weeks ----------
 console.log("\nweeks:");
 {

@@ -125,6 +125,30 @@ export function makeTaskId(label: string, existing: PlannerTask[]): string {
 }
 
 /**
+ * Words that mean an assessment wherever they appear.
+ */
+const DEFINITE_ASSESSMENT =
+  /\b(quiz|midterms?|mid-terms?|assessments?|osce|shelf|nbme|finals|final exam|practical exam|written exam|oral exam|comprehensive exam|board exam|retakes?|make-?up exam|exam week)\b/;
+
+/** "Exam" and "test" on their own, which are the ambiguous ones. */
+const BARE_EXAM = /\b(exams?|examinations?|tests?)\b/;
+
+/**
+ * In medicine "exam" usually means examining a patient, not being examined.
+ * A lecture called "Health History/Vitals/Exam" is a clinical skills class,
+ * and calling it an assessment doesn't just mislabel one row — it makes the
+ * planner claim an exam is coming and count every session before it as
+ * revision for something that doesn't exist.
+ */
+const CLINICAL_CONTEXT =
+  /\b(histor(y|ies)|vitals?|physical|patient|inspection|palpation|percussion|auscultation|interview|skills?|write ?-?up|presentation|basics of)\b/;
+
+function isAssessment(lower: string): boolean {
+  if (DEFINITE_ASSESSMENT.test(lower)) return true;
+  return BARE_EXAM.test(lower) && !CLINICAL_CONTEXT.test(lower);
+}
+
+/**
  * What kind of session this is, from its title.
  *
  * Timetables label sessions consistently within a course but not between
@@ -134,13 +158,14 @@ export function makeTaskId(label: string, existing: PlannerTask[]): string {
  */
 export function classifySession(summary: string): SessionKind {
   const s = summary.toLowerCase();
-  if (
-    /\b(exam|midterm|final|assessment|quiz|test|osce|practical exam|shelf|nbme|board)\b/.test(
-      s
-    )
-  ) {
-    return "assessment";
-  }
+
+  // An unmistakable assessment word beats everything, including a prefix:
+  // "Lab: Practical Exam" is an exam that happens to be held in the lab.
+  if (DEFINITE_ASSESSMENT.test(s)) return "assessment";
+
+  // Then the explicit label the timetable gives, which is more reliable than
+  // any word in the title — "Lab: Thoracic Surface Examination" is a lab,
+  // and the "examination" in it is something you do to a body.
   if (/^\s*lab\b|\blaboratory\b|\bdissection\b/.test(s)) return "lab";
   if (/^\s*sg\b|\bsmall group\b|\bcase discussion\b|\bpbl\b|\btbl\b/.test(s)) {
     return "smallGroup";
@@ -149,17 +174,25 @@ export function classifySession(summary: string): SessionKind {
   if (/\bself[- ]?stud|\bconsolidat|\breview week\b|\bindependent\b/.test(s)) {
     return "selfStudy";
   }
+
+  // Only now is a bare "exam" worth reading as one.
+  if (isAssessment(s)) return "assessment";
   if (/\blecture\b|\bseminar\b/.test(s)) return "lecture";
   return "other";
 }
 
-/** Strips the label a title carries so the topic reads cleanly in the grid. */
+/**
+ * Strips what the title carries for the calendar's benefit rather than
+ * yours: the session-type label, a leading date that the grid already shows
+ * in its own column, and the opens/closes suffix a timed assessment gets.
+ */
 export function cleanTopic(summary: string): string {
-  return (
-    summary
-      .replace(/^\s*(lecture|lab|laboratory|sg|small group|pp|self[- ]?study)\s*[:–-]\s*/i, "")
-      .trim() || summary.trim()
-  );
+  const cleaned = summary
+    .replace(/^\s*\d{1,2}[./]\d{1,2}[./]\d{2,4}\s*[-–—:]?\s*/, "")
+    .replace(/^\s*(lecture|lab|laboratory|sg|small group|pp|self[- ]?study)\s*[:–-]\s*/i, "")
+    .replace(/\s*[-–—(]?\s*\b(opens?|closes?|due|window (?:opens?|closes?))\b\s*\)?\s*$/i, "")
+    .trim();
+  return cleaned || summary.trim();
 }
 
 /** Local midnight, so sessions group by the day they're actually on. */
@@ -192,16 +225,66 @@ export function weekNumber(at: number, firstSessionAt: number): number {
 export function sessionsFromEvents(events: IcsEvent[]): PlannerSession[] {
   if (events.length === 0) return [];
   const first = events.reduce((min, e) => Math.min(min, e.start), Infinity);
-  return events.map((e) => ({
-    id: e.uid,
-    week: weekNumber(e.start, first),
-    kind: classifySession(`${e.summary} ${e.description ?? ""}`),
-    topic: cleanTopic(e.summary),
-    start: e.start,
-    end: e.end,
-    allDay: e.allDay,
-    location: e.location,
-  }));
+  return mergeAssessmentWindows(
+    events.map((e) => ({
+      id: e.uid,
+      week: weekNumber(e.start, first),
+      kind: classifySession(`${e.summary} ${e.description ?? ""}`),
+      topic: cleanTopic(e.summary),
+      start: e.start,
+      end: e.end,
+      allDay: e.allDay,
+      location: e.location,
+    }))
+  );
+}
+
+/**
+ * A timed quiz is published as two events — one when it opens, one when it
+ * closes — which reads as two exams a week apart. They're one assessment,
+ * and the one that matters is the deadline, so the pair collapses to the
+ * later of the two.
+ */
+export function mergeAssessmentWindows(
+  sessions: PlannerSession[]
+): PlannerSession[] {
+  const byTopic = new Map<string, PlannerSession>();
+  const out: PlannerSession[] = [];
+  for (const s of sessions) {
+    if (s.kind !== "assessment") {
+      out.push(s);
+      continue;
+    }
+    const key = s.topic.toLowerCase();
+    const seen = byTopic.get(key);
+    if (!seen) {
+      byTopic.set(key, s);
+      out.push(s);
+      continue;
+    }
+    // Same assessment twice: keep the later instant, which is the deadline.
+    if (s.start > seen.start) {
+      seen.start = s.start;
+      seen.end = s.end;
+      seen.week = s.week;
+      seen.allDay = s.allDay;
+    }
+  }
+  return out;
+}
+
+/**
+ * Drops everything before a given day. Someone arriving mid-semester with a
+ * full year imported doesn't want a wall of lectures they already sat
+ * through, and the ticks are keyed by session id, so re-importing brings
+ * both the sessions and their progress back.
+ */
+export function dropSessionsBefore(
+  sessions: PlannerSession[],
+  at: number
+): PlannerSession[] {
+  const cutoff = startOfDay(at);
+  return sessions.filter((s) => s.start >= cutoff);
 }
 
 // ---------- progress ----------

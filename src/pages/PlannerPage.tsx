@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
-  Bell,
-  BellOff,
   CalendarPlus,
+  CalendarX,
   Check,
+  ChevronDown,
   Loader2,
   Mail,
+  MoreHorizontal,
+  Pencil,
   Plus,
   SlidersHorizontal,
   Trash2,
@@ -23,9 +25,11 @@ import {
   setPlannerProgressBulk,
 } from "../lib/firestore";
 import { parseIcs } from "../lib/ics";
+import { decodeEntities } from "../lib/ics";
 import {
   agendaFor,
   DEFAULT_TASKS,
+  dropSessionsBefore,
   examOutlook,
   isDone,
   makeTaskId,
@@ -33,6 +37,7 @@ import {
   SESSION_LABELS,
   sessionCompletion,
   sessionsFromEvents,
+  startOfWeek,
   TASK_PRESETS,
   upcomingExams,
   type PlannerPlan,
@@ -88,6 +93,8 @@ export function PlannerPage() {
   const [weekFilter, setWeekFilter] = useState<number | "all">("all");
   const [editingRoutine, setEditingRoutine] = useState(false);
   const [editingEmail, setEditingEmail] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [showAllExams, setShowAllExams] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -99,7 +106,20 @@ export function PlannerPage() {
         fetchPlannerProgress(user.uid).catch(() => ({})),
       ]);
       if (cancelled) return;
-      setPlan(p);
+      // Plans imported before entities were decoded have "&amp;" baked into
+      // their topics; fix them on the way in so nobody has to re-import.
+      setPlan(
+        p
+          ? {
+              ...p,
+              name: decodeEntities(p.name ?? ""),
+              sessions: (p.sessions ?? []).map((sn) => ({
+                ...sn,
+                topic: decodeEntities(sn.topic),
+              })),
+            }
+          : null
+      );
       setProgress(pr);
       setLoading(false);
     })();
@@ -248,6 +268,21 @@ export function PlannerPage() {
     return [...set].sort((a, b) => a - b);
   }, [plan]);
 
+  /**
+   * The week today falls in. Opening on it beats opening on the whole
+   * semester: a year of lectures in one table is a wall, not a plan.
+   */
+  const currentWeek = useMemo(() => {
+    if (!plan) return null;
+    const today = startOfWeek(Date.now());
+    const match = plan.sessions.find((s) => startOfWeek(s.start) === today);
+    return match ? match.week : null;
+  }, [plan]);
+
+  useEffect(() => {
+    if (currentWeek !== null) setWeekFilter(currentWeek);
+  }, [currentWeek]);
+
   const shown = useMemo(() => {
     const list = [...(plan?.sessions ?? [])].sort((a, b) => a.start - b.start);
     return weekFilter === "all" ? list : list.filter((s) => s.week === weekFilter);
@@ -272,6 +307,76 @@ export function PlannerPage() {
     saveReminderSettings(next);
   }
 
+  const savePlan = useCallback(
+    async (next: PlannerPlan) => {
+      if (!user) return;
+      setPlan(next);
+      setMenuOpen(false);
+      try {
+        await savePlannerPlan(user.uid, next);
+      } catch {
+        setNotice("That didn't save — check your connection.");
+      }
+    },
+    [user]
+  );
+
+  const renamePlan = useCallback(
+    (name: string) => {
+      if (!plan) return;
+      void savePlan({ ...plan, name: name.trim(), updatedAt: Date.now() });
+    },
+    [plan, savePlan]
+  );
+
+  /** Start fresh from today rather than scrolling past a term you've sat. */
+  const clearPast = useCallback(() => {
+    if (!plan) return;
+    const kept = dropSessionsBefore(plan.sessions, Date.now());
+    const removed = plan.sessions.length - kept.length;
+    if (removed === 0) {
+      setNotice("Nothing to clear — every session is today or later.");
+      setMenuOpen(false);
+      return;
+    }
+    if (
+      !confirm(
+        `Remove ${removed} session${removed === 1 ? "" : "s"} from before today?\n\n` +
+          "Your ticks are kept, and re-importing the .ics brings them back."
+      )
+    ) {
+      return;
+    }
+    setWeekFilter("all");
+    void savePlan({ ...plan, sessions: kept, updatedAt: Date.now() });
+  }, [plan, savePlan]);
+
+  const clearTimetable = useCallback(() => {
+    if (!plan) return;
+    if (!confirm("Remove the imported timetable? Your ticks are kept.")) return;
+    void savePlan({ ...plan, sessions: [], updatedAt: Date.now() });
+  }, [plan, savePlan]);
+
+  // An .ics exported by a portal is called something like
+  // "icalexport1786291315"; that isn't a name, so it doesn't get shown as one.
+  const planTitle =
+    plan && plan.name && !/^i?cal[-_ ]?export[-_ ]?\d*$/i.test(plan.name.trim())
+      ? plan.name
+      : "Academic planner";
+
+  const subtitle = useMemo(() => {
+    if (!plan || plan.sessions.length === 0) {
+      return "Your timetable, the routine you run on each session, and what's actually done.";
+    }
+    const exams = plan.sessions.filter((s) => s.kind === "assessment").length;
+    const parts = [
+      `${plan.sessions.length} sessions`,
+      `${weeks.length} week${weeks.length === 1 ? "" : "s"}`,
+    ];
+    if (exams) parts.push(`${exams} assessment${exams === 1 ? "" : "s"}`);
+    return parts.join(" · ");
+  }, [plan, weeks]);
+
   if (loading) {
     return (
       <Layout>
@@ -282,15 +387,13 @@ export function PlannerPage() {
 
   return (
     <Layout>
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900">
-            {plan?.name || "Academic planner"}
-          </h1>
-          <p className="text-sm text-slate-500">
-            Your timetable, the routine you run on each session, and what's
-            actually done.
-          </p>
+      <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
+        <div className="min-w-0">
+          <PlanTitle
+            name={planTitle}
+            onRename={plan ? renamePlan : undefined}
+          />
+          <p className="mt-0.5 text-sm text-slate-500">{subtitle}</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <button
@@ -298,7 +401,7 @@ export function PlannerPage() {
             title="Schedule what gets emailed to you, and when"
             className="flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-600 transition hover:bg-slate-50"
           >
-            <Mail size={14} /> Email reminders
+            <Mail size={14} /> Email
           </button>
           <button
             onClick={() => setEditingRoutine(true)}
@@ -307,46 +410,13 @@ export function PlannerPage() {
           >
             <SlidersHorizontal size={14} /> Routine
           </button>
-          <div
-            className={`flex items-center gap-1.5 rounded-lg border text-sm font-medium transition ${
-              reminders.enabled
-                ? "border-indigo-200 bg-indigo-50 text-indigo-700"
-                : "border-slate-300 bg-white text-slate-600"
-            }`}
-          >
-            <button
-              onClick={toggleReminders}
-              title={
-                reminders.enabled
-                  ? "Reminders on — turn them off"
-                  : "Get a daily nudge about what's left"
-              }
-              className="flex items-center gap-1.5 py-1.5 pl-3 hover:opacity-80"
-            >
-              {reminders.enabled ? <Bell size={14} /> : <BellOff size={14} />}
-              Reminders
-            </button>
-            <input
-              type="time"
-              value={`${String(Math.floor(reminders.atMinutes / 60)).padStart(2, "0")}:${String(reminders.atMinutes % 60).padStart(2, "0")}`}
-              onChange={(e) => {
-                const [h, m] = e.target.value.split(":").map(Number);
-                if (Number.isNaN(h) || Number.isNaN(m)) return;
-                const next = { ...reminders, atMinutes: h * 60 + m };
-                setReminders(next);
-                saveReminderSettings(next);
-              }}
-              title="When to remind you, on the days you have Recallis open"
-              className="mr-1.5 rounded border-none bg-transparent py-1 text-xs tabular-nums outline-none"
-            />
-          </div>
           <label className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50">
             {busy ? (
               <Loader2 size={14} className="animate-spin" />
             ) : (
               <CalendarPlus size={14} />
             )}
-            {busy ?? (plan ? "Re-import .ics" : "Import timetable (.ics)")}
+            {busy ?? (plan ? "Re-import" : "Import timetable (.ics)")}
             <input
               ref={fileRef}
               type="file"
@@ -356,6 +426,86 @@ export function PlannerPage() {
               onChange={(e) => e.target.files?.[0] && importIcs(e.target.files[0])}
             />
           </label>
+          {plan && (
+            <div className="relative">
+              <button
+                onClick={() => setMenuOpen((v) => !v)}
+                aria-label="More"
+                className="flex h-[34px] w-9 items-center justify-center rounded-lg border border-slate-300 bg-white text-slate-500 transition hover:bg-slate-50"
+              >
+                <MoreHorizontal size={16} />
+              </button>
+              {menuOpen && (
+                <>
+                  <button
+                    aria-hidden
+                    tabIndex={-1}
+                    onClick={() => setMenuOpen(false)}
+                    className="fixed inset-0 z-40 cursor-default"
+                  />
+                  <div className="absolute right-0 z-50 mt-1 w-72 rounded-xl border border-slate-200 bg-white p-1.5 shadow-lg">
+                    <div className="flex items-center justify-between gap-2 rounded-lg px-2 py-1.5">
+                      <span className="text-sm text-slate-700">
+                        Browser reminder
+                        <span className="block text-[11px] text-slate-400">
+                          only while Recallis is open
+                        </span>
+                      </span>
+                      <div className="flex shrink-0 items-center gap-1">
+                        <input
+                          type="time"
+                          value={`${String(Math.floor(reminders.atMinutes / 60)).padStart(2, "0")}:${String(reminders.atMinutes % 60).padStart(2, "0")}`}
+                          onChange={(e) => {
+                            const [h, m] = e.target.value.split(":").map(Number);
+                            if (Number.isNaN(h) || Number.isNaN(m)) return;
+                            const next = { ...reminders, atMinutes: h * 60 + m };
+                            setReminders(next);
+                            saveReminderSettings(next);
+                          }}
+                          className="w-[5.5rem] rounded border border-slate-200 px-1 py-0.5 text-xs tabular-nums outline-none"
+                        />
+                        <button
+                          onClick={toggleReminders}
+                          className={`rounded-md px-2 py-1 text-xs font-semibold ${
+                            reminders.enabled
+                              ? "bg-indigo-600 text-white"
+                              : "bg-slate-100 text-slate-500"
+                          }`}
+                        >
+                          {reminders.enabled ? "On" : "Off"}
+                        </button>
+                      </div>
+                    </div>
+                    <div className="my-1 border-t border-slate-100" />
+                    <button
+                      onClick={clearPast}
+                      className="flex w-full items-start gap-2 rounded-lg px-2 py-1.5 text-left text-sm text-slate-700 hover:bg-slate-50"
+                    >
+                      <CalendarX size={14} className="mt-0.5 shrink-0 text-slate-400" />
+                      <span>
+                        Clear everything before today
+                        <span className="block text-[11px] text-slate-400">
+                          start fresh; re-importing brings it back
+                        </span>
+                      </span>
+                    </button>
+                    <button
+                      onClick={clearTimetable}
+                      className="flex w-full items-start gap-2 rounded-lg px-2 py-1.5 text-left text-sm text-red-600 hover:bg-red-50"
+                    >
+                      <Trash2 size={14} className="mt-0.5 shrink-0" />
+                      <span>
+                        Remove the timetable
+                        <span className="block text-[11px] text-red-400">
+                          your ticks are kept
+                        </span>
+                      </span>
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
         </div>
       </div>
 
@@ -394,45 +544,65 @@ export function PlannerPage() {
       ) : (
         <>
           {soon.length > 0 && (
-            <section className="mb-4 space-y-2">
-              {soon.map((e) => (
-                <div
-                  key={e.session.id}
-                  className="rounded-xl border border-red-200 bg-red-50 px-4 py-3"
-                >
-                  <p className="flex flex-wrap items-center gap-2 text-sm font-bold text-red-800">
-                    <AlertTriangle size={15} />
-                    {e.session.topic}
-                    <span className="font-medium">
-                      {e.daysAway === 0
-                        ? "is today"
-                        : e.daysAway === 1
-                          ? "is tomorrow"
-                          : `is in ${e.daysAway} days`}
-                    </span>
-                  </p>
-                  <p className="mt-1 text-xs leading-relaxed text-red-700">
-                    It covers <b>{e.covers.length}</b> sessions.{" "}
-                    {e.outstanding.length === 0 ? (
-                      <>Every one of them is finished — you're ready.</>
-                    ) : (
-                      <>
-                        <b>{e.outstanding.length}</b> still have unfinished
-                        work. Start with the oldest: they're the ones you've
-                        had longest to forget.
-                      </>
-                    )}
-                  </p>
-                  {e.outstanding.length > 0 && (
-                    <button
-                      onClick={() => setWeekFilter(e.outstanding[0].week)}
-                      className="mt-2 rounded-lg bg-red-600 px-3 py-1 text-xs font-semibold text-white hover:bg-red-700"
+            <section className="mb-4 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+              <div className="flex items-center gap-2 border-b border-slate-100 bg-slate-50 px-4 py-2">
+                <AlertTriangle size={13} className="text-red-500" />
+                <span className="text-[11px] font-bold uppercase tracking-wide text-slate-500">
+                  Coming up
+                </span>
+              </div>
+              <ul>
+                {(showAllExams ? soon : soon.slice(0, 3)).map((e) => (
+                  <li
+                    key={e.session.id}
+                    className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-slate-50 px-4 py-2.5 last:border-b-0"
+                  >
+                    <span
+                      className={`shrink-0 rounded-md px-2 py-0.5 text-xs font-bold tabular-nums ${
+                        e.daysAway <= 1
+                          ? "bg-red-100 text-red-700"
+                          : e.daysAway <= 3
+                            ? "bg-amber-100 text-amber-700"
+                            : "bg-slate-100 text-slate-600"
+                      }`}
                     >
-                      Go to week {e.outstanding[0].week}
-                    </button>
-                  )}
-                </div>
-              ))}
+                      {e.daysAway === 0
+                        ? "today"
+                        : e.daysAway === 1
+                          ? "tomorrow"
+                          : `${e.daysAway} days`}
+                    </span>
+                    <span className="min-w-0 flex-1 truncate text-sm font-semibold text-slate-800">
+                      {e.session.topic}
+                    </span>
+                    <span className="text-xs text-slate-500">
+                      {e.outstanding.length === 0
+                        ? "everything it covers is done"
+                        : `${e.outstanding.length} of ${e.covers.length} sessions unfinished`}
+                    </span>
+                    {e.outstanding.length > 0 && (
+                      <button
+                        onClick={() => setWeekFilter(e.outstanding[0].week)}
+                        className="shrink-0 rounded-md px-2 py-1 text-xs font-semibold text-indigo-600 hover:bg-indigo-50"
+                      >
+                        Week {e.outstanding[0].week} →
+                      </button>
+                    )}
+                  </li>
+                ))}
+              </ul>
+              {soon.length > 3 && (
+                <button
+                  onClick={() => setShowAllExams((v) => !v)}
+                  className="flex w-full items-center justify-center gap-1 border-t border-slate-100 py-1.5 text-xs font-semibold text-slate-500 hover:bg-slate-50"
+                >
+                  <ChevronDown
+                    size={13}
+                    className={showAllExams ? "rotate-180 transition" : "transition"}
+                  />
+                  {showAllExams ? "Show fewer" : `${soon.length - 3} more`}
+                </button>
+              )}
             </section>
           )}
 
@@ -444,6 +614,18 @@ export function PlannerPage() {
           />
 
           <div className="mb-3 flex flex-wrap items-center gap-1.5">
+            {currentWeek !== null && (
+              <button
+                onClick={() => setWeekFilter(currentWeek)}
+                className={`rounded-lg px-2.5 py-1 text-xs font-semibold transition ${
+                  weekFilter === currentWeek
+                    ? "bg-indigo-600 text-white"
+                    : "bg-white text-indigo-600 ring-1 ring-indigo-200 hover:bg-indigo-50"
+                }`}
+              >
+                This week
+              </button>
+            )}
             <button
               onClick={() => setWeekFilter("all")}
               className={`rounded-lg px-2.5 py-1 text-xs font-semibold transition ${
@@ -477,29 +659,6 @@ export function PlannerPage() {
             onToggleRow={toggleWholeSession}
           />
 
-          <div className="mt-4 flex flex-wrap items-center gap-3 text-xs text-slate-400">
-            <span>
-              {plan.sessions.length} sessions ·{" "}
-              {plan.sessions.filter((s) => s.kind === "assessment").length}{" "}
-              assessments
-            </span>
-            <button
-              onClick={async () => {
-                if (!user) return;
-                if (!confirm("Remove the imported timetable? Your ticks are kept.")) return;
-                const cleared: PlannerPlan = {
-                  ...plan,
-                  sessions: [],
-                  updatedAt: Date.now(),
-                };
-                await savePlannerPlan(user.uid, cleared);
-                setPlan(cleared);
-              }}
-              className="flex items-center gap-1 hover:text-red-500"
-            >
-              <Trash2 size={12} /> Clear timetable
-            </button>
-          </div>
         </>
       )}
     </Layout>
@@ -618,6 +777,65 @@ function RoutineEditor({
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+/**
+ * The name of the plan, editable in place. Timetable exports are named for
+ * the system that produced them, so the first thing anyone wants to do is
+ * call it what the course is actually called.
+ */
+function PlanTitle({
+  name,
+  onRename,
+}: {
+  name: string;
+  onRename?: (name: string) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(name);
+
+  if (!editing || !onRename) {
+    return (
+      <h1 className="group flex items-center gap-2 text-2xl font-bold text-slate-900">
+        <span className="truncate">{name}</span>
+        {onRename && (
+          <button
+            onClick={() => {
+              setDraft(name);
+              setEditing(true);
+            }}
+            aria-label="Rename"
+            className="text-slate-300 opacity-0 transition group-hover:opacity-100 hover:text-slate-500"
+          >
+            <Pencil size={14} />
+          </button>
+        )}
+      </h1>
+    );
+  }
+
+  const commit = () => {
+    setEditing(false);
+    if (draft.trim() && draft.trim() !== name) onRename(draft);
+  };
+  return (
+    <div className="flex items-center gap-1.5">
+      <input
+        autoFocus
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") commit();
+          if (e.key === "Escape") setEditing(false);
+        }}
+        onBlur={commit}
+        className="min-w-0 rounded-lg border border-slate-300 px-2 py-1 text-2xl font-bold text-slate-900 outline-none focus:border-indigo-400"
+      />
+      <button onClick={commit} className="text-emerald-600" aria-label="Save">
+        <Check size={18} />
+      </button>
     </div>
   );
 }
