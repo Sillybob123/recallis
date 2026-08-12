@@ -15,6 +15,7 @@ import {
   loadAnkiSettings,
   loadQuizletSettings,
   loadRemoteMapping,
+  SETTINGS_CHANGED,
 } from "../lib/settings";
 import { buildDeckTree, type DeckNode } from "../lib/deckPath";
 import type { Deck } from "../types";
@@ -48,6 +49,14 @@ export function AnkiHome() {
   }, [user]);
 
   const [countsNonce, setCountsNonce] = useState(0);
+
+  // Settings can be changed from the profile menu while this page is open;
+  // the counts depend on the daily limits, so they have to be recomputed.
+  useEffect(() => {
+    const onChanged = () => setCountsNonce((n) => n + 1);
+    window.addEventListener(SETTINGS_CHANGED, onChanged);
+    return () => window.removeEventListener(SETTINGS_CHANGED, onChanged);
+  }, []);
   useEffect(() => {
     const refresh = () => {
       if (document.visibilityState === "visible") setCountsNonce((n) => n + 1);

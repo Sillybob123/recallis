@@ -1,16 +1,23 @@
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import {
   CalendarCheck,
   Layers,
   LogOut,
   MessageSquare,
+  Settings,
   NotebookPen,
   Repeat,
   Zap,
 } from "lucide-react";
 import { useAuth } from "../contexts/AuthContext";
 import { FeedbackModal } from "./FeedbackModal";
+import { StudySettingsModal } from "./StudySettingsModal";
+import {
+  loadAnkiSettings,
+  loadQuizletSettings,
+  SETTINGS_CHANGED,
+} from "../lib/settings";
 import { useStudyMode } from "../contexts/StudyModeContext";
 
 export function Layout({
@@ -24,6 +31,7 @@ export function Layout({
   const { user, logOut } = useAuth();
   const { studyMode } = useStudyMode();
   const [feedbackOpen, setFeedbackOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const navigate = useNavigate();
   const { pathname } = useLocation();
 
@@ -156,32 +164,35 @@ export function Layout({
                 </Link>
               </div>
 
-              <button
-                onClick={() => setFeedbackOpen(true)}
-                title="Tell me what's broken or missing"
-                className="flex shrink-0 items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-slate-600 transition hover:border-slate-300 hover:bg-slate-50"
-              >
-                <MessageSquare size={14} />
-                <span className="hidden sm:inline">Feedback</span>
-              </button>
-              <span className="ml-1 hidden text-slate-500 lg:inline">
-                {user.displayName || user.email}
-              </span>
-              <button
-                onClick={async () => {
+              <ProfileMenu
+                name={user.displayName}
+                email={user.email}
+                onFeedback={() => setFeedbackOpen(true)}
+                onSettings={() => setSettingsOpen(true)}
+                onLogOut={async () => {
                   await logOut();
                   navigate("/login");
                 }}
-                className="flex shrink-0 items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-slate-600 transition hover:border-slate-300 hover:bg-slate-50"
-              >
-                <LogOut size={14} />
-                <span className="hidden sm:inline">Log out</span>
-              </button>
+              />
             </div>
           )}
         </div>
       </header>
       {feedbackOpen && <FeedbackModal onClose={() => setFeedbackOpen(false)} />}
+      {settingsOpen && (
+        <StudySettingsModal
+          studyMode={studyMode}
+          anki={loadAnkiSettings()}
+          quizlet={loadQuizletSettings()}
+          onChange={() => {
+            // Pages hold settings in state; this tells whichever is behind
+            // the dialog to read them again rather than showing counts
+            // computed under the old limits.
+            window.dispatchEvent(new Event(SETTINGS_CHANGED));
+          }}
+          onClose={() => setSettingsOpen(false)}
+        />
+      )}
       <main
         className={
           wide ? "px-3 pb-3 pt-3" : "mx-auto max-w-6xl px-4 py-8 sm:px-6"
@@ -190,6 +201,143 @@ export function Layout({
         {children}
       </main>
     </div>
+  );
+}
+
+/** "Yair Ben-Dor" → "YB"; an address falls back to its first letter. */
+function initialsOf(name: string | null, email: string | null): string {
+  const source = (name ?? "").trim();
+  if (source) {
+    const parts = source.split(/\s+/).filter(Boolean);
+    return (parts[0][0] + (parts.length > 1 ? parts[parts.length - 1][0] : ""))
+      .toUpperCase();
+  }
+  return (email ?? "?").trim().charAt(0).toUpperCase() || "?";
+}
+
+/**
+ * Everything about you, behind one circle: the three separate controls this
+ * replaces were three things in the header competing with the navigation,
+ * and none of them is pressed often.
+ */
+function ProfileMenu({
+  name,
+  email,
+  onFeedback,
+  onSettings,
+  onLogOut,
+}: {
+  name: string | null;
+  email: string | null;
+  onFeedback: () => void;
+  onSettings: () => void;
+  onLogOut: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open]);
+
+  return (
+    <div className="relative shrink-0">
+      <button
+        onClick={() => setOpen((v) => !v)}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        title={name || email || "Account"}
+        className="flex h-8 w-8 items-center justify-center rounded-full text-xs font-bold text-white transition hover:opacity-90"
+        style={{ backgroundColor: "var(--accent)" }}
+      >
+        {initialsOf(name, email)}
+      </button>
+
+      {open && (
+        <>
+          <button
+            aria-hidden
+            tabIndex={-1}
+            onClick={() => setOpen(false)}
+            className="fixed inset-0 z-40 cursor-default"
+          />
+          <div
+            role="menu"
+            className="absolute right-0 z-50 mt-2 w-60 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg"
+          >
+            <div className="border-b border-slate-100 px-3 py-2.5">
+              <p className="truncate text-sm font-semibold text-slate-800">
+                {name || "Your account"}
+              </p>
+              {email && (
+                <p className="truncate text-xs text-slate-400">{email}</p>
+              )}
+            </div>
+            <MenuItem
+              icon={<Settings size={14} />}
+              onClick={() => {
+                setOpen(false);
+                onSettings();
+              }}
+            >
+              Study settings
+            </MenuItem>
+            <MenuItem
+              icon={<MessageSquare size={14} />}
+              onClick={() => {
+                setOpen(false);
+                onFeedback();
+              }}
+            >
+              Send feedback
+            </MenuItem>
+            <div className="border-t border-slate-100">
+              <MenuItem
+                icon={<LogOut size={14} />}
+                danger
+                onClick={() => {
+                  setOpen(false);
+                  onLogOut();
+                }}
+              >
+                Log out
+              </MenuItem>
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function MenuItem({
+  icon,
+  children,
+  onClick,
+  danger = false,
+}: {
+  icon: ReactNode;
+  children: ReactNode;
+  onClick: () => void;
+  danger?: boolean;
+}) {
+  return (
+    <button
+      role="menuitem"
+      onClick={onClick}
+      className={`flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm transition ${
+        danger
+          ? "text-red-600 hover:bg-red-50"
+          : "text-slate-700 hover:bg-slate-50"
+      }`}
+    >
+      <span className={danger ? "text-red-400" : "text-slate-400"}>{icon}</span>
+      {children}
+    </button>
   );
 }
 

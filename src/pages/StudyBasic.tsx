@@ -70,6 +70,7 @@ import {
   loadAnkiSettings,
   loadQuizletSettings,
   loadRemoteMapping,
+  SETTINGS_CHANGED,
   saveQuizletSettings,
   recordAnkiReview,
   startOfStudyDay,
@@ -302,6 +303,17 @@ export function StudyBasic() {
   const [quizletSettings, setQuizletSettings] =
     useState<QuizletSettings>(loadQuizletSettings);
   const [remoteMapping, setRemoteMapping] = useState(loadRemoteMapping);
+
+  // The profile menu can change settings mid-session, so re-read them
+  // rather than studying under limits that no longer apply.
+  useEffect(() => {
+    const onChanged = () => {
+      setAnkiSettings(loadAnkiSettings());
+      setQuizletSettings(loadQuizletSettings());
+    };
+    window.addEventListener(SETTINGS_CHANGED, onChanged);
+    return () => window.removeEventListener(SETTINGS_CHANGED, onChanged);
+  }, []);
   const [showRemote, setShowRemote] = useState(false);
 
   // Ordered runs are their own session, so switching between the two keeps

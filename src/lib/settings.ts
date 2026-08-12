@@ -134,6 +134,12 @@ export function saveAnkiSettings(s: AnkiSettings) {
   pushSettingsRemote();
 }
 
+/**
+ * Broadcast when settings are saved from somewhere other than the page
+ * showing them — the profile menu can be opened over anything.
+ */
+export const SETTINGS_CHANGED = "recallis:settings-changed";
+
 export function loadRemoteMapping(): RemoteMapping {
   // Nested objects can't be merged by the shallow `load` helper, so each
   // half is filled in from the defaults explicitly — a stored mapping from
