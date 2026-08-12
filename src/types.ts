@@ -49,7 +49,18 @@ export interface Card {
   data: CardData;
 }
 
-export type ShapeKind = "rect" | "ellipse" | "polygon";
+/**
+ * The first three cover something up and become a question. The last three
+ * are annotations: they mark the image up without ever being asked, so they
+ * stay visible on every card.
+ */
+export type ShapeKind =
+  | "rect"
+  | "ellipse"
+  | "polygon"
+  | "note"
+  | "arrow"
+  | "star";
 
 export interface OcclusionShape {
   id: string;
@@ -71,6 +82,14 @@ export interface OcclusionShape {
   opacity?: number;
   /** shapes sharing a groupId are hidden/revealed together as one card */
   groupId?: string;
+  /**
+   * Marks this as an annotation rather than a mask: always drawn, never
+   * hidden, never a card. Stored alongside the kind so that a client too old
+   * to know "arrow" still knows not to ask a question about it.
+   */
+  annotation?: boolean;
+  /** annotations only: line thickness as a fraction of the image width */
+  weight?: number;
 }
 
 export interface OcclusionSheet {

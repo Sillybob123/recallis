@@ -2,13 +2,16 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   ArrowLeft,
+  ArrowUpRight,
   Type,
   Circle,
   Copy,
   Group,
+  MessageSquare,
   MousePointer2,
   Pentagon,
   Square,
+  Star,
   Trash2,
   Undo2,
   Ungroup,
@@ -22,12 +25,19 @@ import {
   uploadOcclusionImage,
 } from "../lib/firestore";
 import {
+  annotationWeight,
+  arrowEnds,
+  arrowHead,
+  boxesIntersect,
   buildUnits,
+  DEFAULT_ANNOTATION_COLOR,
   DEFAULT_MASK_COLOR,
+  isAnnotation,
   polygonBounds,
   shapeColor,
   shapeKind,
   shapeOpacity,
+  starPoints,
   translateShape,
 } from "../lib/shapes";
 import type { OcclusionShape, ShapeKind } from "../types";
@@ -35,10 +45,21 @@ import { uid } from "../lib/uid";
 
 const MASK_COLORS = [DEFAULT_MASK_COLOR, "#ef4444", "#10b981", "#f59e0b", "#a855f7", "#ec4899", "#334155"];
 
-type Tool = "select" | "rect" | "ellipse" | "polygon" | "textbox";
+type Tool =
+  | "select"
+  | "rect"
+  | "ellipse"
+  | "polygon"
+  | "textbox"
+  | "note"
+  | "arrow"
+  | "star";
+
+/** The tools that mark the image up instead of covering it. */
+const ANNOTATION_TOOLS: Tool[] = ["note", "arrow", "star"];
 
 interface DragState {
-  mode: "draw" | "move" | "resize" | "vertex";
+  mode: "draw" | "move" | "resize" | "vertex" | "marquee";
   startX: number;
   startY: number;
   /** original shapes at drag start, for move/resize/vertex */
@@ -46,10 +67,80 @@ interface DragState {
   shapeId?: string;
   vertexIndex?: number;
   moved?: boolean;
+  /** marquee only: the selection at drag start, for shift-adding */
+  baseSelection?: Set<string>;
 }
 
 function clamp(v: number, min: number, max: number) {
   return Math.min(Math.max(v, min), max);
+}
+
+/**
+ * An arrow or star on the editing canvas. Drawn the same way the study view
+ * draws it, with a wider invisible hit area so a thin arrow is still easy to
+ * grab.
+ */
+function EditorAnnotation({
+  shape,
+  selected,
+  onPointerDown,
+}: {
+  shape: OcclusionShape;
+  selected: boolean;
+  onPointerDown: (e: React.PointerEvent) => void;
+}) {
+  const color = shapeColor(shape);
+  const grab = {
+    style: { pointerEvents: "auto" as const, cursor: "move" },
+    onPointerDown,
+  };
+  if (shapeKind(shape) === "arrow") {
+    const { from, to } = arrowEnds(shape);
+    const head = arrowHead(from, to, annotationWeight(shape));
+    return (
+      <g>
+        <line
+          x1={from.x * 100}
+          y1={from.y * 100}
+          x2={to.x * 100}
+          y2={to.y * 100}
+          stroke="transparent"
+          strokeWidth={12}
+          vectorEffect="non-scaling-stroke"
+          {...grab}
+        />
+        <line
+          x1={from.x * 100}
+          y1={from.y * 100}
+          x2={to.x * 100}
+          y2={to.y * 100}
+          stroke={color}
+          strokeWidth={selected ? 5 : 3}
+          strokeLinecap="round"
+          vectorEffect="non-scaling-stroke"
+          pointerEvents="none"
+        />
+        <polygon
+          points={head.map((p) => `${p.x * 100},${p.y * 100}`).join(" ")}
+          fill={color}
+          pointerEvents="none"
+        />
+      </g>
+    );
+  }
+  if (shapeKind(shape) === "star") {
+    return (
+      <polygon
+        points={starPoints(shape).map((p) => `${p.x * 100},${p.y * 100}`).join(" ")}
+        fill={color}
+        stroke={selected ? "#1e293b" : "rgba(255,255,255,0.9)"}
+        strokeWidth={selected ? 2 : 1}
+        vectorEffect="non-scaling-stroke"
+        {...grab}
+      />
+    );
+  }
+  return null;
 }
 
 export function OcclusionEditor() {
@@ -83,6 +174,13 @@ export function OcclusionEditor() {
    * only the asked label hidden.
    */
   const [revealMode, setRevealMode] = useState<"hideAll" | "hideOne">("hideAll");
+  const [annotationColor, setAnnotationColor] = useState(DEFAULT_ANNOTATION_COLOR);
+  // The drag handlers are bound once per drag, so they read the live shapes
+  // through a ref rather than a stale closure.
+  const shapesRef = useRef<OcclusionShape[]>([]);
+  useEffect(() => {
+    shapesRef.current = shapes;
+  }, [shapes]);
 
   const containerRef = useRef<HTMLDivElement>(null);
   const isEditing = Boolean(sheetId);
@@ -174,10 +272,17 @@ export function OcclusionEditor() {
   }
 
   function groupSelected() {
-    if (selectedIds.size < 2) return;
+    // Annotations aren't cards, so there is nothing to group them into — a
+    // marquee that caught an arrow along with four masks should still group
+    // the four masks.
+    const maskIds = shapes
+      .filter((s) => selectedIds.has(s.id) && !isAnnotation(s))
+      .map((s) => s.id);
+    if (maskIds.length < 2) return;
     const gid = uid();
+    const inGroup = new Set(maskIds);
     setShapes((prev) =>
-      prev.map((s) => (selectedIds.has(s.id) ? { ...s, groupId: gid } : s))
+      prev.map((s) => (inGroup.has(s.id) ? { ...s, groupId: gid } : s))
     );
   }
 
@@ -190,7 +295,10 @@ export function OcclusionEditor() {
   }
 
   function applyColor(color: string) {
-    setDefaultColor(color);
+    // Masks and annotations keep separate defaults — you don't want the
+    // colour you picked for an arrow to become the colour of your masks.
+    if (ANNOTATION_TOOLS.includes(tool)) setAnnotationColor(color);
+    else setDefaultColor(color);
     if (selectedIds.size) {
       setShapes((prev) =>
         prev.map((s) => (selectedIds.has(s.id) ? { ...s, color } : s))
@@ -278,13 +386,26 @@ export function OcclusionEditor() {
       setPolyDraft((prev) => [...prev, pos]);
       return;
     }
-    if (tool === "rect" || tool === "ellipse" || tool === "textbox") {
+    if (
+      tool === "rect" ||
+      tool === "ellipse" ||
+      tool === "textbox" ||
+      ANNOTATION_TOOLS.includes(tool)
+    ) {
       setSelectedIds(new Set());
       setDrag({ mode: "draw", startX: pos.x, startY: pos.y });
       setDraft({ x: pos.x, y: pos.y, w: 0, h: 0 });
       return;
     }
-    // select tool on empty canvas: clear selection
+    // Select tool on empty canvas: start a rubber band. Picking out eight
+    // masks to group them shouldn't mean eight shift-clicks.
+    setDrag({
+      mode: "marquee",
+      startX: pos.x,
+      startY: pos.y,
+      baseSelection: e.shiftKey ? new Set(selectedIds) : new Set(),
+    });
+    setDraft({ x: pos.x, y: pos.y, w: 0, h: 0 });
     if (!e.shiftKey) setSelectedIds(new Set());
   }
 
@@ -293,7 +414,7 @@ export function OcclusionEditor() {
     e.stopPropagation();
     // With the text tool active, clicking an existing mask turns it into a
     // text box (or edits the prompt of one that already is).
-    if (tool === "textbox") {
+    if (tool === "textbox" && !isAnnotation(shape)) {
       const asked = prompt(
         "Question to show on this box:",
         shape.textPrompt ? shape.label ?? "" : ""
@@ -360,13 +481,22 @@ export function OcclusionEditor() {
       const pos = relPos(e.clientX, e.clientY);
       const dx = pos.x - drag!.startX;
       const dy = pos.y - drag!.startY;
-      if (drag!.mode === "draw") {
-        setDraft({
+      if (drag!.mode === "draw" || drag!.mode === "marquee") {
+        const box = {
           x: Math.min(drag!.startX, pos.x),
           y: Math.min(drag!.startY, pos.y),
           w: Math.abs(dx),
           h: Math.abs(dy),
-        });
+        };
+        setDraft(box);
+        if (drag!.mode === "marquee") {
+          // Live, so you can see what you're about to catch.
+          const caught = new Set(drag!.baseSelection ?? []);
+          for (const s of shapesRef.current) {
+            if (boxesIntersect(box, s)) caught.add(s.id);
+          }
+          setSelectedIds(caught);
+        }
       } else if (drag!.mode === "move" && drag!.originals) {
         drag!.moved = true;
         setShapes((prev) =>
@@ -417,12 +547,82 @@ export function OcclusionEditor() {
     }
 
     function onUp(e: PointerEvent) {
+      if (drag!.mode === "marquee") {
+        setDraft(null);
+        setDrag(null);
+        return;
+      }
       if (drag!.mode === "draw") {
         const pos = relPos(e.clientX, e.clientY);
         const x = Math.min(drag!.startX, pos.x);
         const y = Math.min(drag!.startY, pos.y);
         const w = Math.abs(pos.x - drag!.startX);
         const h = Math.abs(pos.y - drag!.startY);
+        if (ANNOTATION_TOOLS.includes(tool)) {
+          const id = uid();
+          const from = { x: drag!.startX, y: drag!.startY };
+          const to = { x: pos.x, y: pos.y };
+          if (tool === "arrow") {
+            // An arrow is drawn tail-to-head, so which corner you started
+            // from is the whole meaning — it can't be normalized into a box.
+            if (Math.hypot(to.x - from.x, to.y - from.y) > 0.02) {
+              setShapes((prev) => [
+                ...prev,
+                {
+                  id,
+                  kind: "arrow",
+                  annotation: true,
+                  points: [from, to],
+                  x,
+                  y,
+                  w,
+                  h,
+                  color: annotationColor,
+                },
+              ]);
+              setSelectedIds(new Set([id]));
+            }
+          } else if (tool === "star") {
+            // A click with no drag still gives a usable star.
+            const size = Math.max(w, h) > 0.02 ? Math.max(w, h) : 0.07;
+            setShapes((prev) => [
+              ...prev,
+              {
+                id,
+                kind: "star",
+                annotation: true,
+                x: clamp(Math.min(from.x, to.x), 0, 1 - size),
+                y: clamp(Math.min(from.y, to.y), 0, 1 - size),
+                w: size,
+                h: size,
+                color: annotationColor,
+              },
+            ]);
+            setSelectedIds(new Set([id]));
+          } else {
+            const text = prompt("Note to show on the image:")?.trim();
+            if (text) {
+              setShapes((prev) => [
+                ...prev,
+                {
+                  id,
+                  kind: "note",
+                  annotation: true,
+                  label: text,
+                  x: Math.min(from.x, to.x),
+                  y: Math.min(from.y, to.y),
+                  w: Math.max(w, 0.12),
+                  h: Math.max(h, 0.05),
+                  color: annotationColor,
+                },
+              ]);
+              setSelectedIds(new Set([id]));
+            }
+          }
+          setDraft(null);
+          setDrag(null);
+          return;
+        }
         if (w > 0.01 && h > 0.01) {
           const id = uid();
           let label = "";
@@ -476,8 +676,12 @@ export function OcclusionEditor() {
       alert("Give this occlusion sheet a title first.");
       return;
     }
-    if (shapes.length === 0) {
-      alert("Draw at least one mask over something you want to hide.");
+    if (buildUnits(shapes).length === 0) {
+      alert(
+        shapes.length === 0
+          ? "Draw at least one mask over something you want to hide."
+          : "This sheet only has annotations on it. Add at least one mask — arrows, stars and notes are never asked as questions."
+      );
       return;
     }
     setSaving(true);
@@ -586,19 +790,51 @@ export function OcclusionEditor() {
                   ))}
                 </div>
 
+                <div className="flex overflow-hidden rounded-lg border border-rose-200">
+                  {(
+                    [
+                      ["note", MessageSquare, "Note — plain text on the image, never asked as a question"],
+                      ["arrow", ArrowUpRight, "Arrow — drag from the tail to whatever you're pointing at"],
+                      ["star", Star, "Star — mark something worth noticing"],
+                    ] as const
+                  ).map(([t, Icon, tip]) => (
+                    <button
+                      key={t}
+                      onClick={() => {
+                        setTool(t);
+                        setPolyDraft([]);
+                      }}
+                      title={tip}
+                      className={`flex h-9 w-9 items-center justify-center transition ${
+                        tool === t
+                          ? "bg-rose-600 text-white"
+                          : "bg-white text-rose-500 hover:bg-rose-50"
+                      }`}
+                    >
+                      <Icon size={16} />
+                    </button>
+                  ))}
+                </div>
+
                 <div className="flex items-center gap-1">
                   {MASK_COLORS.map((c) => (
                     <button
                       key={c}
                       onClick={() => applyColor(c)}
-                      title="Mask color (applies to selection and new masks)"
+                      title={
+                        ANNOTATION_TOOLS.includes(tool)
+                          ? "Annotation colour"
+                          : "Mask colour (applies to the selection and to new masks)"
+                      }
                       className="h-6 w-6 rounded-full border-2"
                       style={{
                         backgroundColor: c,
                         borderColor:
                           (selectedShapes[0]
                             ? shapeColor(selectedShapes[0])
-                            : defaultColor) === c
+                            : ANNOTATION_TOOLS.includes(tool)
+                              ? annotationColor
+                              : defaultColor) === c
                             ? "#1e293b"
                             : "transparent",
                       }}
@@ -691,6 +927,16 @@ export function OcclusionEditor() {
                 >
                   {shapes.map((s) => {
                     const selected = selectedIds.has(s.id);
+                    if (isAnnotation(s)) {
+                      return (
+                        <EditorAnnotation
+                          key={s.id}
+                          shape={s}
+                          selected={selected}
+                          onPointerDown={(e) => handleShapePointerDown(e, s)}
+                        />
+                      );
+                    }
                     const common = {
                       fill: shapeColor(s),
                       fillOpacity: shapeOpacity(s) * (selected ? 0.85 : 1),
@@ -764,6 +1010,45 @@ export function OcclusionEditor() {
                       vectorEffect="non-scaling-stroke"
                     />
                   )}
+                  {draft && drag?.mode === "marquee" && (
+                    <rect
+                      x={draft.x * 100}
+                      y={draft.y * 100}
+                      width={draft.w * 100}
+                      height={draft.h * 100}
+                      fill="#6366f1"
+                      fillOpacity={0.12}
+                      stroke="#6366f1"
+                      strokeWidth={1}
+                      strokeDasharray="3 2"
+                      vectorEffect="non-scaling-stroke"
+                    />
+                  )}
+                  {draft && tool === "arrow" && drag?.mode === "draw" && (
+                    <line
+                      x1={drag.startX * 100}
+                      y1={drag.startY * 100}
+                      x2={(drag.startX === draft.x ? draft.x + draft.w : draft.x) * 100}
+                      y2={(drag.startY === draft.y ? draft.y + draft.h : draft.y) * 100}
+                      stroke={annotationColor}
+                      strokeWidth={3}
+                      strokeLinecap="round"
+                      vectorEffect="non-scaling-stroke"
+                    />
+                  )}
+                  {draft && (tool === "star" || tool === "note") && (
+                    <rect
+                      x={draft.x * 100}
+                      y={draft.y * 100}
+                      width={draft.w * 100}
+                      height={draft.h * 100}
+                      fill={annotationColor}
+                      fillOpacity={0.2}
+                      stroke={annotationColor}
+                      strokeDasharray="4 3"
+                      vectorEffect="non-scaling-stroke"
+                    />
+                  )}
                   {polyDraft.length > 0 && (
                     <polyline
                       points={[...polyDraft, ...(polyHover ? [polyHover] : [])]
@@ -779,10 +1064,34 @@ export function OcclusionEditor() {
                   )}
                 </svg>
 
-                {/* mask labels */}
+                {shapes
+                  .filter((s) => shapeKind(s) === "note" && s.label)
+                  .map((s) => (
+                    <span
+                      key={`note-${s.id}`}
+                      onPointerDown={(e) => handleShapePointerDown(e, s)}
+                      className="absolute flex cursor-move items-center rounded-md px-1.5 font-bold leading-tight"
+                      style={{
+                        left: `${s.x * 100}%`,
+                        top: `${s.y * 100}%`,
+                        height: `${s.h * 100}%`,
+                        maxWidth: `${(1 - s.x) * 100}%`,
+                        color: shapeColor(s),
+                        background: "rgba(255,255,255,0.92)",
+                        border: `${selectedIds.has(s.id) ? 2 : 1}px solid ${shapeColor(s)}`,
+                        fontSize: "clamp(9px, 1.5vw, 15px)",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {s.label}
+                    </span>
+                  ))}
+
+                {/* mask labels — annotations carry their own */}
                 {shapes.map(
                   (s) =>
-                    s.label && (
+                    s.label &&
+                    !isAnnotation(s) && (
                       <span
                         key={`lbl-${s.id}`}
                         className="pointer-events-none absolute flex items-center justify-center overflow-hidden px-1 text-center text-[10px] font-medium text-white"
@@ -838,12 +1147,18 @@ export function OcclusionEditor() {
 
               <p className="mt-2 text-xs text-slate-400">
                 {tool === "polygon"
-                  ? "Click to add points; click the first (amber) point, double-click, or press Enter to close. Esc cancels."
+                  ? "Click each corner. Click the first point again (or press Enter) to close."
                   : tool === "select"
-                  ? "Click to select (shift-click for multiple), drag to move, corner handle to resize."
-                  : tool === "textbox"
-                  ? "Drag a box over the answer, or click an existing mask to turn it into a text box."
-                  : "Drag on the image to draw. Switch to the arrow tool to move/resize."}
+                    ? "Drag on empty space to lasso several masks at once, then group them. Shift-click to add one."
+                    : tool === "textbox"
+                      ? "Drag a box, then type the question it should ask. Click an existing mask to give it one."
+                      : tool === "arrow"
+                        ? "Drag from the tail to whatever you're pointing at. Arrows are never asked as questions."
+                        : tool === "star"
+                          ? "Click or drag to place a star. Stars are never asked as questions."
+                          : tool === "note"
+                            ? "Drag a box and type your note. Notes stay visible on every card."
+                            : "Drag on the image to draw. Switch to the arrow tool to move/resize."}
               </p>
 
               {!isEditing && (

@@ -1,5 +1,15 @@
 import type { OcclusionShape } from "../types";
-import { shapeColor, shapeKind, shapeOpacity } from "../lib/shapes";
+import {
+  annotationWeight,
+  arrowEnds,
+  arrowHead,
+  DEFAULT_ANNOTATION_COLOR,
+  isAnnotation,
+  shapeColor,
+  shapeKind,
+  shapeOpacity,
+  starPoints,
+} from "../lib/shapes";
 
 const TARGET_COLOR = "#f59e0b";
 
@@ -23,8 +33,16 @@ export function ShapeOverlay({
   // Text-box masks display their prompt while covered — HTML, not SVG <text>,
   // because the stretched 0-100 viewBox would distort glyphs.
   const prompts = shapes.filter(
-    (s) => s.textPrompt && s.label && hiddenIds.has(s.id) && !outlineIds?.has(s.id)
+    (s) =>
+      !isAnnotation(s) &&
+      s.textPrompt &&
+      s.label &&
+      hiddenIds.has(s.id) &&
+      !outlineIds?.has(s.id)
   );
+  // Annotations mark the image up rather than covering it, so they are drawn
+  // on every side of every card — question and answer alike.
+  const notes = shapes.filter((s) => shapeKind(s) === "note" && s.label);
   return (
     <div className="pointer-events-none absolute inset-0">
     <svg
@@ -33,6 +51,7 @@ export function ShapeOverlay({
       preserveAspectRatio="none"
     >
       {shapes.map((s) => {
+        if (isAnnotation(s)) return <Annotation key={s.id} shape={s} />;
         const hidden = hiddenIds.has(s.id);
         const outlined = outlineIds?.has(s.id) ?? false;
         if (!hidden && !outlined) return null;
@@ -86,6 +105,25 @@ export function ShapeOverlay({
         );
       })}
     </svg>
+    {notes.map((s) => (
+      <span
+        key={`note-${s.id}`}
+        className="absolute flex items-center rounded-md px-1.5 font-bold leading-tight"
+        style={{
+          left: `${s.x * 100}%`,
+          top: `${s.y * 100}%`,
+          height: `${s.h * 100}%`,
+          maxWidth: `${(1 - s.x) * 100}%`,
+          color: s.color ?? DEFAULT_ANNOTATION_COLOR,
+          background: "rgba(255,255,255,0.92)",
+          border: `1px solid ${s.color ?? DEFAULT_ANNOTATION_COLOR}`,
+          fontSize: "clamp(9px, 1.5vw, 15px)",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {s.label}
+      </span>
+    ))}
     {prompts.map((s) => (
       <span
         key={`prompt-${s.id}`}
@@ -104,4 +142,48 @@ export function ShapeOverlay({
     ))}
     </div>
   );
+}
+
+/** An arrow or a star, drawn in the same 0-100 space as the masks. */
+function Annotation({ shape }: { shape: OcclusionShape }) {
+  const color = shape.color ?? DEFAULT_ANNOTATION_COLOR;
+  const kind = shapeKind(shape);
+  if (kind === "arrow") {
+    const { from, to } = arrowEnds(shape);
+    const head = arrowHead(from, to, annotationWeight(shape));
+    // Non-scaling strokes keep an arrow the same visual weight whatever size
+    // the image is displayed at.
+    const width = Math.max(annotationWeight(shape) * 400, 2);
+    return (
+      <g>
+        <line
+          x1={from.x * 100}
+          y1={from.y * 100}
+          x2={to.x * 100}
+          y2={to.y * 100}
+          stroke={color}
+          strokeWidth={width}
+          strokeLinecap="round"
+          vectorEffect="non-scaling-stroke"
+        />
+        <polygon
+          points={head.map((p) => `${p.x * 100},${p.y * 100}`).join(" ")}
+          fill={color}
+        />
+      </g>
+    );
+  }
+  if (kind === "star") {
+    return (
+      <polygon
+        points={starPoints(shape).map((p) => `${p.x * 100},${p.y * 100}`).join(" ")}
+        fill={color}
+        stroke="rgba(255,255,255,0.9)"
+        strokeWidth={1}
+        vectorEffect="non-scaling-stroke"
+      />
+    );
+  }
+  // Notes are HTML, so that the stretched viewBox can't distort the glyphs.
+  return null;
 }

@@ -3,7 +3,13 @@ import { ref, getBlob } from "firebase/storage";
 import { storage } from "../firebase";
 import type { Card, OcclusionSheet, OcclusionShape } from "../types";
 import { serializeAnkiFile } from "./ankiTsv";
-import { buildUnits, fillShapeOnCanvas } from "./shapes";
+import {
+  annotationsOf,
+  buildUnits,
+  drawAnnotationOnCanvas,
+  fillShapeOnCanvas,
+  isAnnotation,
+} from "./shapes";
 import { EXPORT_QUALITY, exportDimensions } from "./exportImage";
 import { formatTagString } from "./tags";
 
@@ -97,20 +103,34 @@ async function bakeMasked(
   const ctx = canvas.getContext("2d")!;
   ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
   for (const s of shapes) {
+    if (isAnnotation(s)) continue;
     fillShapeOnCanvas(ctx, s, canvas.width, canvas.height);
   }
   // Text-box prompts are part of the question, so they bake into the image
   // and survive the trip to Anki without any special note type.
   for (const s of shapes) {
-    if (s.textPrompt) drawPromptText(ctx, s, canvas.width, canvas.height);
+    if (!isAnnotation(s) && s.textPrompt) {
+      drawPromptText(ctx, s, canvas.width, canvas.height);
+    }
+  }
+  // Arrows, stars and labels go on last so a mask can't cover them.
+  for (const s of annotationsOf(shapes)) {
+    drawAnnotationOnCanvas(ctx, s, canvas.width, canvas.height);
   }
   return canvasToBlob(canvas);
 }
 
-async function bakeOriginal(img: HTMLImageElement): Promise<Blob> {
+/** The answer image: nothing covered, but still marked up. */
+async function bakeOriginal(
+  img: HTMLImageElement,
+  shapes: OcclusionShape[] = []
+): Promise<Blob> {
   const canvas = exportCanvas(img);
   const ctx = canvas.getContext("2d")!;
   ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+  for (const s of annotationsOf(shapes)) {
+    drawAnnotationOnCanvas(ctx, s, canvas.width, canvas.height);
+  }
   return canvasToBlob(canvas);
 }
 
@@ -156,12 +176,12 @@ export async function exportDeckToAnki(
 
   let mediaCount = 0;
   for (const sheet of sheets) {
-    if (sheet.shapes.length === 0) continue;
+    if (buildUnits(sheet.shapes).length === 0) continue;
     try {
       const blob = await getBlob(ref(storage, sheet.imagePath));
       const img = await loadImageFromBlob(blob);
 
-      const answerBlob = await bakeOriginal(img);
+      const answerBlob = await bakeOriginal(img, sheet.shapes);
       const answerName = `occ_${sheet.id}_answer.jpg`;
       media.file(answerName, answerBlob);
       mediaCount++;
