@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import { useAuth } from "../contexts/AuthContext";
 import { Layout } from "../components/Layout";
+import { NoteBox, useBoxSize } from "../components/NoteBox";
 import {
   createOcclusionSheet,
   getOcclusionSheet,
@@ -82,6 +83,8 @@ interface DragState {
   originals?: Map<string, OcclusionShape>;
   shapeId?: string;
   vertexIndex?: number;
+  /** which dimensions a resize changes */
+  axis?: "both" | "x" | "y";
   moved?: boolean;
   /** set once this drag has recorded its undo step */
   snapshotted?: boolean;
@@ -268,6 +271,8 @@ export function OcclusionEditor() {
   void historyTick;
 
   const containerRef = useRef<HTMLDivElement>(null);
+  // The image's drawn size in pixels, so note text can be fitted to its box.
+  const canvasSize = useBoxSize(containerRef);
   const isEditing = Boolean(sheetId);
 
   useEffect(() => {
@@ -569,7 +574,11 @@ export function OcclusionEditor() {
     setDrag({ mode: "move", startX: pos.x, startY: pos.y, originals });
   }
 
-  function handleResizePointerDown(e: React.PointerEvent, shape: OcclusionShape) {
+  function handleResizePointerDown(
+    e: React.PointerEvent,
+    shape: OcclusionShape,
+    axis: "both" | "x" | "y" = "both"
+  ) {
     e.stopPropagation();
     const pos = relPos(e.clientX, e.clientY);
     const originals = new Map<string, OcclusionShape>([[shape.id, shape]]);
@@ -579,6 +588,7 @@ export function OcclusionEditor() {
       startY: pos.y,
       originals,
       shapeId: shape.id,
+      axis,
     });
   }
 
@@ -643,8 +653,12 @@ export function OcclusionEditor() {
       } else if (drag!.mode === "resize" && drag!.originals && drag!.shapeId) {
         beginDragEdit();
         const orig = drag!.originals.get(drag!.shapeId)!;
-        const nw = clamp(orig.w + dx, 0.015, 1 - orig.x);
-        const nh = clamp(orig.h + dy, 0.015, 1 - orig.y);
+        // An edge handle changes one dimension; the corner changes both.
+        const axis = drag!.axis ?? "both";
+        const nw =
+          axis === "y" ? orig.w : clamp(orig.w + dx, 0.015, 1 - orig.x);
+        const nh =
+          axis === "x" ? orig.h : clamp(orig.h + dy, 0.015, 1 - orig.y);
         setShapes((prev) =>
           prev.map((s) => {
             if (s.id !== drag!.shapeId) return s;
@@ -755,8 +769,10 @@ export function OcclusionEditor() {
                   label: text,
                   x: Math.min(from.x, to.x),
                   y: Math.min(from.y, to.y),
-                  w: Math.max(w, 0.12),
-                  h: Math.max(h, 0.05),
+                  // A click without a drag still gives a box worth reading:
+                  // wider for an explanation, which is usually a sentence.
+                  w: Math.max(w, onReveal ? 0.34 : 0.18),
+                  h: Math.max(h, onReveal ? 0.12 : 0.07),
                   // Amber by default, matching how it's marked in the list:
                   // an explanation is a different thing from a label.
                   color: onReveal ? EXPLAIN_COLOR : annotationColor,
@@ -1253,26 +1269,14 @@ export function OcclusionEditor() {
                 {shapes
                   .filter((s) => shapeKind(s) === "note" && s.label)
                   .map((s) => (
-                    <span
+                    <NoteBox
                       key={`note-${s.id}`}
+                      shape={s}
+                      containerWidth={canvasSize.width}
+                      containerHeight={canvasSize.height}
+                      selected={selectedIds.has(s.id)}
                       onPointerDown={(e) => handleShapePointerDown(e, s)}
-                      className="absolute flex cursor-move items-center rounded-md px-1.5 font-bold leading-tight"
-                      style={{
-                        left: `${s.x * 100}%`,
-                        top: `${s.y * 100}%`,
-                        height: `${s.h * 100}%`,
-                        maxWidth: `${(1 - s.x) * 100}%`,
-                        color: shapeColor(s),
-                        background: "rgba(255,255,255,0.92)",
-                        border: `${selectedIds.has(s.id) ? 2 : 1}px ${
-                          s.onReveal ? "dashed" : "solid"
-                        } ${shapeColor(s)}`,
-                        fontSize: "clamp(9px, 1.5vw, 15px)",
-                        whiteSpace: "nowrap",
-                      }}
-                    >
-                      {s.label}
-                    </span>
+                    />
                   ))}
 
                 {/* mask labels — annotations carry their own */}
@@ -1309,15 +1313,40 @@ export function OcclusionEditor() {
                         />
                       ));
                     }
+                    // Three handles: the right edge for width, the bottom
+                    // edge for height, the corner for both. A note you can
+                    // only resize diagonally is a note you can't make wide
+                    // and short.
                     return (
-                      <div
-                        onPointerDown={(e) => handleResizePointerDown(e, s)}
-                        className="absolute h-3.5 w-3.5 -translate-x-1/2 -translate-y-1/2 cursor-nwse-resize rounded-full border-2 border-white bg-slate-800"
-                        style={{
-                          left: `${(s.x + s.w) * 100}%`,
-                          top: `${(s.y + s.h) * 100}%`,
-                        }}
-                      />
+                      <>
+                        <div
+                          onPointerDown={(e) => handleResizePointerDown(e, s, "x")}
+                          title="Drag to change the width"
+                          className="absolute h-3.5 w-3.5 -translate-x-1/2 -translate-y-1/2 cursor-ew-resize rounded-full border-2 border-white bg-slate-500"
+                          style={{
+                            left: `${(s.x + s.w) * 100}%`,
+                            top: `${(s.y + s.h / 2) * 100}%`,
+                          }}
+                        />
+                        <div
+                          onPointerDown={(e) => handleResizePointerDown(e, s, "y")}
+                          title="Drag to change the height"
+                          className="absolute h-3.5 w-3.5 -translate-x-1/2 -translate-y-1/2 cursor-ns-resize rounded-full border-2 border-white bg-slate-500"
+                          style={{
+                            left: `${(s.x + s.w / 2) * 100}%`,
+                            top: `${(s.y + s.h) * 100}%`,
+                          }}
+                        />
+                        <div
+                          onPointerDown={(e) => handleResizePointerDown(e, s, "both")}
+                          title="Drag to resize"
+                          className="absolute h-3.5 w-3.5 -translate-x-1/2 -translate-y-1/2 cursor-nwse-resize rounded-full border-2 border-white bg-slate-800"
+                          style={{
+                            left: `${(s.x + s.w) * 100}%`,
+                            top: `${(s.y + s.h) * 100}%`,
+                          }}
+                        />
+                      </>
                     );
                   })()}
 
@@ -1365,9 +1394,9 @@ export function OcclusionEditor() {
                         : tool === "star"
                           ? "Click or drag to place a star. Stars are never asked as questions."
                           : tool === "note"
-                            ? "Drag a box and type your note. Notes stay visible on every card."
+                            ? "Drag a box and type your note. The text wraps and shrinks to fit — select it and drag the edge handles to resize."
                             : tool === "explain"
-                              ? "Drag a box and type the explanation. It stays hidden until the answer is revealed — link it to a mask to show it on just that card."
+                              ? "Drag a box and type the explanation. It stays hidden until the answer is revealed — link it to a mask to show it on just that card. The text shrinks to fit; drag the handles to resize the box."
                               : tool === "cover"
                               ? "Drag over anything that shouldn't be seen. Covers stay on for every card and are never asked."
                               : "Drag on the image to draw. Switch to the arrow tool to move/resize."}

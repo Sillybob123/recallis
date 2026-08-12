@@ -1,4 +1,5 @@
 import type { OcclusionShape, ShapeKind } from "../types";
+import { fitText, FIT_FONT_STACK } from "./fitText";
 
 export const DEFAULT_MASK_COLOR = "#2f6feb";
 
@@ -346,28 +347,52 @@ export function drawAnnotationOnCanvas(
   } else if (kind === "note") {
     const text = (s.label ?? "").trim();
     if (text) {
-      const size = Math.max(s.h * H * 0.72, 12);
-      ctx.font = `700 ${size}px -apple-system, "Segoe UI", Roboto, sans-serif`;
-      const metrics = ctx.measureText(text);
-      const padX = size * 0.4;
-      const padY = size * 0.28;
-      const boxW = metrics.width + padX * 2;
-      const boxH = size + padY * 2;
       const x = s.x * W;
       const y = s.y * H;
+      const boxW = s.w * W;
+      const boxH = s.h * H;
+      // The same fitting the screen uses, measured with this very context,
+      // so the exported card is the card you studied rather than a second
+      // guess at how the text should sit.
+      const fit = fitText(
+        text,
+        boxW,
+        boxH,
+        (candidate, size) => {
+          ctx.font = `700 ${size}px ${FIT_FONT_STACK}`;
+          return ctx.measureText(candidate).width;
+        },
+        { padding: 4 }
+      );
+
       // A plate behind the text, because a label that lands on a pale part
       // of an anatomy plate is unreadable without one.
-      ctx.fillStyle = "rgba(255,255,255,0.92)";
+      const radius = Math.min(6, boxW / 4, boxH / 4);
+      ctx.fillStyle = "rgba(255,255,255,0.93)";
       ctx.beginPath();
-      ctx.roundRect?.(x, y, boxW, boxH, size * 0.3);
-      if (!ctx.roundRect) ctx.rect(x, y, boxW, boxH);
+      if (ctx.roundRect) ctx.roundRect(x, y, boxW, boxH, radius);
+      else ctx.rect(x, y, boxW, boxH);
       ctx.fill();
       ctx.strokeStyle = color;
-      ctx.lineWidth = Math.max(size * 0.06, 1);
+      ctx.lineWidth = Math.max(boxH * 0.02, 1);
       ctx.stroke();
+
+      ctx.save();
+      // Clipped as well as fitted: if the box is too small for the smallest
+      // type, the text stops at the edge instead of running over the image.
+      ctx.beginPath();
+      ctx.rect(x, y, boxW, boxH);
+      ctx.clip();
       ctx.fillStyle = color;
-      ctx.textBaseline = "top";
-      ctx.fillText(text, x + padX, y + padY);
+      ctx.font = `700 ${fit.fontSize}px ${FIT_FONT_STACK}`;
+      ctx.textBaseline = "middle";
+      ctx.textAlign = "center";
+      const step = fit.fontSize * fit.lineHeight;
+      const top = y + boxH / 2 - (fit.lines.length * step) / 2 + step / 2;
+      fit.lines.forEach((line, i) => {
+        ctx.fillText(line, x + boxW / 2, top + i * step);
+      });
+      ctx.restore();
     }
   }
   ctx.restore();

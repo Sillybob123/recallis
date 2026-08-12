@@ -1,4 +1,6 @@
+import { useRef } from "react";
 import type { OcclusionShape } from "../types";
+import { NoteBox, useBoxSize } from "./NoteBox";
 import {
   annotationVisible,
   annotationWeight,
@@ -36,6 +38,9 @@ export function ShapeOverlay({
   revealed?: boolean;
 }) {
   const ctx = { revealed, unitShapeIds: targetIds };
+  // Notes are sized in pixels, so the overlay has to know how big it is.
+  const rootRef = useRef<HTMLDivElement>(null);
+  const box = useBoxSize(rootRef);
   // Text-box masks display their prompt while covered — HTML, not SVG <text>,
   // because the stretched 0-100 viewBox would distort glyphs.
   const prompts = shapes.filter(
@@ -52,7 +57,7 @@ export function ShapeOverlay({
     (s) => shapeKind(s) === "note" && s.label && annotationVisible(s, ctx)
   );
   return (
-    <div className="pointer-events-none absolute inset-0">
+    <div ref={rootRef} className="pointer-events-none absolute inset-0">
     <svg
       className="absolute inset-0 h-full w-full"
       viewBox="0 0 100 100"
@@ -120,23 +125,12 @@ export function ShapeOverlay({
       })}
     </svg>
     {notes.map((s) => (
-      <span
+      <NoteBox
         key={`note-${s.id}`}
-        className="absolute flex items-center rounded-md px-1.5 font-bold leading-tight"
-        style={{
-          left: `${s.x * 100}%`,
-          top: `${s.y * 100}%`,
-          height: `${s.h * 100}%`,
-          maxWidth: `${(1 - s.x) * 100}%`,
-          color: s.color ?? DEFAULT_ANNOTATION_COLOR,
-          background: "rgba(255,255,255,0.92)",
-          border: `1px solid ${s.color ?? DEFAULT_ANNOTATION_COLOR}`,
-          fontSize: "clamp(9px, 1.5vw, 15px)",
-          whiteSpace: "nowrap",
-        }}
-      >
-        {s.label}
-      </span>
+        shape={s}
+        containerWidth={box.width}
+        containerHeight={box.height}
+      />
     ))}
     {prompts.map((s) => (
       <span
