@@ -126,40 +126,49 @@ export function Layout({
                   button sits outside it, because an overflow container
                   clips any menu that hangs below it. */}
               <div className="scrollbar-none flex min-w-0 items-center gap-2 overflow-x-auto">
-              <NavPill to="/decks" active={inDecks} activeClass="bg-slate-800">
-                <Layers size={12} /> <span className="hidden sm:inline">Decks</span>
-              </NavPill>
-              <NavPill to="/notes" active={inNotes} activeClass="bg-blue-700">
-                <NotebookPen size={12} /> <span className="hidden sm:inline">Notes</span>
-              </NavPill>
-              <NavPill to="/planner" active={inPlanner} activeClass="bg-violet-700">
-                <CalendarCheck size={12} />{" "}
-                <span className="hidden sm:inline">Planner</span>
-              </NavPill>
+                {/* Where your material lives: notes you write, and the
+                    timetable you run against them. */}
+                <NavPill to="/notes" active={inNotes} activeClass="bg-blue-700">
+                  <NotebookPen size={12} />{" "}
+                  <span className="hidden sm:inline">Notes</span>
+                </NavPill>
+                <NavPill to="/planner" active={inPlanner} activeClass="bg-violet-700">
+                  <CalendarCheck size={12} />{" "}
+                  <span className="hidden sm:inline">Planner</span>
+                </NavPill>
 
-              <div className="flex overflow-hidden rounded-full border border-slate-200 text-xs font-semibold">
-                <Link
-                  to="/anki"
-                  className={`flex items-center gap-1 px-3 py-1.5 transition ${
-                    inAnki
-                      ? "bg-emerald-600 text-white"
-                      : "bg-white text-slate-500 hover:bg-slate-50"
-                  }`}
-                  title="Spaced repetition — cards come back over days"
-                >
-                  <Repeat size={12} /> <span className="hidden sm:inline">Anki</span>
-                </Link>
-                <Link
-                  to="/quizlet"
-                  className={`flex items-center gap-1 px-3 py-1.5 transition ${
-                    inQuizlet
-                      ? "bg-red-600 text-white"
-                      : "bg-white text-slate-500 hover:bg-slate-50"
-                  }`}
-                  title="Cram freely without touching your schedule"
-                >
-                  <Zap size={12} /> <span className="hidden sm:inline">Quizlet</span>
-                </Link>
+                <span className="mx-1 h-4 w-px shrink-0 bg-slate-200" />
+
+                {/* Studying: the decks, and the two ways of going through
+                    them. Decks belongs beside those rather than beside the
+                    notes — it's what Anki and Quizlet both act on. */}
+                <NavPill to="/decks" active={inDecks} activeClass="bg-slate-800">
+                  <Layers size={12} /> <span className="hidden sm:inline">Decks</span>
+                </NavPill>
+
+                <div className="flex shrink-0 overflow-hidden rounded-full border border-slate-200 text-xs font-semibold">
+                  <Link
+                    to="/anki"
+                    className={`flex items-center gap-1 px-3 py-1.5 transition ${
+                      inAnki
+                        ? "bg-emerald-600 text-white"
+                        : "bg-white text-slate-500 hover:bg-slate-50"
+                    }`}
+                    title="Spaced repetition — cards come back over days"
+                  >
+                    <Repeat size={12} /> <span className="hidden sm:inline">Anki</span>
+                  </Link>
+                  <Link
+                    to="/quizlet"
+                    className={`flex items-center gap-1 px-3 py-1.5 transition ${
+                      inQuizlet
+                        ? "bg-red-600 text-white"
+                        : "bg-white text-slate-500 hover:bg-slate-50"
+                    }`}
+                    title="Cram freely without touching your schedule"
+                  >
+                    <Zap size={12} /> <span className="hidden sm:inline">Quizlet</span>
+                  </Link>
                 </div>
               </div>
 
