@@ -112,10 +112,11 @@ function harness(store: Store, broken: string[] = []): Harness {
     h.gets++;
     if (broken.includes(path)) return json({ error: "boom" }, 500);
 
-    // A collection listing rather than a single document.
-    if (!path.includes("/") && path === "emailReminders") {
+    // A collection listing rather than a single document: any path with no
+    // slash in it names a top-level collection.
+    if (!path.includes("/")) {
       const documents = Object.entries(store)
-        .filter(([p]) => p.startsWith("emailReminders/"))
+        .filter(([p]) => p.startsWith(`${path}/`))
         .map(([p, fields]) => ({
           name: `projects/med-quizlet/databases/(default)/documents/${p}`,
           fields: encodeFields(fields),
@@ -367,6 +368,51 @@ console.log("\nwith no way to send at all:");
     report.failures[0]
   );
   check("and doesn't record a send that never happened", h.patches.length === 0);
+}
+
+// ---------- feedback ----------
+console.log("\ndelivering feedback:");
+{
+  const h = harness({
+    "feedback/f1": {
+      uid: "u1",
+      name: "A Student",
+      email: "a@som.umaryland.edu",
+      message: "The planner keeps scrolling to the top",
+      page: "/planner",
+      createdAt: evening,
+      sent: false,
+    },
+    "feedback/f2": { uid: "u1", name: "Older", message: "already handled", sent: true },
+  });
+  h.env.FEEDBACK_TO = "somewhere@example.com";
+  const report = await run(h.env, evening);
+
+  check("the unsent one goes out", report.feedback === 1, `${report.feedback}`);
+  check("to the configured address", h.sent[0]?.to === "somewhere@example.com");
+  check("named in the subject", h.sent[0]?.subject.includes("A Student"), h.sent[0]?.subject);
+  check("with the message in the body", h.sent[0]?.text.includes("keeps scrolling"));
+  check("and the page they were on", h.sent[0]?.text.includes("/planner"));
+  check(
+    "one already delivered is left alone",
+    h.sent.length === 1,
+    "otherwise every run re-sends the lot"
+  );
+  check(
+    "and it is marked as delivered",
+    h.patches.some((p) => p.path === "feedback/f1" && p.mask.includes("sent"))
+  );
+}
+
+console.log("\nwith no destination configured:");
+{
+  const h = harness({
+    "feedback/f1": { uid: "u1", name: "A", message: "hello", sent: false },
+  });
+  const report = await run(h.env, evening);
+  check("nothing is sent", report.feedback === 0);
+  check("and nothing fails", report.failures.length === 0, "quiet, not broken");
+  check("the note is left unsent for later", h.patches.length === 0);
 }
 
 console.log(failures === 0 ? "\nAll cases passed." : `\n${failures} failing.`);

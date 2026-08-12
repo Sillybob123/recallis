@@ -877,6 +877,31 @@ export async function setPlannerProgressBulk(
   );
 }
 
+// ---------- Feedback ----------
+
+/**
+ * Posts a note from the app.
+ *
+ * Deliberately write-only: the rules let you create one and let nobody read
+ * any back, and where it ends up is decided by the scheduled sender, which
+ * holds the destination as a secret. Nothing about the recipient is in this
+ * app or in its source.
+ */
+export async function sendFeedback(
+  uid: string,
+  entry: { name: string; email: string; message: string; page: string }
+) {
+  await addDoc(collection(db, "feedback"), {
+    uid,
+    name: entry.name.slice(0, 120),
+    email: entry.email.slice(0, 200),
+    message: entry.message.slice(0, 5000),
+    page: entry.page.slice(0, 300),
+    createdAt: Date.now(),
+    sent: false,
+  });
+}
+
 // ---------- Email reminders ----------
 // These live in a top-level collection rather than under users/{uid} because
 // the sender has to find everyone with reminders due without walking every

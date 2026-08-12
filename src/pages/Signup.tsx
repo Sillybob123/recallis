@@ -5,6 +5,11 @@ import { FirebaseNotConfigured } from "../components/ProtectedRoute";
 import { isFirebaseConfigured } from "../firebase";
 import { friendlyAuthError } from "./Login";
 import {
+  ALLOWED_EMAIL_DOMAIN,
+  ALLOWED_EMAIL_EXAMPLE,
+  signupDomainError,
+} from "../lib/access";
+import {
   AuthLayout,
   AuthField,
   AUTH_BUTTON_CLASS,
@@ -25,6 +30,11 @@ export function Signup() {
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
     setError("");
+    const domainProblem = signupDomainError(email);
+    if (domainProblem) {
+      setError(domainProblem);
+      return;
+    }
     setBusy(true);
     try {
       await signUp(email, password, name);
@@ -39,7 +49,7 @@ export function Signup() {
   return (
     <AuthLayout
       title="Create your account"
-      subtitle="Free, private, and ready in a few seconds."
+      subtitle={`Open to the University of Maryland School of Medicine — sign up with your ${ALLOWED_EMAIL_DOMAIN} address.`}
       footer={
         <>
           Already have an account?{" "}
@@ -61,11 +71,11 @@ export function Signup() {
           onChange={(e) => setName(e.target.value)}
         />
         <AuthField
-          label="Email"
+          label="School email"
           type="email"
           required
           autoComplete="email"
-          placeholder="you@example.com"
+          placeholder={ALLOWED_EMAIL_EXAMPLE}
           value={email}
           onChange={(e) => setEmail(e.target.value)}
         />

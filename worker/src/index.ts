@@ -38,6 +38,11 @@ interface Env {
   MAIL_FROM_NAME?: string;
   /** optional: set this secret to send through Resend instead of Cloudflare */
   RESEND_API_KEY?: string;
+  /**
+   * Where feedback goes. A secret, not a var: the repository is public, and
+   * an address in wrangler.jsonc would be an address on the internet.
+   */
+  FEEDBACK_TO?: string;
   EMAIL?: {
     send(message: {
       to: string | string[];
@@ -198,7 +203,63 @@ export interface RunReport {
   served: number;
   sent: number;
   deferred: number;
+  feedback: number;
   failures: string[];
+}
+
+/**
+ * Posts anything written through the feedback form and marks it delivered.
+ *
+ * Kept separate from the reminder loop so a mail failure on one can't stop
+ * the other, and skipped entirely when no destination is configured — an
+ * unconfigured install should be quiet, not broken.
+ */
+async function deliverFeedback(
+  db: Firestore,
+  env: Env,
+  now: number,
+  report: RunReport
+) {
+  if (!env.FEEDBACK_TO) return;
+  const docs = await db.list("feedback").catch(() => []);
+  for (const doc of docs) {
+    if (doc.fields.sent === true) continue;
+    if (db.requests >= MAX_REQUESTS) break;
+    const f = doc.fields as {
+      name?: string;
+      email?: string;
+      message?: string;
+      page?: string;
+      createdAt?: number;
+    };
+    const when = new Date(Number(f.createdAt ?? now)).toUTCString();
+    try {
+      await send(
+        env,
+        {
+          kind: "custom",
+          key: `feedback-${doc.id}`,
+          subject: `Recallis feedback from ${f.name || "someone"}`,
+          heading: f.name ? `${f.name} wrote in` : "New feedback",
+          intro: f.message ?? "",
+          sections: [
+            {
+              title: "Who and where",
+              lines: [
+                { title: f.name || "(no name)", meta: f.email || "(no address)" },
+                { title: f.page || "/", meta: when },
+              ],
+            },
+          ],
+        },
+        env.FEEDBACK_TO
+      );
+      await db.patch(`feedback/${doc.id}`, { sent: true, sentAt: now }, ["sent", "sentAt"]);
+      report.feedback++;
+    } catch (err) {
+      report.failures.push(`feedback ${doc.id}: ${(err as Error).message}`);
+    }
+  }
 }
 
 /**
@@ -220,8 +281,11 @@ export async function run(env: Env, now = Date.now()): Promise<RunReport> {
     served: 0,
     sent: 0,
     deferred: 0,
+    feedback: 0,
     failures: [],
   };
+
+  await deliverFeedback(db, env, now, report);
 
   if (users.length === 0) return report;
 
@@ -291,6 +355,7 @@ export default {
     console.log(
       `${report.accounts} accounts, ${report.served} with something due, ` +
         `${report.sent} emails sent` +
+        (report.feedback ? `, ${report.feedback} feedback delivered` : "") +
         (report.deferred ? `, ${report.deferred} deferred to the next run` : "")
     );
     for (const f of report.failures) console.error(f);

@@ -1,14 +1,16 @@
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import {
   CalendarCheck,
   Layers,
   LogOut,
+  MessageSquare,
   NotebookPen,
   Repeat,
   Zap,
 } from "lucide-react";
 import { useAuth } from "../contexts/AuthContext";
+import { FeedbackModal } from "./FeedbackModal";
 import { useStudyMode } from "../contexts/StudyModeContext";
 
 export function Layout({
@@ -21,6 +23,7 @@ export function Layout({
 }) {
   const { user, logOut } = useAuth();
   const { studyMode } = useStudyMode();
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
   const navigate = useNavigate();
   const { pathname } = useLocation();
 
@@ -153,6 +156,14 @@ export function Layout({
                 </Link>
               </div>
 
+              <button
+                onClick={() => setFeedbackOpen(true)}
+                title="Tell me what's broken or missing"
+                className="flex shrink-0 items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-slate-600 transition hover:border-slate-300 hover:bg-slate-50"
+              >
+                <MessageSquare size={14} />
+                <span className="hidden sm:inline">Feedback</span>
+              </button>
               <span className="ml-1 hidden text-slate-500 lg:inline">
                 {user.displayName || user.email}
               </span>
@@ -170,6 +181,7 @@ export function Layout({
           )}
         </div>
       </header>
+      {feedbackOpen && <FeedbackModal onClose={() => setFeedbackOpen(false)} />}
       <main
         className={
           wide ? "px-3 pb-3 pt-3" : "mx-auto max-w-6xl px-4 py-8 sm:px-6"
