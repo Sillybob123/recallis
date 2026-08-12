@@ -936,7 +936,7 @@ function SessionEditor({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
-      <div className="w-full max-w-md rounded-2xl bg-white p-5 shadow-xl">
+      <div className="max-h-[90vh] w-full max-w-md overflow-y-auto rounded-2xl bg-white p-5 shadow-xl">
         <div className="mb-4 flex items-start justify-between gap-3">
           <div>
             <h2 className="text-lg font-bold text-slate-900">Fix this session</h2>

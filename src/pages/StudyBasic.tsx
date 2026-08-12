@@ -1826,7 +1826,10 @@ export function StudyBasic() {
   return (
     <Layout>
       {/* One compact line: back · what you're studying · progress · settings */}
-      <div className="mb-4 flex items-center gap-2 sm:gap-3">
+      {/* Up to seven controls plus a progress bar. On a phone they can't sit
+          on one line, so the row wraps and the bar drops to its own — better
+          than a header that runs off the side of the screen. */}
+      <div className="mb-4 flex flex-wrap items-center gap-2 sm:gap-3">
         <BackLink deckId={deckId} navigate={navigate} canGoBack={canGoBack} inline />
         {groupName && (
           <span
@@ -1842,7 +1845,7 @@ export function StudyBasic() {
             </span>
           </span>
         )}
-        <div className="h-2 min-w-[6rem] flex-1 overflow-hidden rounded-full bg-slate-200">
+        <div className="order-last h-2 w-full shrink-0 basis-full overflow-hidden rounded-full bg-slate-200 sm:order-none sm:w-auto sm:min-w-[6rem] sm:flex-1 sm:basis-auto">
           <div
             className={`h-full rounded-full transition-all ${
               studyMode === "anki" ? "bg-emerald-600" : "bg-red-600"

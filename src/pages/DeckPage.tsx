@@ -124,8 +124,10 @@ export function DeckPage() {
       </button>
 
       <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900">
+        <div className="min-w-0">
+          {/* A deck path can be long and has no spaces to break at, so it
+              wraps rather than pushing the page wider than the screen. */}
+          <h1 className="break-words text-2xl font-bold text-slate-900">
             {deck ? normalizeDeckPath(deck.name) : "Deck"}
           </h1>
           <p className="text-sm text-slate-500">

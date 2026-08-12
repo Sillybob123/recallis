@@ -335,7 +335,7 @@ function DeckRowMenu({
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
           <div
-            className="fixed z-50 w-44 overflow-hidden rounded-xl border border-slate-200 bg-white py-1 shadow-xl"
+            className="fixed z-50 max-h-[70vh] w-44 overflow-y-auto rounded-xl border border-slate-200 bg-white py-1 shadow-xl"
             style={{ top: pos.top, left: pos.left }}
           >
             <MenuItem

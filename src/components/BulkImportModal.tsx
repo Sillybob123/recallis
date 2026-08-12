@@ -34,7 +34,7 @@ export function BulkImportModal({
 
   return (
     <div className="fixed inset-0 z-30 flex items-center justify-center bg-slate-900/40 p-4">
-      <div className="flex max-h-[90vh] w-full max-w-2xl flex-col rounded-2xl bg-white p-6 shadow-xl">
+      <div className="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-y-auto rounded-2xl bg-white p-6 shadow-xl">
         <div className="mb-4 flex items-center justify-between">
           <h2 className="text-lg font-bold text-slate-900">Bulk import</h2>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-600">

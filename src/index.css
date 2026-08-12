@@ -15,6 +15,14 @@ body {
   color: #1a1d29;
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
+  /*
+    Almost everything on screen is text somebody else typed: deck paths with
+    no spaces, chemical names, pasted URLs. Left alone a single long word
+    sets the width of its container and pushes a phone screen sideways. This
+    is the one property that stops that happening everywhere at once, and it
+    only affects words that genuinely have nowhere to break.
+  */
+  overflow-wrap: break-word;
 }
 
 * {

@@ -155,7 +155,7 @@ export function AnkiHome() {
           <Stat label="New" value={totals.newCount} color="text-sky-500" />
           <Stat label="Learn" value={totals.learnCount} color="text-orange-500" />
           <Stat label="Due" value={totals.dueCount} color="text-emerald-600" />
-          <div className="ml-auto flex items-center gap-2">
+          <div className="flex w-full flex-wrap items-center gap-2 sm:ml-auto sm:w-auto">
             <button
               onClick={() => setShowRemote(true)}
               title="Use a Bluetooth clicker or controller to flip and grade cards"

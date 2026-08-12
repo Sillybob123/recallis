@@ -502,14 +502,14 @@ export function NoteEditorPage() {
 
   return (
     <Layout wide>
-      <div className="mb-2 flex items-center justify-between gap-3">
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
         <button
           onClick={() => navigate("/notes")}
           className="flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-800"
         >
           <ArrowLeft size={15} /> All notes
         </button>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-2 sm:gap-3">
           {recovered && (
             <span
               className="flex items-center gap-1.5 rounded-lg bg-amber-50 px-2 py-1 text-xs font-medium text-amber-700"
@@ -612,7 +612,12 @@ export function NoteEditorPage() {
         up in the lecture notes as a labelled block — so the left column reads
         as one running record of the lecture.
       */}
-      <div className="grid h-[calc(100vh-9.5rem)] min-h-[34rem] grid-cols-1 gap-3 lg:grid-cols-[minmax(0,46fr)_minmax(0,32fr)_minmax(0,22fr)]">
+      {/* On a wide screen the three columns share one viewport-tall row. On a
+          phone they stack, and a fixed height would divide that same height
+          three ways — a slide, its notes and the lecture all in a third of a
+          screen each. So the height only applies once the columns exist; below
+          that each panel takes what it needs and the page scrolls. */}
+      <div className="grid grid-cols-1 gap-3 lg:h-[calc(100vh-9.5rem)] lg:min-h-[34rem] lg:grid-cols-[minmax(0,46fr)_minmax(0,32fr)_minmax(0,22fr)]">
         {/* ---------- slide, then the lecture as a whole ---------- */}
         <div className="order-1 flex min-h-0 flex-col gap-3">
           {note.slides.length > 0 ? (
@@ -787,7 +792,7 @@ export function NoteEditorPage() {
         </div>
 
         {/* ---------- this slide ---------- */}
-        <section className="order-2 flex min-h-0 flex-col overflow-hidden rounded-2xl border border-slate-200 border-t-2 border-t-indigo-500 bg-white shadow-md">
+        <section className="order-2 flex min-h-[22rem] flex-col overflow-hidden rounded-2xl border border-slate-200 border-t-2 border-t-indigo-500 bg-white shadow-md lg:min-h-0">
           <div className="flex shrink-0 items-center justify-between gap-2 border-b border-slate-100 px-3 py-1.5">
             <p className="text-[11px] font-bold uppercase tracking-wide text-slate-400">
               {note.slides.length > 0 ? `Slide ${slideIndex + 1} notes` : "Slide notes"}
@@ -841,7 +846,7 @@ export function NoteEditorPage() {
         </section>
 
         {/* ---------- getting anywhere else ---------- */}
-        <aside className="order-3 flex min-h-0 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+        <aside className="order-3 flex min-h-[18rem] flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm lg:min-h-0">
           <div className="flex items-center gap-0.5 border-b border-slate-100 px-1.5 py-1.5">
             {(
               [
