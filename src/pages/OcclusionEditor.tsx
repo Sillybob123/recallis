@@ -14,6 +14,7 @@ import {
   Pentagon,
   Redo2,
   Square,
+  Link2,
   Star,
   Trash2,
   Undo2,
@@ -37,6 +38,7 @@ import {
   DEFAULT_MASK_COLOR,
   isAnnotation,
   isCardShape,
+  isCompanion,
   isCover,
   polygonBounds,
   shapeColor,
@@ -186,6 +188,11 @@ export function OcclusionEditor() {
    */
   const [revealMode, setRevealMode] = useState<"hideAll" | "hideOne">("hideAll");
   const [annotationColor, setAnnotationColor] = useState(DEFAULT_ANNOTATION_COLOR);
+  /**
+   * The mask currently being attached to other masks. While this is set,
+   * clicking a mask toggles whether this one appears on that mask's card.
+   */
+  const [linking, setLinking] = useState<string | null>(null);
   // The drag handlers are bound once per drag, so they read the live shapes
   // through a ref rather than a stale closure.
   const shapesRef = useRef<OcclusionShape[]>([]);
@@ -411,6 +418,7 @@ export function OcclusionEditor() {
         e.preventDefault();
         deleteSelected();
       } else if (e.key === "Escape") {
+        setLinking(null);
         setPolyDraft([]);
         setPolyHover(null);
         setSelectedIds(new Set());
@@ -505,6 +513,22 @@ export function OcclusionEditor() {
   function handleShapePointerDown(e: React.PointerEvent, shape: OcclusionShape) {
     if (tool === "polygon") return; // clicks pass through while drawing
     e.stopPropagation();
+    if (linking) {
+      if (shape.id === linking) return;
+      if (!isCardShape(shape)) return; // only a real card can be a host
+      snapshot();
+      setShapes((prev) =>
+        prev.map((s) => {
+          if (s.id !== linking) return s;
+          const current = s.showsWith ?? [];
+          const next = current.includes(shape.id)
+            ? current.filter((id) => id !== shape.id)
+            : [...current, shape.id];
+          return { ...s, showsWith: next.length ? next : undefined };
+        })
+      );
+      return;
+    }
     // With the text tool active, clicking an existing mask turns it into a
     // text box (or edits the prompt of one that already is).
     if (tool === "textbox" && !isAnnotation(shape)) {
@@ -1065,11 +1089,29 @@ export function OcclusionEditor() {
                         />
                       );
                     }
+                    // While attaching, the masks this one already follows
+                    // are ringed, so the set you're building is visible on
+                    // the image rather than only in the sidebar.
+                    const attached =
+                      linking !== null &&
+                      (shapes
+                        .find((x) => x.id === linking)
+                        ?.showsWith?.includes(s.id) ??
+                        false);
                     const common = {
                       fill: shapeColor(s),
-                      fillOpacity: shapeOpacity(s) * (selected ? 0.85 : 1),
-                      stroke: selected ? "#1e293b" : "rgba(255,255,255,0.7)",
-                      strokeWidth: selected ? 2 : 1,
+                      fillOpacity:
+                        shapeOpacity(s) *
+                        (selected ? 0.85 : isCompanion(s) ? 0.6 : 1),
+                      stroke: attached
+                        ? "#4f46e5"
+                        : selected
+                          ? "#1e293b"
+                          : isCompanion(s)
+                            ? "#4f46e5"
+                            : "rgba(255,255,255,0.7)",
+                      strokeDasharray: isCompanion(s) && !attached ? "5 3" : undefined,
+                      strokeWidth: attached ? 3 : selected ? 2 : 1,
                       vectorEffect: "non-scaling-stroke" as const,
                       style: { pointerEvents: "auto" as const, cursor: "move" },
                       onPointerDown: (e: React.PointerEvent) =>
@@ -1273,6 +1315,26 @@ export function OcclusionEditor() {
                 ))}
               </div>
 
+              {linking && (
+                <div className="mt-2 flex flex-wrap items-center gap-2 rounded-lg border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs text-indigo-800">
+                  <Link2 size={14} className="shrink-0" />
+                  <span className="min-w-0 flex-1">
+                    Click the masks that this one should appear with. It stays
+                    off every other card, and is never asked on its own.
+                    {(() => {
+                      const n = shapes.find((x) => x.id === linking)?.showsWith?.length ?? 0;
+                      return n ? ` Attached to ${n} so far.` : "";
+                    })()}
+                  </span>
+                  <button
+                    onClick={() => setLinking(null)}
+                    className="shrink-0 rounded-md bg-indigo-600 px-2.5 py-1 font-semibold text-white hover:bg-indigo-700"
+                  >
+                    Done
+                  </button>
+                </div>
+              )}
+
               <p className="mt-2 text-xs text-slate-400">
                 {tool === "polygon"
                   ? "Click each corner. Click the first point again (or press Enter) to close."
@@ -1346,6 +1408,16 @@ export function OcclusionEditor() {
                         cover
                       </span>
                     )}
+                    {isCompanion(s) && (
+                      <span
+                        className="shrink-0 rounded bg-indigo-100 px-1 text-[10px] font-bold text-indigo-700"
+                        title={`Only covered while ${s.showsWith!.length} particular mask${
+                          s.showsWith!.length === 1 ? " is" : "s are"
+                        } being asked`}
+                      >
+                        with {s.showsWith!.length}
+                      </span>
+                    )}
                     {isAnnotation(s) && (
                       <span className="shrink-0 rounded bg-rose-100 px-1 text-[10px] font-bold text-rose-600">
                         mark
@@ -1363,7 +1435,32 @@ export function OcclusionEditor() {
                       placeholder="Label (optional)"
                       className="min-w-0 flex-1 bg-transparent text-sm outline-none"
                     />
-                    {!isAnnotation(s) && (
+                    {!isAnnotation(s) && !isCover(s) && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setLinking(linking === s.id ? null : s.id);
+                          setSelectedIds(new Set([s.id]));
+                        }}
+                        title={
+                          isCompanion(s)
+                            ? `Only shown on ${s.showsWith!.length} card${
+                                s.showsWith!.length === 1 ? "" : "s"
+                              } — click to change which`
+                            : "Only show this mask on certain cards"
+                        }
+                        className={`shrink-0 ${
+                          linking === s.id
+                            ? "text-indigo-600"
+                            : isCompanion(s)
+                              ? "text-indigo-500"
+                              : "text-slate-300 hover:text-slate-600"
+                        }`}
+                      >
+                        <Link2 size={14} />
+                      </button>
+                    )}
+                    {!isAnnotation(s) && !isCompanion(s) && (
                       <button
                         onClick={(e) => {
                           e.stopPropagation();

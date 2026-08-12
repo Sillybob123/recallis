@@ -32,9 +32,18 @@ export function isCover(s: OcclusionShape): boolean {
   return s.cover === true;
 }
 
+/**
+ * A mask that only appears alongside particular other masks. It exists to
+ * cover something that would give one specific card away, so it is never a
+ * card itself.
+ */
+export function isCompanion(s: OcclusionShape): boolean {
+  return Array.isArray(s.showsWith) && s.showsWith.length > 0;
+}
+
 /** Whether this shape is asked as a question. Covers and marks are not. */
 export function isCardShape(s: OcclusionShape): boolean {
-  return !isAnnotation(s) && !isCover(s);
+  return !isAnnotation(s) && !isCover(s) && !isCompanion(s);
 }
 
 export function coversOf(shapes: OcclusionShape[]): OcclusionShape[] {
@@ -191,6 +200,70 @@ export function arrowHead(
     to,
     { x: to.x - Math.cos(angle + spread) * size, y: to.y - Math.sin(angle + spread) * size },
   ];
+}
+
+/** The companions that belong to the masks currently being asked. */
+export function companionsFor(
+  shapes: OcclusionShape[],
+  unitShapeIds: Iterable<string>
+): Set<string> {
+  const asked = new Set(unitShapeIds);
+  const out = new Set<string>();
+  for (const s of shapes) {
+    if (isCompanion(s) && s.showsWith!.some((id) => asked.has(id))) out.add(s.id);
+  }
+  return out;
+}
+
+export interface OcclusionVisibility {
+  /** drawn filled */
+  hidden: Set<string>;
+  /** the masks being asked, drawn in the target colour */
+  target: Set<string>;
+  /** on the answer, outlined to show what was covered */
+  outline?: Set<string>;
+}
+
+/**
+ * What is covered on a given card.
+ *
+ * Shared by the study view and the Anki export so the exported image is the
+ * card you actually studied. Covers are left out here — they are painted
+ * unconditionally by whoever draws, which is what "never revealed" means.
+ */
+export function occlusionVisibility(
+  shapes: OcclusionShape[],
+  unitShapeIds: Iterable<string>,
+  mode: "hideOne" | "hideAll",
+  revealed: boolean
+): OcclusionVisibility {
+  const target = new Set(unitShapeIds);
+  const companions = companionsFor(shapes, target);
+  const askable = shapes.filter((s) => !isAnnotation(s));
+
+  if (!revealed) {
+    return {
+      target,
+      hidden:
+        mode === "hideOne"
+          ? new Set([...target, ...companions])
+          : new Set(askable.map((s) => s.id)),
+    };
+  }
+  return {
+    target,
+    outline: target,
+    hidden:
+      mode === "hideAll"
+        ? // The answer is showing, so this card's masks lift — and so do the
+          // companions that were only hiding to protect this question.
+          new Set(
+            askable
+              .map((s) => s.id)
+              .filter((id) => !target.has(id) && !companions.has(id))
+          )
+        : new Set(),
+  };
 }
 
 /** Fills a shape onto a canvas whose size is the full image, in pixels. */

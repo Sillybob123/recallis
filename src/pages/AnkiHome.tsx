@@ -1,15 +1,21 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { ArrowRight, CalendarClock, Clock, Layers, Search } from "lucide-react";
+import { ArrowRight, CalendarClock, Clock, Gamepad2, Layers, Search } from "lucide-react";
 import { useAuth } from "../contexts/AuthContext";
 import { useStudyMode } from "../contexts/StudyModeContext";
 import { Layout } from "../components/Layout";
 import { DeckRows } from "../components/DeckTree";
 import { StudySettingsModal } from "../components/StudySettingsModal";
+import { RemoteSetup } from "../components/RemoteSetup";
 import { DeleteDeckModal } from "../components/DeleteDeckModal";
 import { watchDecks } from "../lib/firestore";
 import { computeAllDeckCounts, type DeckCounts } from "../lib/deckCounts";
-import { getTodayAnkiStats, loadAnkiSettings, loadQuizletSettings } from "../lib/settings";
+import {
+  getTodayAnkiStats,
+  loadAnkiSettings,
+  loadQuizletSettings,
+  loadRemoteMapping,
+} from "../lib/settings";
 import { buildDeckTree, type DeckNode } from "../lib/deckPath";
 import type { Deck } from "../types";
 
@@ -19,6 +25,8 @@ export function AnkiHome() {
   const [decks, setDecks] = useState<Deck[] | null>(null);
   const [counts, setCounts] = useState<Map<string, DeckCounts>>(new Map());
   const [showOptions, setShowOptions] = useState(false);
+  const [showRemote, setShowRemote] = useState(false);
+  const [remoteMapping, setRemoteMapping] = useState(loadRemoteMapping);
   const [deleting, setDeleting] = useState<DeckNode | null>(null);
   const [collapsed, setCollapsed] = useState<Set<string>>(() => {
     try {
@@ -117,6 +125,14 @@ export function AnkiHome() {
 
   return (
     <Layout>
+      {showRemote && (
+        <RemoteSetup
+          connect
+          mapping={remoteMapping}
+          onChange={setRemoteMapping}
+          onClose={() => setShowRemote(false)}
+        />
+      )}
       <div className="mb-5">
         <h1 className="text-2xl font-bold text-slate-900">Anki</h1>
         <p className="text-sm text-slate-500">
@@ -131,6 +147,13 @@ export function AnkiHome() {
           <Stat label="Learn" value={totals.learnCount} color="text-orange-500" />
           <Stat label="Due" value={totals.dueCount} color="text-emerald-600" />
           <div className="ml-auto flex items-center gap-2">
+            <button
+              onClick={() => setShowRemote(true)}
+              title="Use a Bluetooth clicker or controller to flip and grade cards"
+              className="flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3.5 py-2.5 text-sm font-semibold text-slate-600 transition hover:bg-slate-50"
+            >
+              <Gamepad2 size={14} /> Connect remote
+            </button>
             <Link
               to="/browse"
               className="flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3.5 py-2.5 text-sm font-semibold text-slate-600 transition hover:bg-slate-50"

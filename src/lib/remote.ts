@@ -291,6 +291,57 @@ export function shouldPreventDefault(action: RemoteAction | null): boolean {
   return action !== null;
 }
 
+/**
+ * The 8BitDo Zero 2 in keyboard mode sends exactly these letters and
+ * nothing else — C through O with L missing. Seeing one of them from a
+ * device nobody is typing on is a strong enough signal to name the remote.
+ */
+const EIGHTBITDO_LETTERS = new Set(["c", "d", "e", "f", "g", "h", "i", "j", "k", "m", "n", "o"]);
+
+export interface Detection {
+  presetId: string;
+  name: string;
+  why: string;
+}
+
+/**
+ * Guesses which remote just sent a key, so that connecting one is a matter
+ * of pressing a button rather than knowing what a Zero 2 emits.
+ */
+export function detectFromKey(key: string): Detection | null {
+  const k = normalizeKey(key);
+  if (k.length === 1 && EIGHTBITDO_LETTERS.has(k)) {
+    return {
+      presetId: "8bitdo",
+      name: "8BitDo Zero 2 (keyboard mode)",
+      why: `It sent the letter ${k.toUpperCase()} — that family of remotes sends letters C to O instead of the keys its buttons are labelled with.`,
+    };
+  }
+  if (k === "pagedown" || k === "pageup") {
+    return {
+      presetId: "clicker",
+      name: "Presentation clicker",
+      why: "It sent Page Down/Page Up, which is what a slide pointer sends.",
+    };
+  }
+  if (k === " " || k === "enter" || k.startsWith("arrow")) {
+    return {
+      presetId: "default",
+      name: "Keyboard-style remote",
+      why: `It sent ${keyLabel(k)}, which already works.`,
+    };
+  }
+  return null;
+}
+
+export function detectFromButton(padId: string): Detection {
+  return {
+    presetId: "default",
+    name: padId || "Controller",
+    why: "Your browser sees it as a controller, so it works directly — none of the Joy2Key or Karabiner remapping the desktop Anki guides describe is needed.",
+  };
+}
+
 /** Keys the operating system takes before a web page ever sees them. */
 export const UNREACHABLE_KEYS =
   "Volume up and volume down. Camera-shutter remotes like the AB Shutter 3 send those, and no website can read them — the phone changes its volume instead. Those remotes work in the Anki app but not in a browser.";

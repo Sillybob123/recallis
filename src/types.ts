@@ -96,6 +96,13 @@ export interface OcclusionShape {
    * want giving the answer away while you're being asked something else.
    */
   cover?: boolean;
+  /**
+   * Ids of the masks this one accompanies. A shape with this set is never
+   * asked on its own; it is covered only while one of those masks is the
+   * question. For the neighbouring label that would give this particular
+   * card away, but is fair game on every other card.
+   */
+  showsWith?: string[];
 }
 
 export interface OcclusionSheet {

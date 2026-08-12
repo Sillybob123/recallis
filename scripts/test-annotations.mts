@@ -5,8 +5,11 @@
 import {
   annotationsOf,
   coversOf,
+  companionsFor,
   isCardShape,
+  isCompanion,
   isCover,
+  occlusionVisibility,
   arrowEnds,
   arrowHead,
   boxesIntersect,
@@ -119,6 +122,72 @@ console.log("\ncovers:");
   ]);
   check("a group of one mask and one cover is one card", grouped.length === 1);
   check("made of just the mask", grouped[0].shapeIds.join() === "m1");
+}
+
+// ---------- masks that belong to one card ----------
+// A label next to the structure you're asking about gives that one card
+// away, but is perfectly fair on every other card. So it can be attached to
+// specific masks: covered while they're asked, absent otherwise, never a
+// question itself.
+console.log("\nmasks tied to particular cards:");
+{
+  const m1 = box("m1", { x: 0.1, y: 0.1, w: 0.1, h: 0.1 });
+  const m2 = box("m2", { x: 0.4, y: 0.1, w: 0.1, h: 0.1 });
+  const helper = box("h1", { x: 0.7, y: 0.1, w: 0.1, h: 0.1, showsWith: ["m1"] });
+  const shapes = [m1, m2, helper];
+
+  check("a companion is recognised", isCompanion(helper));
+  check("an ordinary mask isn't", !isCompanion(m1));
+  check("and a companion is never asked", !isCardShape(helper));
+  check(
+    "so the sheet makes two cards, not three",
+    buildUnits(shapes).map((u) => u.key).join() === "m1,m2"
+  );
+
+  check("it is found for the card it belongs to", [...companionsFor(shapes, ["m1"])].join() === "h1");
+  check("and not for any other", companionsFor(shapes, ["m2"]).size === 0);
+
+  // hideOne: only the asked mask is covered, so the companion matters most.
+  const askingM1 = occlusionVisibility(shapes, ["m1"], "hideOne", false);
+  check(
+    "asking m1 covers m1 and its companion",
+    [...askingM1.hidden].sort().join() === "h1,m1",
+    [...askingM1.hidden].sort().join()
+  );
+  check("but only m1 is the question", [...askingM1.target].join() === "m1");
+  const askingM2 = occlusionVisibility(shapes, ["m2"], "hideOne", false);
+  check(
+    "asking m2 leaves the companion off entirely",
+    [...askingM2.hidden].join() === "m2",
+    "it isn't covering anything on a card it has nothing to do with"
+  );
+
+  const answered = occlusionVisibility(shapes, ["m1"], "hideOne", true);
+  check("on the answer nothing is covered", answered.hidden.size === 0);
+  check("and the asked mask is outlined", [...(answered.outline ?? [])].join() === "m1");
+
+  // hideAll: everything covered on the question either way.
+  const allHidden = occlusionVisibility(shapes, ["m1"], "hideAll", false);
+  check("hide-all covers everything", allHidden.hidden.size === 3);
+  const allAnswered = occlusionVisibility(shapes, ["m1"], "hideAll", true);
+  check(
+    "and on its answer the companion lifts with its card",
+    [...allAnswered.hidden].join() === "m2",
+    "m1 is the answer and h1 was only hiding for m1's sake"
+  );
+
+  // Attached to several cards at once.
+  const multi = [m1, m2, box("h2", { showsWith: ["m1", "m2"] })];
+  check("a companion can follow more than one", companionsFor(multi, ["m2"]).size === 1);
+  check("and still makes no card of its own", buildUnits(multi).length === 2);
+
+  // Annotations are drawn by their own path, so they never appear here.
+  const withArrow = [m1, box("a", { kind: "arrow" })];
+  check(
+    "an arrow is never in the hidden set",
+    !occlusionVisibility(withArrow, ["m1"], "hideAll", false).hidden.has("a"),
+    "it is drawn on top, not covered over"
+  );
 }
 
 // ---------- geometry ----------

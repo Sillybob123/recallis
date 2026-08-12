@@ -35,6 +35,7 @@ import { ZoomPan } from "../components/ZoomPan";
 import { searchReference } from "../lib/anatomyReference";
 import { StudySettingsModal } from "../components/StudySettingsModal";
 import { RemoteSetup } from "../components/RemoteSetup";
+import { occlusionVisibility } from "../lib/shapes";
 import { actionForKey, type RemoteAction } from "../lib/remote";
 import { useGamepadRemote } from "../lib/useRemote";
 import {
@@ -191,23 +192,11 @@ function OcclusionCard({
   occMode: "hideOne" | "hideAll";
   revealed: boolean;
 }) {
-  const targetIds = new Set(item.unit.shapeIds);
-  let hiddenIds: Set<string>;
-  let outlineIds: Set<string> | undefined;
-  if (!revealed) {
-    hiddenIds =
-      occMode === "hideOne"
-        ? targetIds
-        : new Set(item.sheet.shapes.map((s) => s.id));
-  } else {
-    outlineIds = targetIds;
-    hiddenIds =
-      occMode === "hideAll"
-        ? new Set(
-            item.sheet.shapes.map((s) => s.id).filter((id) => !targetIds.has(id))
-          )
-        : new Set();
-  }
+  const {
+    hidden: hiddenIds,
+    target: targetIds,
+    outline: outlineIds,
+  } = occlusionVisibility(item.sheet.shapes, item.unit.shapeIds, occMode, revealed);
   return (
     <div>
       <ZoomPan

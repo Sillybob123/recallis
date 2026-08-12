@@ -9,6 +9,7 @@ import {
   coversOf,
   drawAnnotationOnCanvas,
   fillShapeOnCanvas,
+  companionsFor,
   isCardShape,
 } from "./shapes";
 import { EXPORT_QUALITY, exportDimensions } from "./exportImage";
@@ -207,7 +208,17 @@ export async function exportDeckToAnki(
         const answerLabel = unitShapes.some((s) => s.textPrompt)
           ? ""
           : unit.label ?? "";
-        const qBlob = await bakeMasked(img, unitShapes, sheet.shapes);
+        // The question image covers this unit's masks plus any companion
+        // that exists to stop this particular card giving itself away.
+        // Deliberately not every mask, even for a hide-all sheet: with them
+        // all baked the same colour the exported card can't say which one it
+        // is asking about.
+        const companions = companionsFor(sheet.shapes, unit.shapeIds);
+        const qBlob = await bakeMasked(
+          img,
+          [...unitShapes, ...sheet.shapes.filter((s) => companions.has(s.id))],
+          sheet.shapes
+        );
         const qName = `occ_${sheet.id}_${unit.key.replace(/[^a-z0-9-]/gi, "")}_q.jpg`;
         media.file(qName, qBlob);
         mediaCount++;

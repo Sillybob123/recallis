@@ -3,6 +3,9 @@ import { Check, Gamepad2, Keyboard, RotateCcw, X } from "lucide-react";
 import {
   actionForButton,
   bindButton,
+  detectFromButton,
+  detectFromKey,
+  type Detection,
   bindKey,
   buttonLabel,
   clearAction,
@@ -29,15 +32,20 @@ export function RemoteSetup({
   mapping,
   onChange,
   onClose,
+  connect = false,
 }: {
   mapping: RemoteMapping;
   onChange: (m: RemoteMapping) => void;
   onClose: () => void;
+  /** opens on the pairing walkthrough rather than the binding table */
+  connect?: boolean;
 }) {
   const [draft, setDraft] = useState<RemoteMapping>(mapping);
   const [capturing, setCapturing] = useState<RemoteAction | null>(null);
   const [heard, setHeard] = useState<string | null>(null);
   const [padId, setPadId] = useState<string | null>(null);
+  const [listening, setListening] = useState(connect);
+  const [found, setFound] = useState<Detection | null>(null);
 
   // While capturing, every key is swallowed — otherwise binding Space would
   // also press whatever button happens to have focus.
@@ -45,6 +53,19 @@ export function RemoteSetup({
     function onKey(e: KeyboardEvent) {
       if (e.key === "Escape") {
         setCapturing(null);
+        return;
+      }
+      if (listening && !capturing) {
+        // The connect walkthrough: whatever arrives identifies the remote.
+        const detected = detectFromKey(e.key);
+        setHeard(keyLabel(e.key.toLowerCase()));
+        if (detected) {
+          e.preventDefault();
+          setFound(detected);
+          setListening(false);
+          const preset = REMOTE_PRESETS.find((p) => p.id === detected.presetId);
+          if (preset) setDraft(preset.mapping);
+        }
         return;
       }
       if (!capturing) return;
@@ -56,10 +77,17 @@ export function RemoteSetup({
     }
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [capturing]);
+  }, [capturing, listening]);
 
   useGamepadCapture(true, (index, id) => {
     setPadId(id);
+    if (listening && !capturing) {
+      setFound(detectFromButton(id));
+      setListening(false);
+      setDraft((d) => ({ ...d, gamepad: true }));
+      setHeard(buttonLabel(index));
+      return;
+    }
     if (!capturing) {
       // Not binding: still show what arrived, so a remote that seems dead
       // can be told apart from one that's simply mapped elsewhere.
@@ -97,6 +125,64 @@ export function RemoteSetup({
         </div>
 
         <div className="space-y-5 px-5 py-5">
+          {/* connecting */}
+          {(listening || found) && (
+            <section
+              className={`rounded-xl border p-4 ${
+                found ? "border-emerald-200 bg-emerald-50" : "border-indigo-200 bg-indigo-50"
+              }`}
+            >
+              {found ? (
+                <>
+                  <p className="flex items-center gap-2 text-sm font-bold text-emerald-800">
+                    <Check size={16} /> {found.name} — connected
+                  </p>
+                  <p className="mt-1 text-xs leading-relaxed text-emerald-700">
+                    {found.why} Its buttons are set up below; save to keep
+                    them, or change any of them first.
+                  </p>
+                  <button
+                    onClick={() => {
+                      setFound(null);
+                      setListening(true);
+                    }}
+                    className="mt-2 text-xs font-semibold text-emerald-800 underline"
+                  >
+                    Not right — try again
+                  </button>
+                </>
+              ) : (
+                <>
+                  <p className="text-sm font-bold text-indigo-900">
+                    Press any button on your remote
+                  </p>
+                  <ol className="mt-2 space-y-1 text-xs leading-relaxed text-indigo-800">
+                    <li>
+                      <b>1.</b> Pair it in your device's Bluetooth settings
+                      first — this page can't do that part, no website can.
+                    </li>
+                    <li>
+                      <b>2.</b> An 8BitDo needs to be in keyboard mode for
+                      phones and tablets: hold <b>R + Start</b> for five
+                      seconds. On a laptop its normal mode works too.
+                    </li>
+                    <li>
+                      <b>3.</b> Press a button now. I'll work out which remote
+                      it is and set the buttons up for you.
+                    </li>
+                  </ol>
+                  {heard && (
+                    <p className="mt-2 text-xs text-indigo-700">
+                      Received <b>{heard}</b> — but that isn't a key I
+                      recognise as a remote. Save anyway and bind it by hand
+                      below, or press a different button.
+                    </p>
+                  )}
+                </>
+              )}
+            </section>
+          )}
+
           {/* presets */}
           <section>
             <h3 className="mb-2 text-xs font-bold uppercase tracking-wide text-slate-400">

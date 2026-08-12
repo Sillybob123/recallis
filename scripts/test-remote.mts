@@ -8,6 +8,8 @@ import {
   bindKey,
   buttonLabel,
   clearAction,
+  detectFromButton,
+  detectFromKey,
   DEFAULT_MAPPING,
   keyLabel,
   normalizeKey,
@@ -127,6 +129,47 @@ console.log("\na held button:");
     pressedSince([], [true, true]).join() === "0,1",
     "the first poll has no previous state to compare against"
   );
+}
+
+// ---------- connecting one ----------
+// "Press a button and we'll work out what you're holding" only beats a
+// dropdown if the guess is right.
+console.log("\nrecognising a remote from one press:");
+{
+  const eight = detectFromKey("g");
+  check("a letter in C-O means an 8BitDo", eight?.presetId === "8bitdo", eight?.name);
+  check("and it explains why", (eight?.why ?? "").includes("letter"));
+  check("as does another of its letters", detectFromKey("m")?.presetId === "8bitdo");
+  check(
+    "L is not one of them",
+    detectFromKey("l") === null,
+    "the Zero 2 skips L, so treating it as one would be a guess too far"
+  );
+  check("nor is a letter outside the range", detectFromKey("z") === null);
+  check("nor a digit", detectFromKey("4") === null);
+
+  check("Page Down means a clicker", detectFromKey("PageDown")?.presetId === "clicker");
+  check("so does Page Up", detectFromKey("PageUp")?.presetId === "clicker");
+  check("Space is just a keyboard remote", detectFromKey(" ")?.presetId === "default");
+  check("an arrow too", detectFromKey("ArrowRight")?.presetId === "default");
+
+  const pad = detectFromButton("8BitDo Zero 2 Gamepad");
+  check("a controller is named after itself", pad.name.includes("8BitDo"));
+  check(
+    "and the explanation is the useful one",
+    pad.why.includes("Joy2Key") || pad.why.includes("Karabiner"),
+    "that the desktop remapping software isn't needed here"
+  );
+
+  // Every detection has to point at a preset that exists.
+  for (const key of ["g", "PageDown", " "]) {
+    const d = detectFromKey(key)!;
+    check(
+      `the preset for "${key}" exists`,
+      REMOTE_PRESETS.some((p) => p.id === d.presetId),
+      d.presetId
+    );
+  }
 }
 
 // ---------- rebinding ----------
