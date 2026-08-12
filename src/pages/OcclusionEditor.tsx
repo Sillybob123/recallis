@@ -175,6 +175,14 @@ export function OcclusionEditor() {
   const { user } = useAuth();
   const navigate = useNavigate();
   const goBack = () => navigate(returnTo || `/deck/${deckId}`);
+  // Where you came from decides what "back" should say. Getting this wrong
+  // isn't cosmetic: told "Back to notes" while halfway through a deck, you
+  // don't press it.
+  const backLabel = !returnTo
+    ? "Back to deck"
+    : /\/study/.test(returnTo)
+      ? "Back to studying"
+      : "Back to notes";
 
   const [title, setTitle] = useState("");
   const [file, setFile] = useState<File | null>(null);
@@ -902,7 +910,7 @@ export function OcclusionEditor() {
         onClick={goBack}
         className="mb-4 flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-800"
       >
-        <ArrowLeft size={15} /> {returnTo ? "Back to notes" : "Back to deck"}
+        <ArrowLeft size={15} /> {backLabel}
       </button>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_300px]">

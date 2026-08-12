@@ -136,6 +136,29 @@ function fastThresholdMs(item: StudyItem): number {
     FAST_ANSWER_BASE_MS + (words / READING_WPM) * 60000
   );
 }
+/**
+ * Puts the card you were editing back at the front.
+ *
+ * Coming back from the occlusion editor rebuilds the queue from scratch, and
+ * landing on a different card than the one you just changed is disorienting
+ * — you can't see whether the edit did what you wanted. The rest of the
+ * order is untouched, so nothing else about the run changes.
+ */
+function applyResume(
+  items: StudyItem[],
+  ref: { current: string | null }
+): StudyItem[] {
+  const key = ref.current;
+  if (!key) return items;
+  const at = items.findIndex((it) => it.key === key);
+  // Not in this queue: the data may still be loading, so keep the marker
+  // for the next build rather than spending it on an empty list.
+  if (at < 0) return items;
+  ref.current = null;
+  if (at === 0) return items;
+  return [items[at], ...items.slice(0, at), ...items.slice(at + 1)];
+}
+
 /** Anki's grading keys, which its users already have in their fingers. */
 const ANKI_GRADE_KEYS: Record<string, Rating> = {
   "1": "again",
@@ -275,8 +298,25 @@ function GradeButtons({
 
 export function StudyBasic() {
   const { deckId } = useParams();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const cardsOnly = searchParams.get("only") === "cards";
+  /*
+    Which card to land on when coming back from the occlusion editor.
+    Held in a ref rather than read from the URL each time: the queue is
+    rebuilt whenever settings change or a card is edited, and rotating it
+    every time would keep dragging one card to the front long after the
+    edit. It is used once, by whichever rebuild first contains the card.
+  */
+  const resumeRef = useRef<string | null>(searchParams.get("resume"));
+  useEffect(() => {
+    if (!searchParams.get("resume")) return;
+    const next = new URLSearchParams(searchParams);
+    next.delete("resume");
+    // Replaced, not pushed: Back should leave the session rather than put
+    // the marker back.
+    setSearchParams(next, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const groupIdsParam = searchParams.get("ids");
   const groupName = searchParams.get("name");
   // Studying a parent pools every deck in its subtree, Anki-style.
@@ -483,7 +523,10 @@ export function StudyBasic() {
           if (restored.length > 0) {
             strengthRef.current = new Map(saved.strengths);
             missesRef.current = new Map(saved.misses ?? []);
-            setQueue(restored);
+            // This is the branch a cram run comes back through after an
+            // edit, so it needs the resume too — otherwise you return to
+            // the front of the queue instead of the card you just changed.
+            setQueue(applyResume(restored, resumeRef));
             setTotal(Math.max(saved.total, restored.length));
             setNextDueMs(null);
             setQueueReady(true);
@@ -498,7 +541,7 @@ export function StudyBasic() {
           quizletSettings.studyOrder === "ordered"
             ? [...pool].sort((a, b) => itemOrder(a) - itemOrder(b))
             : spreadSiblings(shuffle(pool), ankiSettings.siblingGap);
-        setQueue(items);
+        setQueue(applyResume(items, resumeRef));
         setTotal(items.length);
         setNextDueMs(null);
         setQueueReady(true);
@@ -568,7 +611,7 @@ export function StudyBasic() {
           ankiSettings.siblingGap
         );
         if (cancelled) return;
-        setQueue(items);
+        setQueue(applyResume(items, resumeRef));
         setTotal(items.length);
         const future = all
           .map((it) => srsMap.get(combinedKey(it))?.due)
@@ -749,8 +792,21 @@ export function StudyBasic() {
   /** Opens the right editor for the card on screen (E, or the toolbar). */
   function openEditor() {
     if (!current) return;
-    if (current.kind === "text") setShowEdit(true);
-    else navigate(`/deck/${current.deckId}/occlusion/${current.sheet.id}/edit`);
+    if (current.kind === "text") {
+      setShowEdit(true);
+      return;
+    }
+    // An occlusion sheet is edited on its own page, so the way back has to
+    // be carried with it — otherwise saving drops you on the deck page and
+    // the run you were halfway through is over. `resume` names the card you
+    // were looking at, so you land on it rather than at the front.
+    const back = new URL(location.pathname + location.search, window.location.origin);
+    back.searchParams.set("resume", current.key);
+    navigate(
+      `/deck/${current.deckId}/occlusion/${current.sheet.id}/edit?returnTo=${encodeURIComponent(
+        back.pathname + back.search
+      )}`
+    );
   }
 
   /**
