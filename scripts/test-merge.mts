@@ -67,11 +67,13 @@ console.log("   matched by content, due updated to:", deck.find((c) => c.id === 
 // Confirm the parser emits stable import ids from a real package
 import { readFileSync } from "node:fs";
 import initSqlJs from "sql.js";
-import { parseApkg } from "../src/lib/apkgParse";
+import { openApkg, parseApkg } from "../src/lib/apkgParse";
 const buf = readFileSync("example of decks/AnatomyApkcg.apkg");
 const parsedPkg = await parseApkg(
-  buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer,
-  () => initSqlJs()
+  await openApkg(
+    buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer,
+    () => initSqlJs()
+  )
 );
 const ids = parsedPkg.decks.flatMap((d) => d.cards.map((c) => c.importId));
 const sheetIds = parsedPkg.decks.flatMap((d) => d.sheets.map((sh) => sh.importId));

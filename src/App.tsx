@@ -10,6 +10,7 @@ import { AnkiHome } from "./pages/AnkiHome";
 import { BrowsePage } from "./pages/BrowsePage";
 import { QuizletHome } from "./pages/QuizletHome";
 import { NotesPage } from "./pages/NotesPage";
+import { PlannerPage } from "./pages/PlannerPage";
 import { NoteEditorPage } from "./pages/NoteEditorPage";
 import { DeckPage } from "./pages/DeckPage";
 import { StudyBasic } from "./pages/StudyBasic";
@@ -25,6 +26,7 @@ export default function App() {
           <Route path="/login" element={<Login />} />
           <Route path="/signup" element={<Signup />} />
           <Route path="/study-group" element={<ProtectedRoute><StudyBasic /></ProtectedRoute>} />
+          <Route path="/planner" element={<ProtectedRoute><PlannerPage /></ProtectedRoute>} />
           <Route path="/notes" element={<ProtectedRoute><NotesPage /></ProtectedRoute>} />
           <Route path="/notes/:noteId" element={<ProtectedRoute><NoteEditorPage /></ProtectedRoute>} />
           <Route

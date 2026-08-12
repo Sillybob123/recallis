@@ -1,6 +1,13 @@
 import type { ReactNode } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
-import { Layers, LogOut, NotebookPen, Repeat, Zap } from "lucide-react";
+import {
+  CalendarCheck,
+  Layers,
+  LogOut,
+  NotebookPen,
+  Repeat,
+  Zap,
+} from "lucide-react";
 import { useAuth } from "../contexts/AuthContext";
 import { useStudyMode } from "../contexts/StudyModeContext";
 
@@ -19,6 +26,7 @@ export function Layout({
 
   // Which section owns this page — drives the theme, wordmark and nav state.
   const inNotes = pathname.startsWith("/notes");
+  const inPlanner = pathname.startsWith("/planner");
   const inDecks =
     pathname.startsWith("/decks") ||
     pathname.startsWith("/deck/") ||
@@ -114,6 +122,10 @@ export function Layout({
               </NavPill>
               <NavPill to="/notes" active={inNotes} activeClass="bg-blue-700">
                 <NotebookPen size={12} /> <span className="hidden sm:inline">Notes</span>
+              </NavPill>
+              <NavPill to="/planner" active={inPlanner} activeClass="bg-violet-700">
+                <CalendarCheck size={12} />{" "}
+                <span className="hidden sm:inline">Planner</span>
               </NavPill>
 
               <div className="flex overflow-hidden rounded-full border border-slate-200 text-xs font-semibold">

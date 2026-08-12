@@ -1,13 +1,15 @@
 import { readFileSync } from "node:fs";
 import initSqlJs from "sql.js";
-import { probeApkg, parseApkg } from "../src/lib/apkgParse";
+import { openApkg, probeApkg, parseApkg } from "../src/lib/apkgParse";
 
 const path = "example of decks/collection-2026-08-08@07-50-45.colpkg";
 const buf = readFileSync(path);
 const ab = () => buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer;
+// The package is opened once and the handle handed to each call.
+const open = () => openApkg(ab(), () => initSqlJs());
 
 let t = performance.now();
-const probe = await probeApkg(ab(), () => initSqlJs());
+const probe = await probeApkg(await open());
 const probeMs = performance.now() - t;
 console.log(`probe: ${probeMs.toFixed(0)}ms`);
 console.log(`  ${probe.totalNotes} notes / ${probe.totalCards} cards`);
@@ -15,14 +17,14 @@ console.log(`  active: ${probe.activeNotes}, suspended: ${probe.suspendedNotes}`
 console.log(`  suspended cards: ${probe.suspendedCards}, scheduled: ${probe.scheduled}`);
 
 t = performance.now();
-const all = await parseApkg(ab(), () => initSqlJs());
+const all = await parseApkg(await open());
 const allMs = performance.now() - t;
 const allCards = all.decks.reduce((n, d) => n + d.cards.length, 0);
 const allSheets = all.decks.reduce((n, d) => n + d.sheets.length, 0);
 console.log(`\nfull parse (all):        ${allMs.toFixed(0)}ms -> ${allCards} cards, ${allSheets} sheets`);
 
 t = performance.now();
-const active = await parseApkg(ab(), () => initSqlJs(), { excludeSuspended: true });
+const active = await parseApkg(await open(), { excludeSuspended: true });
 const activeMs = performance.now() - t;
 const aCards = active.decks.reduce((n, d) => n + d.cards.length, 0);
 const aSheets = active.decks.reduce((n, d) => n + d.sheets.length, 0);

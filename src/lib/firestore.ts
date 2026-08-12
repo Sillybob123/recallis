@@ -25,6 +25,7 @@ import {
 } from "firebase/storage";
 import { db, storage } from "../firebase";
 import { normalizeCardData } from "./cloze";
+import type { PlannerPlan, PlannerProgress } from "./planner";
 import type { Card, CardData, Deck, OcclusionSheet, OcclusionShape } from "../types";
 
 function toMillis(v: unknown): number {
@@ -817,6 +818,61 @@ export async function fetchTroubleList(
 
 export async function deleteTroubleList(uid: string, id: string) {
   await deleteDoc(troubleDoc(uid, id));
+}
+
+// ---------- Academic planner ----------
+// The semester and the routine live in one document — they change only on
+// import. Ticks live in another as a flat map, so marking one box off is a
+// single small write rather than a rewrite of the whole term.
+
+export async function fetchPlannerPlan(
+  uid: string
+): Promise<PlannerPlan | null> {
+  const snap = await getDoc(doc(db, "users", uid, "planner", "plan"));
+  return snap.exists() ? (snap.data() as PlannerPlan) : null;
+}
+
+export async function savePlannerPlan(uid: string, plan: PlannerPlan) {
+  await setDoc(doc(db, "users", uid, "planner", "plan"), {
+    ...plan,
+    updatedAt: Date.now(),
+  });
+}
+
+export async function fetchPlannerProgress(
+  uid: string
+): Promise<PlannerProgress> {
+  const snap = await getDoc(doc(db, "users", uid, "planner", "progress"));
+  if (!snap.exists()) return {};
+  return ((snap.data() as { done?: PlannerProgress }).done ?? {}) as PlannerProgress;
+}
+
+/**
+ * Ticks or unticks one box. setDoc with merge rather than updateDoc so the
+ * very first tick doesn't fail on a document that doesn't exist yet.
+ */
+export async function setPlannerProgress(
+  uid: string,
+  key: string,
+  done: boolean
+) {
+  await setDoc(
+    doc(db, "users", uid, "planner", "progress"),
+    { done: { [key]: done } },
+    { merge: true }
+  );
+}
+
+/** Used when a whole session's routine is ticked at once. */
+export async function setPlannerProgressBulk(
+  uid: string,
+  entries: Record<string, boolean>
+) {
+  await setDoc(
+    doc(db, "users", uid, "planner", "progress"),
+    { done: entries },
+    { merge: true }
+  );
 }
 
 // ---------- User settings (cross-device) ----------

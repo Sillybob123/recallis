@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import initSqlJs from "sql.js";
-import { parseApkg } from "../src/lib/apkgParse";
+import { openApkg, parseApkg } from "../src/lib/apkgParse";
 import { parseTagString, normalizeTags, addTags, removeTags, tagMatches, formatTagString } from "../src/lib/tags";
 
 // --- helper behavior ---
@@ -19,8 +19,10 @@ for (const path of [
 ]) {
   const buf = readFileSync(path);
   const pkg = await parseApkg(
-    buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer,
-    () => initSqlJs()
+    await openApkg(
+      buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer,
+      () => initSqlJs()
+    )
   );
   const cardTags = pkg.decks.flatMap((d) => d.cards.flatMap((c) => c.tags));
   const sheetTags = pkg.decks.flatMap((d) => d.sheets.flatMap((s) => s.tags));
