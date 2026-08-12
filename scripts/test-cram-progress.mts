@@ -13,8 +13,13 @@ const store = new Map<string, string>();
   },
 } as Storage;
 
-const { cramScopeId, saveCramSession, loadCramSession, clearCramSession } =
-  await import("../src/lib/cramSession");
+const {
+  cramScopeId,
+  cramProgress,
+  saveCramSession,
+  loadCramSession,
+  clearCramSession,
+} = await import("../src/lib/cramSession");
 
 let failures = 0;
 const check = (name: string, ok: boolean, detail = "") => {
@@ -150,6 +155,48 @@ check(
   }
   const alwaysMoves = seen.every((v, i) => i === 0 || v > seen[i - 1]);
   check("the bar moves on every card answered", alwaysMoves, seen.slice(0, 6).join("% → ") + "%");
+}
+
+// ---------- the number you watch ----------
+// A card leaves a cram run after two correct answers with time in between,
+// so a bar counting only retired cards sits still through a dozen answers.
+// It counts half-steps instead, which means every correct answer moves it.
+console.log("\nthe progress bar:");
+{
+  const MASTERY = 2;
+  const pct = (strengths: number[], total: number) =>
+    cramProgress(strengths, total, MASTERY);
+
+  check("nothing answered, nothing shown", pct([], 10) === 0);
+  check(
+    "one correct answer out of ten cards already moves it",
+    pct([1], 10) === 5,
+    `${pct([1], 10)}% — half a card of twenty half-steps`
+  );
+  check("the second answer on that card moves it again", pct([2], 10) === 10);
+  check(
+    "so a run where every card is half-done is halfway",
+    pct([1, 1, 1, 1], 4) === 50
+  );
+  check("and all mastered is a hundred", pct([2, 2, 2, 2], 4) === 100);
+  check(
+    "extra correct answers past mastery don't overshoot",
+    pct([5, 5], 2) === 100,
+    "a card answered right five times is still one card"
+  );
+  check("an empty deck doesn't divide by zero", pct([1], 0) === 0);
+
+  // The property that matters: answering correctly never moves it backwards.
+  let previous = -1;
+  let monotonic = true;
+  const strengths = [0, 0, 0, 0];
+  for (let i = 0; i < 8; i++) {
+    strengths[i % 4] = Math.min(strengths[i % 4] + 1, MASTERY);
+    const now = pct(strengths, 4);
+    if (now < previous) monotonic = false;
+    previous = now;
+  }
+  check("it only ever goes up as you answer", monotonic && previous === 100);
 }
 
 console.log(failures === 0 ? "\nAll cases passed." : `\n${failures} failing.`);

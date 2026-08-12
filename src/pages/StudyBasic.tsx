@@ -102,6 +102,7 @@ import {
 } from "../lib/siblings";
 import {
   clearCramSession,
+  cramProgress,
   clearTroubleList,
   flushCramSession,
   loadCramSession,
@@ -466,7 +467,8 @@ export function StudyBasic() {
     if (!cards || !sheets || !srsMap) return;
     setQueueReady(false);
     // Rebuilding after an edit is the same session, so its tally stands.
-    if (preserveRef.current) preserveRef.current = false;
+    const preserving = preserveRef.current;
+    if (preserving) preserveRef.current = false;
     else setStats({ answers: 0, correct: 0, wrong: 0 });
     const all = [
       ...buildTextItems(cards, {
@@ -475,10 +477,20 @@ export function StudyBasic() {
       }),
       ...(cardsOnly ? [] : buildOcclusionItems(sheets)),
     ];
-    strengthRef.current = new Map();
-    missesRef.current = new Map();
-    lastSeenRef.current = new Map();
-    answerCountRef.current = 0;
+    /*
+      Everything the run knows about how you're doing. On a genuine restart
+      it starts empty; on a rebuild after an edit it is kept exactly as it
+      is. It used to be wiped either way and then read back from the saved
+      session, which meant an edit rolled the run back to the last snapshot
+      — answers since then simply gone, and the progress bar apparently
+      stuck or moving backwards.
+    */
+    if (!preserving) {
+      strengthRef.current = new Map();
+      missesRef.current = new Map();
+      lastSeenRef.current = new Map();
+      answerCountRef.current = 0;
+    }
 
     if (studyMode === "quizlet") {
       let cancelled = false;
@@ -521,8 +533,13 @@ export function StudyBasic() {
             .map((k) => byKey.get(k))
             .filter((it): it is StudyItem => Boolean(it));
           if (restored.length > 0) {
-            strengthRef.current = new Map(saved.strengths);
-            missesRef.current = new Map(saved.misses ?? []);
+            // What's already in memory is never older than what was saved,
+            // so a rebuild mid-run keeps it rather than reading back a
+            // snapshot from before the last few answers.
+            if (!preserving) {
+              strengthRef.current = new Map(saved.strengths);
+              missesRef.current = new Map(saved.misses ?? []);
+            }
             // This is the branch a cram run comes back through after an
             // edit, so it needs the resume too — otherwise you return to
             // the front of the queue instead of the card you just changed.
@@ -1517,11 +1534,7 @@ export function StudyBasic() {
     if (studyMode !== "quizlet") {
       return Math.round(((total - queue.length) / total) * 100);
     }
-    let earned = 0;
-    for (const strength of strengthRef.current.values()) {
-      earned += Math.min(strength, MASTERY);
-    }
-    return Math.min(100, Math.round((earned / (total * MASTERY)) * 100));
+    return cramProgress(strengthRef.current.values(), total, MASTERY);
   })();
 
   if (!cards || !sheets || !srsMap || !queueReady) {
@@ -1927,11 +1940,21 @@ export function StudyBasic() {
                 }`
           }
         >
-          {total - queue.length}/{total}
-          {studyMode === "quizlet" && (
-            <span className="hidden text-xs font-normal text-slate-400 sm:inline">
-              {" mastered"}
-            </span>
+          {/*
+            In a cram run the headline is the percentage, because that is the
+            number that moves. "Mastered" counts cards answered right twice
+            with time in between, so it can sit still for a dozen answers —
+            correct, and indistinguishable from broken.
+          */}
+          {studyMode === "quizlet" ? (
+            <>
+              {progress}%
+              <span className="hidden text-xs font-normal text-slate-400 sm:inline">
+                {` · ${total - queue.length}/${total} mastered`}
+              </span>
+            </>
+          ) : (
+            `${total - queue.length}/${total}`
           )}
           {stats.answers > 0 && (
             <span className="hidden text-xs font-normal text-slate-400 sm:inline">

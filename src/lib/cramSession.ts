@@ -33,6 +33,25 @@ function keyFor(scope: string): string {
  * so it's hashed. FNV-1a with the length appended — collisions would only
  * ever mix up two cram sessions, and this makes them vanishingly unlikely.
  */
+/**
+ * How far through a cram run you are, 0–100.
+ *
+ * Counted in half-steps rather than in retired cards. A card leaves the run
+ * after two correct answers with time in between, so a bar that only moved
+ * on retirement would sit still through a dozen answers — correct, and
+ * indistinguishable from broken.
+ */
+export function cramProgress(
+  strengths: Iterable<number>,
+  total: number,
+  mastery: number
+): number {
+  if (total <= 0 || mastery <= 0) return 0;
+  let earned = 0;
+  for (const strength of strengths) earned += Math.min(strength, mastery);
+  return Math.min(100, Math.round((earned / (total * mastery)) * 100));
+}
+
 export function cramScopeId(scope: string): string {
   let h = 0x811c9dc5;
   for (let i = 0; i < scope.length; i++) {

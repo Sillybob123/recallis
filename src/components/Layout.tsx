@@ -32,12 +32,22 @@ export function Layout({
   // Which section owns this page — drives the theme, wordmark and nav state.
   const inNotes = pathname.startsWith("/notes");
   const inPlanner = pathname.startsWith("/planner");
+  /*
+    Studying is its own place. A run started from a deck is still a run — it
+    belongs to whichever mode you're in, not to the deck list, so the mode
+    lights up rather than "Decks" while the cards are in front of you.
+  */
+  const inStudy =
+    /\/study(\b|$)/.test(pathname) || pathname.startsWith("/study-group");
   const inDecks =
-    pathname.startsWith("/decks") ||
-    pathname.startsWith("/deck/") ||
-    pathname.startsWith("/study-group");
-  const inAnki = pathname.startsWith("/anki") || pathname.startsWith("/browse");
-  const inQuizlet = pathname.startsWith("/quizlet");
+    !inStudy &&
+    (pathname.startsWith("/decks") || pathname.startsWith("/deck/"));
+  const inAnki =
+    pathname.startsWith("/anki") ||
+    pathname.startsWith("/browse") ||
+    (inStudy && studyMode === "anki");
+  const inQuizlet =
+    pathname.startsWith("/quizlet") || (inStudy && studyMode === "quizlet");
   // The overview page is deliberately neutral: nothing highlighted.
   const isHome = pathname === "/";
 
