@@ -16,6 +16,7 @@ import {
   ChevronDown,
   CloudOff,
   Flag,
+  Gamepad2,
   HelpCircle,
   Loader2,
   PartyPopper,
@@ -33,6 +34,9 @@ import { ShapeOverlay } from "../components/ShapeOverlay";
 import { ZoomPan } from "../components/ZoomPan";
 import { searchReference } from "../lib/anatomyReference";
 import { StudySettingsModal } from "../components/StudySettingsModal";
+import { RemoteSetup } from "../components/RemoteSetup";
+import { actionForKey, type RemoteAction } from "../lib/remote";
+import { useGamepadRemote } from "../lib/useRemote";
 import {
   createCard,
   deleteCard,
@@ -64,6 +68,7 @@ import {
 import {
   loadAnkiSettings,
   loadQuizletSettings,
+  loadRemoteMapping,
   saveQuizletSettings,
   recordAnkiReview,
   startOfStudyDay,
@@ -306,6 +311,8 @@ export function StudyBasic() {
   const [ankiSettings, setAnkiSettings] = useState<AnkiSettings>(loadAnkiSettings);
   const [quizletSettings, setQuizletSettings] =
     useState<QuizletSettings>(loadQuizletSettings);
+  const [remoteMapping, setRemoteMapping] = useState(loadRemoteMapping);
+  const [showRemote, setShowRemote] = useState(false);
 
   // Ordered runs are their own session, so switching between the two keeps
   // both. Shuffle stays on the original key so existing sessions survive.
@@ -1288,7 +1295,27 @@ export function StudyBasic() {
         return;
       }
 
-      if (!current || showEdit || showSettings || moreOpen) return;
+      if (!current || showEdit || showSettings || moreOpen || showRemote) return;
+
+      // The remote's own mapping comes first: a clicker sending PageDown, or
+      // an 8BitDo sending the letter M, has to mean something here before
+      // the letter shortcuts below get a look at it.
+      const remoteAction = actionForKey(remoteMapping, e.key);
+      if (remoteAction && isFlashcardContext) {
+        // Grades only land once the answer is showing, exactly as in Anki,
+        // so a pocketed remote can't grade a card you haven't read.
+        const isGrade =
+          remoteAction === "again" ||
+          remoteAction === "hard" ||
+          remoteAction === "good" ||
+          remoteAction === "easy";
+        if (!(isGrade && !flipped)) {
+          e.preventDefault();
+          runRemoteAction(remoteAction);
+          return;
+        }
+      }
+
       if (e.key === "e" || e.key === "E") {
         e.preventDefault();
         openEditor();
@@ -1366,6 +1393,63 @@ export function StudyBasic() {
     return () => window.removeEventListener("keydown", onKey);
   });
 
+  /**
+   * Everything a remote can do, in one place. The keyboard path and the
+   * gamepad path both come through here, so a button and a key with the same
+   * meaning can never drift apart.
+   */
+  const runRemoteAction = useCallback(
+    (action: RemoteAction) => {
+      if (!current || showEdit || showSettings) return;
+      const grade = (rating: Rating) => {
+        if (!flipped) return;
+        if (studyMode === "anki") gradeSrs(rating);
+        else if (mode === "learn") markLearn(rating !== "again");
+        else markCram(rating !== "again");
+      };
+      switch (action) {
+        case "advance":
+          if (!flipped) {
+            captureGuessTime();
+            setFlipped(true);
+          } else grade("good");
+          return;
+        case "fail":
+          if (!flipped) {
+            captureGuessTime();
+            setFlipped(true);
+          } else grade("again");
+          return;
+        case "again":
+        case "hard":
+        case "good":
+        case "easy":
+          grade(action);
+          return;
+        case "undo":
+          actions.previousCard();
+          return;
+        case "star":
+          toggleStar();
+          return;
+        case "scrollUp":
+          window.scrollBy({ top: -220, behavior: "smooth" });
+          return;
+        case "scrollDown":
+          window.scrollBy({ top: 220, behavior: "smooth" });
+          return;
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [current, flipped, studyMode, mode, showEdit, showSettings]
+  );
+
+  const gamepad = useGamepadRemote(
+    remoteMapping,
+    remoteMapping.gamepad && !showEdit && !showSettings && !showRemote,
+    runRemoteAction
+  );
+
   // Quizlet retires a card after MASTERY good answers, so the bar counts those
   // half-steps. Measuring the queue instead meant answering every card in the
   // deck correctly once still read 0% — the queue hadn't shrunk, because each
@@ -1389,6 +1473,18 @@ export function StudyBasic() {
       </Layout>
     );
   }
+
+  // Only shown once a controller has actually reported itself, so it reads
+  // as confirmation that the remote is working rather than as clutter.
+  const remoteButton = gamepad && (
+    <button
+      onClick={() => setShowRemote(true)}
+      title={`${gamepad} — connected. Click to change what its buttons do.`}
+      className="rounded-full border border-emerald-200 bg-emerald-50 p-1.5 text-emerald-600 transition hover:bg-emerald-100"
+    >
+      <Gamepad2 size={15} />
+    </button>
+  );
 
   const starButton = current && studyMode === "quizlet" && (
     <button
@@ -1786,6 +1882,7 @@ export function StudyBasic() {
         </span>
         <span className="shrink-0">{studyMode === "anki" && <SaveBadge status={saveStatus} />}</span>
         {reviewButton}
+        {remoteButton}
         {rootsButton}
         {starButton}
         {gradingButton}
@@ -2293,6 +2390,9 @@ export function StudyBasic() {
                     <MoreItem onClick={actions.suspendCard}>Suspend Card</MoreItem>
                     <MoreItem onClick={actions.cardInfo}>Card Info</MoreItem>
                     <MoreItem onClick={actions.previousCard}>Previous Card</MoreItem>
+                    <MoreItem onClick={() => setShowRemote(true)}>
+                      Study remote…
+                    </MoreItem>
                     <div className="my-1 border-t border-slate-100" />
                     <MoreItem onClick={actions.markNote}>
                       {currentSrs?.marked ? "Unmark Note" : "Mark Note"}
@@ -2310,6 +2410,14 @@ export function StudyBasic() {
             </div>
           </div>
         </>
+      )}
+
+      {showRemote && (
+        <RemoteSetup
+          mapping={remoteMapping}
+          onChange={setRemoteMapping}
+          onClose={() => setShowRemote(false)}
+        />
       )}
 
       {showSettings && (

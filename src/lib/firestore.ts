@@ -27,6 +27,7 @@ import { db, storage } from "../firebase";
 import { normalizeCardData } from "./cloze";
 import type { PlannerPlan, PlannerProgress } from "./planner";
 import { DEFAULT_EMAIL_SETTINGS, type EmailSettings } from "./emailReminders";
+import type { RemoteMapping } from "./remote";
 import type { Card, CardData, Deck, OcclusionSheet, OcclusionShape } from "../types";
 
 function toMillis(v: unknown): number {
@@ -916,14 +917,14 @@ export async function saveEmailSettings(uid: string, settings: EmailSettings) {
 
 export async function fetchUserSettings(
   uid: string
-): Promise<{ anki?: unknown; quizlet?: unknown } | null> {
+): Promise<{ anki?: unknown; quizlet?: unknown; remote?: RemoteMapping } | null> {
   const snap = await getDoc(doc(db, "users", uid, "meta", "settings"));
   return snap.exists() ? (snap.data() as { anki?: unknown; quizlet?: unknown }) : null;
 }
 
 export async function saveUserSettings(
   uid: string,
-  settings: { anki: unknown; quizlet: unknown }
+  settings: { anki: unknown; quizlet: unknown; remote?: RemoteMapping }
 ) {
   await setDoc(doc(db, "users", uid, "meta", "settings"), {
     ...settings,

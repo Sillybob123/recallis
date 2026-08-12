@@ -1,3 +1,4 @@
+import { DEFAULT_MAPPING, type RemoteMapping } from "./remote";
 // Study settings, persisted in localStorage. Anki-mode defaults mirror the
 // user's actual Anki preset: learning steps 10m, relearning steps 10m,
 // 60 new/day, 9999 reviews/day, max interval 36500 days.
@@ -133,6 +134,23 @@ export function saveAnkiSettings(s: AnkiSettings) {
   pushSettingsRemote();
 }
 
+export function loadRemoteMapping(): RemoteMapping {
+  // Nested objects can't be merged by the shallow `load` helper, so each
+  // half is filled in from the defaults explicitly — a stored mapping from
+  // an older version is missing whichever actions didn't exist yet.
+  const stored = load("remoteMapping", DEFAULT_MAPPING);
+  return {
+    gamepad: stored.gamepad ?? true,
+    keys: { ...DEFAULT_MAPPING.keys, ...(stored.keys ?? {}) },
+    buttons: { ...DEFAULT_MAPPING.buttons, ...(stored.buttons ?? {}) },
+  };
+}
+
+export function saveRemoteMapping(m: RemoteMapping) {
+  localStorage.setItem("remoteMapping", JSON.stringify(m));
+  pushSettingsRemote();
+}
+
 export function loadQuizletSettings(): QuizletSettings {
   return load("quizletSettings", DEFAULT_QUIZLET_SETTINGS);
 }
@@ -157,6 +175,7 @@ function pushSettingsRemote() {
       saveUserSettings(syncUid!, {
         anki: loadAnkiSettings(),
         quizlet: loadQuizletSettings(),
+        remote: loadRemoteMapping(),
       })
     )
     .catch(() => {});
@@ -180,6 +199,9 @@ export async function initSettingsSync(uid: string) {
           "quizletSettings",
           JSON.stringify({ ...DEFAULT_QUIZLET_SETTINGS, ...remote.quizlet })
         );
+      }
+      if (remote.remote) {
+        localStorage.setItem("remoteMapping", JSON.stringify(remote.remote));
       }
       applyClozeColors(loadAnkiSettings());
     } else {
