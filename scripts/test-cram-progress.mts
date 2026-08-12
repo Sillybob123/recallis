@@ -158,33 +158,51 @@ check(
 }
 
 // ---------- the number you watch ----------
-// A card leaves a cram run after two correct answers with time in between,
-// so a bar counting only retired cards sits still through a dozen answers.
-// It counts half-steps instead, which means every correct answer moves it.
+// A card leaves a repeat run after two correct answers with time in
+// between, so a bar counting only retired cards sits still through a dozen
+// answers. It counts part-way progress too — but a card that has left the
+// queue is finished whatever it took, which is the part that was wrong.
 console.log("\nthe progress bar:");
 {
   const MASTERY = 2;
-  const pct = (strengths: number[], total: number) =>
-    cramProgress(strengths, total, MASTERY);
+  const pct = (total: number, remaining: number[]) =>
+    cramProgress({ total, remainingStrengths: remaining, mastery: MASTERY });
 
-  check("nothing answered, nothing shown", pct([], 10) === 0);
+  check("nothing answered, nothing shown", pct(10, [0,0,0,0,0,0,0,0,0,0]) === 0);
   check(
     "one correct answer out of ten cards already moves it",
-    pct([1], 10) === 5,
-    `${pct([1], 10)}% — half a card of twenty half-steps`
+    pct(10, [1,0,0,0,0,0,0,0,0,0]) === 5,
+    "half a card of twenty half-steps"
   );
-  check("the second answer on that card moves it again", pct([2], 10) === 10);
+  check("a card part-way through counts its part", pct(4, [1,1,1,1]) === 50);
+  check("and one that retired counts whole", pct(4, [0,0,0]) === 25);
+
+  // The bug this replaces: a deck finished with cards known on sight stopped
+  // short of 100%, because each had been credited one step of two it was
+  // never going to take.
   check(
-    "so a run where every card is half-done is halfway",
-    pct([1, 1, 1, 1], 4) === 50
+    "an empty queue is always a hundred",
+    pct(39, []) === 100,
+    "however many cards retired early"
   );
-  check("and all mastered is a hundred", pct([2, 2, 2, 2], 4) === 100);
+  check("even for one card", pct(1, []) === 100);
+  check(
+    "and a nearly-finished run reads nearly finished",
+    pct(39, [0]) === 97,
+    `${pct(39, [0])}%`
+  );
+
   check(
     "extra correct answers past mastery don't overshoot",
-    pct([5, 5], 2) === 100,
+    pct(2, [5, 5]) === 100,
     "a card answered right five times is still one card"
   );
-  check("an empty deck doesn't divide by zero", pct([1], 0) === 0);
+  check("an empty deck doesn't divide by zero", pct(0, []) === 0);
+  check(
+    "a restored total larger than the queue can't exceed a hundred",
+    pct(5, [0, 0, 0, 0, 0, 0, 0]) === 0,
+    "clamped rather than negative"
+  );
 
   // The property that matters: answering correctly never moves it backwards.
   let previous = -1;
@@ -192,11 +210,21 @@ console.log("\nthe progress bar:");
   const strengths = [0, 0, 0, 0];
   for (let i = 0; i < 8; i++) {
     strengths[i % 4] = Math.min(strengths[i % 4] + 1, MASTERY);
-    const now = pct(strengths, 4);
+    const now = pct(4, strengths);
     if (now < previous) monotonic = false;
     previous = now;
   }
   check("it only ever goes up as you answer", monotonic && previous === 100);
+
+  // Retiring a card must not drop the bar either: it swaps part-way credit
+  // for the whole thing.
+  const beforeRetire = pct(4, [2, 1, 0, 0]);
+  const afterRetire = pct(4, [1, 0, 0]);
+  check(
+    "retiring a card never lowers it",
+    afterRetire >= beforeRetire,
+    `${beforeRetire}% → ${afterRetire}%`
+  );
 }
 
 console.log(failures === 0 ? "\nAll cases passed." : `\n${failures} failing.`);

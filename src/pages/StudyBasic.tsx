@@ -1534,7 +1534,11 @@ export function StudyBasic() {
     if (studyMode !== "quizlet") {
       return Math.round(((total - queue.length) / total) * 100);
     }
-    return cramProgress(strengthRef.current.values(), total, MASTERY);
+    return cramProgress({
+      total,
+      remainingStrengths: queue.map((it) => strengthRef.current.get(it.key) ?? 0),
+      mastery: MASTERY,
+    });
   })();
 
   if (!cards || !sheets || !srsMap || !queueReady) {

@@ -34,22 +34,35 @@ function keyFor(scope: string): string {
  * ever mix up two cram sessions, and this makes them vanishingly unlikely.
  */
 /**
- * How far through a cram run you are, 0–100.
+ * How far through a repeat run you are, 0–100.
  *
- * Counted in half-steps rather than in retired cards. A card leaves the run
- * after two correct answers with time in between, so a bar that only moved
- * on retirement would sit still through a dozen answers — correct, and
- * indistinguishable from broken.
+ * A card that has left the queue is finished, whatever it took to get there
+ * — some go after one answer, because answering instantly and correctly is
+ * itself proof you know it. Cards still in the queue count their part-way
+ * progress, so the bar moves on every correct answer rather than only when
+ * something retires.
+ *
+ * Counting half-steps for every card instead was wrong in a way that only
+ * showed at the end: a deck finished with a dozen cards known on sight
+ * stopped at 83%, having credited those cards one step out of two they were
+ * never going to take.
  */
-export function cramProgress(
-  strengths: Iterable<number>,
-  total: number,
-  mastery: number
-): number {
+export function cramProgress(opts: {
+  /** cards in the run */
+  total: number;
+  /** strengths of the cards still in the queue, one per card */
+  remainingStrengths: number[];
+  /** correct answers a card needs before it can retire */
+  mastery: number;
+}): number {
+  const { total, remainingStrengths, mastery } = opts;
   if (total <= 0 || mastery <= 0) return 0;
-  let earned = 0;
-  for (const strength of strengths) earned += Math.min(strength, mastery);
-  return Math.min(100, Math.round((earned / (total * mastery)) * 100));
+  const retired = Math.max(0, total - remainingStrengths.length);
+  let earned = retired * mastery;
+  for (const strength of remainingStrengths) {
+    earned += Math.min(Math.max(strength, 0), mastery);
+  }
+  return Math.max(0, Math.min(100, Math.round((earned / (total * mastery)) * 100)));
 }
 
 export function cramScopeId(scope: string): string {
