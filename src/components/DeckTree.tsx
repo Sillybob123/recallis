@@ -1,4 +1,10 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { useNavigate } from "react-router-dom";
 import { createPortal } from "react-dom";
 import { Link } from "react-router-dom";
@@ -27,6 +33,27 @@ import { collectDecks, normalizeDeckPath, type DeckNode } from "../lib/deckPath"
 import type { Deck } from "../types";
 
 /** One tree row plus its descendants. */
+/**
+ * Whether we're on a phone-sized screen. Read once and shared, so a list of
+ * fifty deck rows doesn't create fifty media-query listeners.
+ */
+const NARROW = "(max-width: 639px)";
+function useNarrowScreen(): boolean {
+  return useSyncExternalStore(
+    (notify: () => void) => {
+      if (typeof window === "undefined" || !window.matchMedia) return () => {};
+      const mq = window.matchMedia(NARROW);
+      mq.addEventListener("change", notify);
+      return () => mq.removeEventListener("change", notify);
+    },
+    () =>
+      typeof window !== "undefined" && window.matchMedia
+        ? window.matchMedia(NARROW).matches
+        : false,
+    () => false
+  );
+}
+
 export function DeckRows({
   node,
   uid,
@@ -86,12 +113,20 @@ export function DeckRows({
   const hasWork =
     !totals || totals.newCount + totals.learnCount + totals.dueCount > 0;
 
+  // Nesting runs deep in an imported collection — "M1::Foundations::Anatomy::
+  // Exam 1::Week 1" is five levels. Twenty pixels a level spends a third of a
+  // phone's width on indentation alone, so it halves on a narrow screen.
+  const indentPerLevel = useNarrowScreen() ? 10 : 20;
+
   return (
     <>
-      <li className="group flex items-center gap-3 border-b border-slate-100 px-4 py-2.5 transition last:border-b-0 hover:bg-slate-50">
+      {/* Sized to fit a phone without a sideways scroll: tighter gaps, a
+          narrower indent per level, and count columns that give up their
+          padding before the deck name gives up its characters. */}
+      <li className="group flex items-center gap-1.5 border-b border-slate-100 px-2 py-2 transition last:border-b-0 hover:bg-slate-50 sm:gap-3 sm:px-4 sm:py-2.5">
         <div
-          className="flex min-w-0 flex-1 items-center gap-1.5"
-          style={{ paddingLeft: `${node.depth * 20}px` }}
+          className="flex min-w-0 flex-1 items-center gap-1 sm:gap-1.5"
+          style={{ paddingLeft: `${node.depth * indentPerLevel}px` }}
         >
           {node.children.length > 0 ? (
             <button
@@ -105,25 +140,25 @@ export function DeckRows({
               />
             </button>
           ) : (
-            <span className="w-[22px] shrink-0" />
+            <span className="w-3 shrink-0 sm:w-[22px]" />
           )}
           {node.deck ? (
             <Link
               to={`/deck/${node.deck.id}`}
-              className="min-w-0 truncate text-sm font-medium text-slate-800 hover:text-indigo-600"
+              className="min-w-0 truncate text-[13px] font-medium text-slate-800 hover:text-indigo-600 sm:text-sm"
             >
               {node.name}
             </Link>
           ) : (
             <span
-              className="min-w-0 truncate text-sm font-medium text-slate-800"
+              className="min-w-0 truncate text-[13px] font-medium text-slate-800 sm:text-sm"
               title="No cards of its own — just groups the decks beneath it"
             >
               {node.name}
             </span>
           )}
           {node.children.length > 0 && (
-            <span className="shrink-0 text-xs text-slate-400">
+            <span className="hidden shrink-0 text-xs text-slate-400 sm:inline">
               {descendants.length} deck{descendants.length === 1 ? "" : "s"}
             </span>
           )}
@@ -131,19 +166,19 @@ export function DeckRows({
 
         {counts && (
           <>
-            <span className="w-9 text-right text-xs font-bold text-sky-500">
+            <span className="w-6 text-right text-[11px] font-bold text-sky-500 sm:w-9 sm:text-xs">
               {totals?.newCount ?? "–"}
             </span>
-            <span className="w-9 text-right text-xs font-bold text-orange-500">
+            <span className="w-6 text-right text-[11px] font-bold text-orange-500 sm:w-9 sm:text-xs">
               {totals?.learnCount ?? "–"}
             </span>
-            <span className="w-9 text-right text-xs font-bold text-emerald-600">
+            <span className="w-6 text-right text-[11px] font-bold text-emerald-600 sm:w-9 sm:text-xs">
               {totals?.dueCount ?? "–"}
             </span>
           </>
         )}
 
-        <div className="w-[5.5rem] text-right">
+        <div className="w-14 text-right sm:w-[5.5rem]">
           {studyIds && hasWork && (
             <Link
               to={
@@ -151,7 +186,7 @@ export function DeckRows({
                   ? `/deck/${node.deck.id}/study`
                   : `/study-group?ids=${studyIds}&name=${encodeURIComponent(node.path)}`
               }
-              className="inline-block rounded-lg bg-indigo-600 px-3 py-1 text-xs font-semibold text-white transition hover:bg-indigo-700"
+              className="inline-block rounded-lg bg-indigo-600 px-2 py-1 text-[11px] font-semibold text-white transition hover:bg-indigo-700 sm:px-3 sm:text-xs"
               title={
                 descendants.length > 1
                   ? `Study all ${descendants.length} decks under ${node.name} together`
@@ -320,7 +355,7 @@ function DeckRowMenu({
   }
 
   return (
-    <div className="relative w-7">
+    <div className="relative w-5 shrink-0 sm:w-7">
       <button
         ref={buttonRef}
         onClick={() => setOpen((o) => !o)}

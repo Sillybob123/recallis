@@ -225,14 +225,17 @@ export function AnkiHome() {
         </div>
       ) : (
         <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
-          <div className="min-w-[560px]">
-          <div className="flex items-center gap-3 border-b border-slate-100 bg-slate-50 px-4 py-2 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+          {/* No minimum width: the rows below are built to fit a phone, so
+              forcing 560px would make every collection scroll sideways for
+              nothing. The scroller stays as a safety net. */}
+          <div>
+          <div className="flex items-center gap-1.5 border-b border-slate-100 bg-slate-50 px-2 py-2 text-[10px] font-semibold uppercase tracking-wide text-slate-400 sm:gap-3 sm:px-4 sm:text-[11px]">
             <span className="flex-1">Deck</span>
-            <span className="w-9 text-right text-sky-500">New</span>
-            <span className="w-9 text-right text-orange-500">Learn</span>
-            <span className="w-9 text-right text-emerald-600">Due</span>
-            <span className="w-[5.5rem]" />
-            <span className="w-7" />
+            <span className="w-6 text-right text-sky-500 sm:w-9">New</span>
+            <span className="w-6 text-right text-orange-500 sm:w-9">Learn</span>
+            <span className="w-6 text-right text-emerald-600 sm:w-9">Due</span>
+            <span className="w-14 sm:w-[5.5rem]" />
+            <span className="w-5 sm:w-7" />
           </div>
           <ul>
             {tree.map((node) => (
