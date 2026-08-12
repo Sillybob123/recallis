@@ -4,6 +4,7 @@ import { storage } from "../firebase";
 import type { Card, OcclusionSheet, OcclusionShape } from "../types";
 import { serializeAnkiFile } from "./ankiTsv";
 import { buildUnits, fillShapeOnCanvas } from "./shapes";
+import { EXPORT_QUALITY, exportDimensions } from "./exportImage";
 import { formatTagString } from "./tags";
 
 function loadImageFromBlob(blob: Blob): Promise<HTMLImageElement> {
@@ -18,8 +19,23 @@ function loadImageFromBlob(blob: Blob): Promise<HTMLImageElement> {
 
 function canvasToBlob(canvas: HTMLCanvasElement): Promise<Blob> {
   return new Promise((resolve, reject) => {
-    canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("toBlob failed"))), "image/png");
+    canvas.toBlob(
+      (b) => (b ? resolve(b) : reject(new Error("toBlob failed"))),
+      "image/jpeg",
+      EXPORT_QUALITY
+    );
   });
+}
+
+function exportCanvas(img: HTMLImageElement): HTMLCanvasElement {
+  const { width, height } = exportDimensions(
+    img.naturalWidth,
+    img.naturalHeight
+  );
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  return canvas;
 }
 
 /** Word-wraps and centers a text-box mask's prompt inside its rectangle. */
@@ -77,11 +93,9 @@ async function bakeMasked(
   img: HTMLImageElement,
   shapes: OcclusionShape[]
 ): Promise<Blob> {
-  const canvas = document.createElement("canvas");
-  canvas.width = img.naturalWidth;
-  canvas.height = img.naturalHeight;
+  const canvas = exportCanvas(img);
   const ctx = canvas.getContext("2d")!;
-  ctx.drawImage(img, 0, 0);
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
   for (const s of shapes) {
     fillShapeOnCanvas(ctx, s, canvas.width, canvas.height);
   }
@@ -94,11 +108,9 @@ async function bakeMasked(
 }
 
 async function bakeOriginal(img: HTMLImageElement): Promise<Blob> {
-  const canvas = document.createElement("canvas");
-  canvas.width = img.naturalWidth;
-  canvas.height = img.naturalHeight;
+  const canvas = exportCanvas(img);
   const ctx = canvas.getContext("2d")!;
-  ctx.drawImage(img, 0, 0);
+  ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
   return canvasToBlob(canvas);
 }
 
@@ -150,7 +162,7 @@ export async function exportDeckToAnki(
       const img = await loadImageFromBlob(blob);
 
       const answerBlob = await bakeOriginal(img);
-      const answerName = `occ_${sheet.id}_answer.png`;
+      const answerName = `occ_${sheet.id}_answer.jpg`;
       media.file(answerName, answerBlob);
       mediaCount++;
 
@@ -167,7 +179,7 @@ export async function exportDeckToAnki(
           ? ""
           : unit.label ?? "";
         const qBlob = await bakeMasked(img, unitShapes);
-        const qName = `occ_${sheet.id}_${unit.key.replace(/[^a-z0-9-]/gi, "")}_q.png`;
+        const qName = `occ_${sheet.id}_${unit.key.replace(/[^a-z0-9-]/gi, "")}_q.jpg`;
         media.file(qName, qBlob);
         mediaCount++;
         rows.push([

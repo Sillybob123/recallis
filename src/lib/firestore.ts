@@ -423,6 +423,7 @@ export async function getOcclusionsOnce(
       importId: data.importId as string | undefined,
       tags: (data.tags as string[] | undefined) ?? [],
       starred: Boolean(data.starred),
+      revealMode: data.revealMode as OcclusionSheet["revealMode"],
       title: data.title ?? "Untitled",
       imagePath: data.imagePath,
       imageUrl: data.imageUrl,
@@ -956,6 +957,7 @@ export function watchOcclusions(
           id: d.id,
           tags: (data.tags as string[] | undefined) ?? [],
           starred: Boolean(data.starred),
+          revealMode: data.revealMode as OcclusionSheet["revealMode"],
           title: data.title ?? "Untitled",
           imagePath: data.imagePath,
           imageUrl: data.imageUrl,
@@ -1059,6 +1061,7 @@ export async function createOcclusionSheet(
     linkedImage?: boolean;
     importId?: string;
     tags?: string[];
+    revealMode?: OcclusionSheet["revealMode"];
   }
 ) {
   const ref = await addDoc(occlusionsCol(uid, deckId), {
@@ -1076,7 +1079,9 @@ export async function updateOcclusionSheet(
   uid: string,
   deckId: string,
   sheetId: string,
-  patch: Partial<{ title: string; shapes: OcclusionShape[] }>
+  patch: Partial<
+    Pick<OcclusionSheet, "title" | "shapes" | "revealMode">
+  >
 ) {
   await updateDoc(
     doc(db, "users", uid, "decks", deckId, "occlusions", sheetId),

@@ -76,6 +76,13 @@ export function OcclusionEditor() {
   const [defaultOpacity, setDefaultOpacity] = useState(1);
   const [loading, setLoading] = useState(Boolean(sheetId));
   const [saving, setSaving] = useState(false);
+  /**
+   * How the sheet asks its masks. Chosen when saving rather than while
+   * studying, because it is a property of the picture: a diagram of one
+   * structure wants everything covered, a labelled overview reads better with
+   * only the asked label hidden.
+   */
+  const [revealMode, setRevealMode] = useState<"hideAll" | "hideOne">("hideAll");
 
   const containerRef = useRef<HTMLDivElement>(null);
   const isEditing = Boolean(sheetId);
@@ -91,6 +98,7 @@ export function OcclusionEditor() {
       setImgSrc(sheet.imageUrl);
       setImgDims({ width: sheet.imageWidth, height: sheet.imageHeight });
       setShapes(sheet.shapes);
+      setRevealMode(sheet.revealMode ?? "hideAll");
       setLoading(false);
     });
   }, [sheetId, user, deckId, navigate]);
@@ -478,6 +486,7 @@ export function OcclusionEditor() {
         await updateOcclusionSheet(user.uid, deckId, sheetId, {
           title: title.trim(),
           shapes,
+          revealMode,
         });
       } else {
         if (!file) {
@@ -493,6 +502,7 @@ export function OcclusionEditor() {
           imageWidth: imgDims.width,
           imageHeight: imgDims.height,
           shapes,
+          revealMode,
         });
       }
       goBack();
@@ -916,6 +926,52 @@ export function OcclusionEditor() {
                 together as one card.
               </p>
             )}
+          </div>
+
+          <div className="mb-3">
+            <p className="mb-1.5 text-[11px] font-bold uppercase tracking-wide text-slate-400">
+              How it asks
+            </p>
+            <div className="space-y-1.5">
+              {(
+                [
+                  [
+                    "hideAll",
+                    "Hide all, ask one",
+                    "Everything is covered and one mask is the question. Harder — the other labels can't help you.",
+                  ],
+                  [
+                    "hideOne",
+                    "Show all, hide one",
+                    "Only the mask being asked is covered. Easier — the structures around it give you context.",
+                  ],
+                ] as const
+              ).map(([value, label, desc]) => (
+                <label
+                  key={value}
+                  className={`block cursor-pointer rounded-lg border p-2.5 text-xs transition ${
+                    revealMode === value
+                      ? "border-indigo-400 bg-indigo-50"
+                      : "border-slate-200 hover:bg-slate-50"
+                  }`}
+                >
+                  <span className="flex items-center gap-2 font-semibold text-slate-800">
+                    <input
+                      type="radio"
+                      checked={revealMode === value}
+                      onChange={() => setRevealMode(value)}
+                    />
+                    {label}
+                  </span>
+                  <span className="mt-1 block leading-snug text-slate-500">
+                    {desc}
+                  </span>
+                </label>
+              ))}
+            </div>
+            <p className="mt-1.5 text-[11px] leading-snug text-slate-400">
+              You can still switch this for a single session while studying.
+            </p>
           </div>
 
           <button

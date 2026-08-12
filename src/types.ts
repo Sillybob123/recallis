@@ -77,6 +77,14 @@ export interface OcclusionSheet {
   /** starred in Quizlet mode — pulls the sheet into extra review */
   starred?: boolean;
   /**
+   * How this sheet asks its masks:
+   * "hideAll" — everything covered, one mask is the question (harder: no
+   *   help from the other labels being visible)
+   * "hideOne" — only the asked mask is covered, everything else readable
+   *   (easier: the surrounding structures give you context)
+   */
+  revealMode?: "hideAll" | "hideOne";
+  /**
    * True when imagePath points at a file owned by something else (a note's
    * slide). Deleting the sheet or its deck must not remove that file.
    */

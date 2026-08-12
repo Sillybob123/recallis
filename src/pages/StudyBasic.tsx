@@ -326,7 +326,11 @@ export function StudyBasic() {
     if (f === "write") return "type";
     return "flip";
   });
-  const [occMode, setOccMode] = useState<"hideOne" | "hideAll">("hideOne");
+  // null = follow whatever the sheet was made with; setting it overrides for
+  // this session only, which is what the toggle in the bar is for.
+  const [occOverride, setOccOverride] = useState<"hideOne" | "hideAll" | null>(
+    null
+  );
   const [typed, setTyped] = useState("");
   const [checked, setChecked] = useState<null | boolean>(null);
   const [mcPicked, setMcPicked] = useState<number | null>(null);
@@ -598,6 +602,11 @@ export function StudyBasic() {
 
   const current = queue[0];
   const showMaskToggle = current?.kind === "occlusion";
+  const occMode: "hideOne" | "hideAll" =
+    occOverride ??
+    (current?.kind === "occlusion"
+      ? (current.sheet.revealMode ?? "hideAll")
+      : "hideAll");
   const anatomy = studyMode === "quizlet" && quizletSettings.anatomyMode;
 
   /**
@@ -2210,7 +2219,7 @@ export function StudyBasic() {
                 {(["hideOne", "hideAll"] as const).map((m) => (
                   <button
                     key={m}
-                    onClick={() => setOccMode(m)}
+                    onClick={() => setOccOverride(m)}
                     className={`px-2.5 py-1 transition ${
                       occMode === m
                         ? "bg-slate-800 text-white"

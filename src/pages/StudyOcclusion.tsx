@@ -37,7 +37,11 @@ export function StudyOcclusion() {
   const [queue, setQueue] = useState<StudyItem[]>([]);
   const [total, setTotal] = useState(0);
   const [revealed, setRevealed] = useState(false);
-  const [mode, setMode] = useState<"hideOne" | "hideAll">("hideOne");
+  // Same as the main study screen: the sheet's own setting unless overridden
+  // for this sitting.
+  const [modeOverride, setModeOverride] = useState<"hideOne" | "hideAll" | null>(
+    null
+  );
 
   useEffect(() => {
     if (!user || !deckId) return;
@@ -55,6 +59,8 @@ export function StudyOcclusion() {
   }, [sheets === null]);
 
   const current = queue[0];
+  const mode: "hideOne" | "hideAll" =
+    modeOverride ?? current?.sheet.revealMode ?? "hideAll";
 
   function restart() {
     if (!sheets) return;
@@ -159,7 +165,7 @@ export function StudyOcclusion() {
       <div className="mb-4 flex justify-center gap-2 text-sm">
         <button
           onClick={() => {
-            setMode("hideOne");
+            setModeOverride("hideOne");
             setRevealed(false);
           }}
           className={`rounded-full px-3 py-1 font-medium transition ${
@@ -170,7 +176,7 @@ export function StudyOcclusion() {
         </button>
         <button
           onClick={() => {
-            setMode("hideAll");
+            setModeOverride("hideAll");
             setRevealed(false);
           }}
           className={`rounded-full px-3 py-1 font-medium transition ${
