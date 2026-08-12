@@ -214,6 +214,7 @@ function OcclusionCard({
           hiddenIds={hiddenIds}
           targetIds={targetIds}
           outlineIds={outlineIds}
+          revealed={revealed}
         />
       </ZoomPan>
       {item.unit.label && revealed && (

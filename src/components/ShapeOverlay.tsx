@@ -1,5 +1,6 @@
 import type { OcclusionShape } from "../types";
 import {
+  annotationVisible,
   annotationWeight,
   arrowEnds,
   arrowHead,
@@ -25,12 +26,16 @@ export function ShapeOverlay({
   hiddenIds,
   targetIds,
   outlineIds,
+  revealed = false,
 }: {
   shapes: OcclusionShape[];
   hiddenIds: Set<string>;
   targetIds: Set<string>;
   outlineIds?: Set<string>;
+  /** whether the answer is showing — reveal-only notes wait for this */
+  revealed?: boolean;
 }) {
+  const ctx = { revealed, unitShapeIds: targetIds };
   // Text-box masks display their prompt while covered — HTML, not SVG <text>,
   // because the stretched 0-100 viewBox would distort glyphs.
   const prompts = shapes.filter(
@@ -43,7 +48,9 @@ export function ShapeOverlay({
   );
   // Annotations mark the image up rather than covering it, so they are drawn
   // on every side of every card — question and answer alike.
-  const notes = shapes.filter((s) => shapeKind(s) === "note" && s.label);
+  const notes = shapes.filter(
+    (s) => shapeKind(s) === "note" && s.label && annotationVisible(s, ctx)
+  );
   return (
     <div className="pointer-events-none absolute inset-0">
     <svg
@@ -52,7 +59,11 @@ export function ShapeOverlay({
       preserveAspectRatio="none"
     >
       {shapes.map((s) => {
-        if (isAnnotation(s)) return <Annotation key={s.id} shape={s} />;
+        if (isAnnotation(s)) {
+          return annotationVisible(s, ctx) ? (
+            <Annotation key={s.id} shape={s} />
+          ) : null;
+        }
         // A cover is painted whatever the card is asking, including on the
         // answer — revealing it would be the spoiler it exists to prevent.
         const hidden = hiddenIds.has(s.id) || isCover(s);

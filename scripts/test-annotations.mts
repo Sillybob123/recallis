@@ -5,6 +5,8 @@
 import {
   annotationsOf,
   coversOf,
+  annotationsForCard,
+  annotationVisible,
   companionsFor,
   isCardShape,
   isCompanion,
@@ -187,6 +189,65 @@ console.log("\nmasks tied to particular cards:");
     "an arrow is never in the hidden set",
     !occlusionVisibility(withArrow, ["m1"], "hideAll", false).hidden.has("a"),
     "it is drawn on top, not covered over"
+  );
+}
+
+// ---------- explanations that wait for the answer ----------
+// A note explaining the answer is worthless on the question side, and
+// actively harmful: it is the answer, written out.
+console.log("\nexplanations:");
+{
+  const m1 = box("m1");
+  const m2 = box("m2");
+  const always = box("n1", { kind: "note", label: "Anterior view" });
+  const explain = box("n2", { kind: "note", label: "Why: recurrent laryngeal", onReveal: true });
+  const tied = box("n3", {
+    kind: "note",
+    label: "Only for m1",
+    onReveal: true,
+    showsWith: ["m1"],
+  });
+  const shapes = [m1, m2, always, explain, tied];
+
+  const onQuestion = annotationsForCard(shapes, { revealed: false, unitShapeIds: ["m1"] });
+  check(
+    "the question side shows only the plain label",
+    onQuestion.map((s) => s.id).join() === "n1",
+    onQuestion.map((s) => s.id).join()
+  );
+
+  const onAnswer = annotationsForCard(shapes, { revealed: true, unitShapeIds: ["m1"] });
+  check(
+    "the answer adds both explanations",
+    onAnswer.map((s) => s.id).sort().join() === "n1,n2,n3",
+    onAnswer.map((s) => s.id).sort().join()
+  );
+
+  const otherAnswer = annotationsForCard(shapes, { revealed: true, unitShapeIds: ["m2"] });
+  check(
+    "another card's answer leaves the tied one out",
+    otherAnswer.map((s) => s.id).sort().join() === "n1,n2",
+    "that's the whole point of tying it"
+  );
+
+  check(
+    "an explanation is never a card",
+    buildUnits(shapes).map((u) => u.key).join() === "m1,m2"
+  );
+  check(
+    "and a tied note is not treated as a mask to fill in",
+    !companionsFor(shapes, ["m1"]).has("n3"),
+    "it is drawn, not covered over"
+  );
+  check(
+    "so asking m1 covers only m1",
+    [...occlusionVisibility(shapes, ["m1"], "hideOne", false).hidden].join() === "m1"
+  );
+
+  check(
+    "visibility is decided per shape too",
+    !annotationVisible(explain, { revealed: false, unitShapeIds: [] }) &&
+      annotationVisible(explain, { revealed: true, unitShapeIds: [] })
   );
 }
 

@@ -103,6 +103,11 @@ export interface OcclusionShape {
    * card away, but is fair game on every other card.
    */
   showsWith?: string[];
+  /**
+   * Annotations only: hold this back until the answer is showing. An
+   * explanation on the question side is just the answer written out.
+   */
+  onReveal?: boolean;
 }
 
 export interface OcclusionSheet {

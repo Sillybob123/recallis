@@ -14,6 +14,7 @@ import {
   Pentagon,
   Redo2,
   Square,
+  Lightbulb,
   Link2,
   Star,
   Trash2,
@@ -53,6 +54,9 @@ import { uid } from "../lib/uid";
 /** Covers default to near-black: unambiguous, and clearly not a mask. */
 const COVER_COLOR = "#0f172a";
 
+/** Explanations get their own colour so a glance tells them from a label. */
+const EXPLAIN_COLOR = "#b45309";
+
 const MASK_COLORS = [DEFAULT_MASK_COLOR, "#ef4444", "#10b981", "#f59e0b", "#a855f7", "#ec4899", "#334155"];
 
 type Tool =
@@ -64,10 +68,11 @@ type Tool =
   | "note"
   | "arrow"
   | "star"
+  | "explain"
   | "cover";
 
 /** The tools that mark the image up instead of covering it. */
-const ANNOTATION_TOOLS: Tool[] = ["note", "arrow", "star"];
+const ANNOTATION_TOOLS: Tool[] = ["note", "arrow", "star", "explain"];
 
 interface DragState {
   mode: "draw" | "move" | "resize" | "vertex" | "marquee";
@@ -515,7 +520,9 @@ export function OcclusionEditor() {
     e.stopPropagation();
     if (linking) {
       if (shape.id === linking) return;
-      if (!isCardShape(shape)) return; // only a real card can be a host
+      // Only something that is actually asked can host: you attach a note to
+      // the card it explains, not to another note.
+      if (!isCardShape(shape)) return;
       snapshot();
       setShapes((prev) =>
         prev.map((s) => {
@@ -731,7 +738,12 @@ export function OcclusionEditor() {
             ]);
             setSelectedIds(new Set([id]));
           } else {
-            const text = prompt("Note to show on the image:")?.trim();
+            const onReveal = tool === "explain";
+            const text = prompt(
+              onReveal
+                ? "Explanation to show once the answer is revealed:"
+                : "Note to show on the image:"
+            )?.trim();
             if (text) {
               setShapes((prev) => [
                 ...prev,
@@ -739,12 +751,15 @@ export function OcclusionEditor() {
                   id,
                   kind: "note",
                   annotation: true,
+                  onReveal: onReveal || undefined,
                   label: text,
                   x: Math.min(from.x, to.x),
                   y: Math.min(from.y, to.y),
                   w: Math.max(w, 0.12),
                   h: Math.max(h, 0.05),
-                  color: annotationColor,
+                  // Amber by default, matching how it's marked in the list:
+                  // an explanation is a different thing from a label.
+                  color: onReveal ? EXPLAIN_COLOR : annotationColor,
                 },
               ]);
               setSelectedIds(new Set([id]));
@@ -932,6 +947,7 @@ export function OcclusionEditor() {
                       ["note", MessageSquare, "Note — plain text on the image, never asked as a question"],
                       ["arrow", ArrowUpRight, "Arrow — drag from the tail to whatever you're pointing at"],
                       ["star", Star, "Star — mark something worth noticing"],
+                      ["explain", Lightbulb, "Explanation — text that appears only once the answer is revealed. Link it to particular masks to show it on just those cards."],
                     ] as const
                   ).map(([t, Icon, tip]) => (
                     <button
@@ -1248,7 +1264,9 @@ export function OcclusionEditor() {
                         maxWidth: `${(1 - s.x) * 100}%`,
                         color: shapeColor(s),
                         background: "rgba(255,255,255,0.92)",
-                        border: `${selectedIds.has(s.id) ? 2 : 1}px solid ${shapeColor(s)}`,
+                        border: `${selectedIds.has(s.id) ? 2 : 1}px ${
+                          s.onReveal ? "dashed" : "solid"
+                        } ${shapeColor(s)}`,
                         fontSize: "clamp(9px, 1.5vw, 15px)",
                         whiteSpace: "nowrap",
                       }}
@@ -1348,7 +1366,9 @@ export function OcclusionEditor() {
                           ? "Click or drag to place a star. Stars are never asked as questions."
                           : tool === "note"
                             ? "Drag a box and type your note. Notes stay visible on every card."
-                            : tool === "cover"
+                            : tool === "explain"
+                              ? "Drag a box and type the explanation. It stays hidden until the answer is revealed — link it to a mask to show it on just that card."
+                              : tool === "cover"
                               ? "Drag over anything that shouldn't be seen. Covers stay on for every card and are never asked."
                               : "Drag on the image to draw. Switch to the arrow tool to move/resize."}
               </p>
@@ -1419,8 +1439,14 @@ export function OcclusionEditor() {
                       </span>
                     )}
                     {isAnnotation(s) && (
-                      <span className="shrink-0 rounded bg-rose-100 px-1 text-[10px] font-bold text-rose-600">
-                        mark
+                      <span
+                        className={`shrink-0 rounded px-1 text-[10px] font-bold ${
+                          s.onReveal
+                            ? "bg-amber-100 text-amber-700"
+                            : "bg-rose-100 text-rose-600"
+                        }`}
+                      >
+                        {s.onReveal ? "answer" : "mark"}
                       </span>
                     )}
                     {s.groupId && (
@@ -1435,7 +1461,7 @@ export function OcclusionEditor() {
                       placeholder="Label (optional)"
                       className="min-w-0 flex-1 bg-transparent text-sm outline-none"
                     />
-                    {!isAnnotation(s) && !isCover(s) && (
+                    {!isCover(s) && (
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
@@ -1447,7 +1473,9 @@ export function OcclusionEditor() {
                             ? `Only shown on ${s.showsWith!.length} card${
                                 s.showsWith!.length === 1 ? "" : "s"
                               } — click to change which`
-                            : "Only show this mask on certain cards"
+                            : isAnnotation(s)
+                              ? "Only show this on certain cards"
+                              : "Only show this mask on certain cards"
                         }
                         className={`shrink-0 ${
                           linking === s.id
@@ -1458,6 +1486,31 @@ export function OcclusionEditor() {
                         }`}
                       >
                         <Link2 size={14} />
+                      </button>
+                    )}
+                    {isAnnotation(s) && (
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          snapshot();
+                          setShapes((prev) =>
+                            prev.map((x) =>
+                              x.id === s.id
+                                ? { ...x, onReveal: x.onReveal ? undefined : true }
+                                : x
+                            )
+                          );
+                        }}
+                        title={
+                          s.onReveal
+                            ? "Only shown once the answer is revealed"
+                            : "Shown on both sides — click to hold it back until the answer"
+                        }
+                        className={`shrink-0 ${
+                          s.onReveal ? "text-amber-500" : "text-slate-300 hover:text-slate-600"
+                        }`}
+                      >
+                        <Lightbulb size={14} />
                       </button>
                     )}
                     {!isAnnotation(s) && !isCompanion(s) && (

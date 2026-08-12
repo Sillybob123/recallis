@@ -210,9 +210,41 @@ export function companionsFor(
   const asked = new Set(unitShapeIds);
   const out = new Set<string>();
   for (const s of shapes) {
+    // Annotations can carry showsWith too, but they are drawn rather than
+    // covered — they never belong in a set of things to fill in.
+    if (isAnnotation(s)) continue;
     if (isCompanion(s) && s.showsWith!.some((id) => asked.has(id))) out.add(s.id);
   }
   return out;
+}
+
+/**
+ * Whether an annotation belongs on the card currently on screen.
+ *
+ * Two independent conditions, both optional. `onReveal` holds it back until
+ * the answer is showing, which is what makes an explanation an explanation
+ * rather than a giveaway. `showsWith` limits it to the cards asking about
+ * particular masks, so an explanation of the aortic arch doesn't surface
+ * while you're being asked about a rib.
+ */
+export function annotationVisible(
+  shape: OcclusionShape,
+  ctx: { revealed: boolean; unitShapeIds: Iterable<string> }
+): boolean {
+  if (shape.onReveal && !ctx.revealed) return false;
+  if (isCompanion(shape)) {
+    const asked = new Set(ctx.unitShapeIds);
+    return shape.showsWith!.some((id) => asked.has(id));
+  }
+  return true;
+}
+
+/** The annotations to draw on a given card. */
+export function annotationsForCard(
+  shapes: OcclusionShape[],
+  ctx: { revealed: boolean; unitShapeIds: Iterable<string> }
+): OcclusionShape[] {
+  return shapes.filter((s) => isAnnotation(s) && annotationVisible(s, ctx));
 }
 
 export interface OcclusionVisibility {

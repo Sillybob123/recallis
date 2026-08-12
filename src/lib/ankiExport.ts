@@ -4,13 +4,16 @@ import { storage } from "../firebase";
 import type { Card, OcclusionSheet, OcclusionShape } from "../types";
 import { serializeAnkiFile } from "./ankiTsv";
 import {
+  annotationsForCard,
   annotationsOf,
   buildUnits,
   coversOf,
   drawAnnotationOnCanvas,
   fillShapeOnCanvas,
   companionsFor,
+  isAnnotation,
   isCardShape,
+  isCompanion,
 } from "./shapes";
 import { EXPORT_QUALITY, exportDimensions } from "./exportImage";
 import { formatTagString } from "./tags";
@@ -101,7 +104,9 @@ async function bakeMasked(
   img: HTMLImageElement,
   shapes: OcclusionShape[],
   /** the whole sheet, for the covers and marks that belong on every card */
-  all: OcclusionShape[] = shapes
+  all: OcclusionShape[] = shapes,
+  /** the annotations this particular card should carry */
+  marks: OcclusionShape[] = annotationsOf(all)
 ): Promise<Blob> {
   const canvas = exportCanvas(img);
   const ctx = canvas.getContext("2d")!;
@@ -121,7 +126,7 @@ async function bakeMasked(
     }
   }
   // Arrows, stars and labels go on last so a mask can't cover them.
-  for (const s of annotationsOf(all)) {
+  for (const s of marks) {
     drawAnnotationOnCanvas(ctx, s, canvas.width, canvas.height);
   }
   return canvasToBlob(canvas);
@@ -130,7 +135,8 @@ async function bakeMasked(
 /** The answer image: the masks lifted, but covers and marks still on it. */
 async function bakeOriginal(
   img: HTMLImageElement,
-  shapes: OcclusionShape[] = []
+  shapes: OcclusionShape[] = [],
+  marks: OcclusionShape[] = annotationsOf(shapes)
 ): Promise<Blob> {
   const canvas = exportCanvas(img);
   const ctx = canvas.getContext("2d")!;
@@ -138,7 +144,7 @@ async function bakeOriginal(
   for (const s of coversOf(shapes)) {
     fillShapeOnCanvas(ctx, s, canvas.width, canvas.height);
   }
-  for (const s of annotationsOf(shapes)) {
+  for (const s of marks) {
     drawAnnotationOnCanvas(ctx, s, canvas.width, canvas.height);
   }
   return canvasToBlob(canvas);
@@ -191,10 +197,19 @@ export async function exportDeckToAnki(
       const blob = await getBlob(ref(storage, sheet.imagePath));
       const img = await loadImageFromBlob(blob);
 
-      const answerBlob = await bakeOriginal(img, sheet.shapes);
-      const answerName = `occ_${sheet.id}_answer.jpg`;
-      media.file(answerName, answerBlob);
-      mediaCount++;
+      // Normally every card of a sheet shares one answer image, which keeps
+      // an export small. It can only be shared when the answer looks the
+      // same on every card — an explanation held back until the reveal, or
+      // one tied to particular masks, makes each answer its own picture.
+      const perCardAnswers = sheet.shapes.some(
+        (s) => isAnnotation(s) && (s.onReveal || isCompanion(s))
+      );
+      let sharedAnswerName = "";
+      if (!perCardAnswers) {
+        sharedAnswerName = `occ_${sheet.id}_answer.jpg`;
+        media.file(sharedAnswerName, await bakeOriginal(img, sheet.shapes));
+        mediaCount++;
+      }
 
       // One card per unit: grouped masks bake into a single question image.
       const shapeById = new Map(sheet.shapes.map((s) => [s.id, s]));
@@ -217,8 +232,29 @@ export async function exportDeckToAnki(
         const qBlob = await bakeMasked(
           img,
           [...unitShapes, ...sheet.shapes.filter((s) => companions.has(s.id))],
-          sheet.shapes
+          sheet.shapes,
+          annotationsForCard(sheet.shapes, {
+            revealed: false,
+            unitShapeIds: unit.shapeIds,
+          })
         );
+
+        let answerName = sharedAnswerName;
+        if (perCardAnswers) {
+          answerName = `occ_${sheet.id}_${unit.key.replace(/[^a-z0-9-]/gi, "")}_a.jpg`;
+          media.file(
+            answerName,
+            await bakeOriginal(
+              img,
+              sheet.shapes,
+              annotationsForCard(sheet.shapes, {
+                revealed: true,
+                unitShapeIds: unit.shapeIds,
+              })
+            )
+          );
+          mediaCount++;
+        }
         const qName = `occ_${sheet.id}_${unit.key.replace(/[^a-z0-9-]/gi, "")}_q.jpg`;
         media.file(qName, qBlob);
         mediaCount++;

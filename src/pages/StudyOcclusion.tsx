@@ -228,6 +228,7 @@ export function StudyOcclusion() {
               hiddenIds={hiddenIds}
               targetIds={targetIds}
               outlineIds={outlineIds}
+              revealed={revealed}
             />
           </ZoomPan>
 
