@@ -14,6 +14,34 @@ export interface StudyData {
   srs: Map<string, SrsState>;
 }
 
+/** One deck's contents, so callers can cache per deck rather than per set. */
+export async function loadDeckBundle(
+  uid: string,
+  deckId: string
+): Promise<StudyData> {
+  const [cards, sheets, srs] = await Promise.all([
+    getCardsOnce(uid, deckId),
+    getOcclusionsOnce(uid, deckId),
+    getSrsMap(uid, deckId),
+  ]);
+  return {
+    cards: cards.map((c) => ({ ...c, deckId })),
+    sheets: sheets.map((sh) => ({ ...sh, deckId })),
+    srs: new Map([...srs].map(([key, state]) => [`${deckId}|${key}`, state])),
+  };
+}
+
+/** Merges per-deck bundles into the single shape the views expect. */
+export function mergeStudyData(bundles: Iterable<StudyData>): StudyData {
+  const out: StudyData = { cards: [], sheets: [], srs: new Map() };
+  for (const b of bundles) {
+    out.cards.push(...b.cards);
+    out.sheets.push(...b.sheets);
+    for (const [k, v] of b.srs) out.srs.set(k, v);
+  }
+  return out;
+}
+
 export async function loadStudyData(
   uid: string,
   deckIds: string[]

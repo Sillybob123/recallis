@@ -108,6 +108,28 @@ export function flattenTree(nodes: DeckNode[]): DeckNode[] {
 }
 
 /** Finds an existing deck whose path matches, ignoring separator style/case. */
+/**
+ * The chosen decks plus everything beneath them.
+ *
+ * Selecting a parent has to mean its subtree — clicking "Anatomy" when every
+ * card lives in "Anatomy::Thorax" should not come back empty. Matching on
+ * the path prefix with the separator attached is what stops "Anatomy" from
+ * also dragging in "Anatomy 2".
+ */
+export function deckSubtreeIds(decks: Deck[], rootIds: string[]): string[] {
+  const chosen = new Set(rootIds);
+  const prefixes = decks
+    .filter((d) => chosen.has(d.id))
+    .map((d) => `${normalizeDeckPath(d.name)}::`);
+  return decks
+    .filter(
+      (d) =>
+        chosen.has(d.id) ||
+        prefixes.some((p) => normalizeDeckPath(d.name).startsWith(p))
+    )
+    .map((d) => d.id);
+}
+
 export function findDeckByPath(decks: Deck[], path: string): Deck | undefined {
   const target = normalizeDeckPath(path).toLowerCase();
   return decks.find((d) => normalizeDeckPath(d.name).toLowerCase() === target);

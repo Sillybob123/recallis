@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import {
   ArrowLeft,
@@ -34,10 +34,14 @@ import {
   updateCard,
   watchDecks,
 } from "../lib/firestore";
-import { loadStudyData, type StudyData } from "../lib/studyLoad";
+import {
+  loadDeckBundle,
+  mergeStudyData,
+  type StudyData,
+} from "../lib/studyLoad";
 import type { ReviewLogEntry } from "../lib/firestore";
 import type { StudyItem } from "../lib/studyItems";
-import { normalizeDeckPath, splitDeckPath } from "../lib/deckPath";
+import { deckSubtreeIds, normalizeDeckPath, splitDeckPath } from "../lib/deckPath";
 import { addTags, normalizeTags, removeTags, tagMatches } from "../lib/tags";
 import { isCardShape } from "../lib/shapes";
 import {
@@ -109,7 +113,8 @@ interface Row {
   deck: Deck | undefined;
   kind: NoteKind;
   typeLabel: string; // "Cloze 1", "Basic", "Mask 3"
-  preview: string;
+  /** the raw HTML; the text is derived on demand by previewOf() */
+  previewHtml: string;
   srs: SrsState | undefined;
   state: CardState;
   createdAt: number;
@@ -143,8 +148,26 @@ function dueText(row: Row): string {
   });
 }
 
-function plain(html: string): string {
-  return stripHtmlInline(html);
+/**
+ * HTML to a one-line preview. Each call parses a document fragment, so on a
+ * collection of any size this is the most expensive thing on the page — it
+ * is therefore done for a row only when something actually needs its text,
+ * and remembered afterwards.
+ */
+const previewCache = new Map<string, string>();
+function previewOf(row: { key: string; previewHtml: string }): string {
+  return plain(row.key, row.previewHtml);
+}
+
+function plain(key: string, html: string): string {
+  const hit = previewCache.get(key);
+  if (hit !== undefined) return hit;
+  const text = stripHtmlInline(html);
+  // The cache is per session and keyed by row, so an edited card is only
+  // stale until the row is rebuilt with a new key.
+  if (previewCache.size > 20000) previewCache.clear();
+  previewCache.set(key, text);
+  return text;
 }
 
 export function BrowsePage() {
@@ -152,7 +175,6 @@ export function BrowsePage() {
   const [searchParams] = useSearchParams();
 
   const [decks, setDecks] = useState<Deck[] | null>(null);
-  const [data, setData] = useState<StudyData | null>(null);
   const [revlog, setRevlog] = useState<Map<string, ReviewLogEntry[]>>(new Map());
   const [viewMode, setViewMode] = useState<"cards" | "notes">("cards");
   const [search, setSearch] = useState("");
@@ -174,28 +196,113 @@ export function BrowsePage() {
   const [busy, setBusy] = useState<string | null>(null);
   const [showReplace, setShowReplace] = useState(false);
   const [moveTarget, setMoveTarget] = useState("");
+  /**
+   * Rows are drawn a page at a time. A thousand at once is a second of
+   * layout before anything is on screen, and nobody reads past the first
+   * screenful without narrowing the search anyway.
+   */
+  const [rowLimit, setRowLimit] = useState(200);
 
   useEffect(() => {
     if (!user) return;
     return watchDecks(user.uid, setDecks);
   }, [user]);
 
-  const reload = useCallback(async () => {
-    if (!user || !decks) return;
-    const ids = decks.map((d) => d.id);
-    const [studyData, log] = await Promise.all([
-      loadStudyData(user.uid, ids),
-      getTodayRevlog(user.uid, ids, startOfStudyDay()).catch(
-        () => new Map<string, ReviewLogEntry[]>()
-      ),
-    ]);
-    setData(studyData);
-    setRevlog(log);
-  }, [user, decks]);
+  /**
+   * Decks are loaded one at a time and kept, so clicking between them is
+   * instant after the first visit and nothing is fetched twice.
+   *
+   * The whole collection used to be pulled on mount — every card, every
+   * mask and every scheduling document in every deck — which on a real
+   * collection is tens of thousands of documents before a single row can be
+   * drawn. Browsing one deck should cost one deck.
+   */
+  const cacheRef = useRef(new Map<string, StudyData>());
+  const [cacheVersion, setCacheVersion] = useState(0);
+  const [loadingDecks, setLoadingDecks] = useState(0);
+  const [browseAll, setBrowseAll] = useState(false);
+
+  // Selecting a parent deck means its whole subtree, exactly as studying it
+  // does — otherwise clicking "Anatomy" shows nothing when every card lives
+  // in "Anatomy::Thorax".
+  const wantedDeckIds = useMemo(() => {
+    if (!decks) return [];
+    if (!deckFilter) return browseAll ? decks.map((d) => d.id) : [];
+    return deckSubtreeIds(decks, deckFilter);
+  }, [decks, deckFilter, browseAll]);
+
+  /**
+   * Fetches the decks in view that aren't already held. `force` refetches
+   * them even if they are — used after an edit, since the cached copy is
+   * now the stale one.
+   */
+  const fetchDecks = useCallback(
+    async (ids: string[], force = false) => {
+      if (!user) return;
+      const missing = force ? ids : ids.filter((id) => !cacheRef.current.has(id));
+      if (missing.length === 0) return;
+      setLoadingDecks((n) => n + missing.length);
+      // In parallel, but each lands as it arrives so a big deck doesn't hold
+      // up the small ones beside it.
+      await Promise.all(
+        missing.map(async (deckId) => {
+          try {
+            const bundle = await loadDeckBundle(user.uid, deckId);
+            cacheRef.current.set(deckId, bundle);
+          } catch {
+            cacheRef.current.set(deckId, { cards: [], sheets: [], srs: new Map() });
+          } finally {
+            setCacheVersion((v) => v + 1);
+            setLoadingDecks((n) => n - 1);
+          }
+        })
+      );
+    },
+    [user]
+  );
 
   useEffect(() => {
-    reload();
-  }, [reload]);
+    void fetchDecks(wantedDeckIds);
+  }, [fetchDecks, wantedDeckIds]);
+
+  const data = useMemo(() => {
+    void cacheVersion;
+    const bundles = wantedDeckIds
+      .map((id) => cacheRef.current.get(id))
+      .filter((b): b is StudyData => Boolean(b));
+    return mergeStudyData(bundles);
+  }, [wantedDeckIds, cacheVersion]);
+
+  /** After an edit: refetch what's on screen, and forget the rest. */
+  const reload = useCallback(async () => {
+    if (!user) return;
+    // Decks that aren't in view are dropped rather than refetched — a move
+    // may have changed one of them, and it will be reloaded when visited.
+    for (const id of [...cacheRef.current.keys()]) {
+      if (!wantedDeckIds.includes(id)) cacheRef.current.delete(id);
+    }
+    await fetchDecks(wantedDeckIds, true);
+    const log = await getTodayRevlog(
+      user.uid,
+      wantedDeckIds,
+      startOfStudyDay()
+    ).catch(() => new Map<string, ReviewLogEntry[]>());
+    setRevlog(log);
+  }, [user, wantedDeckIds, fetchDecks]);
+
+  // The day's review log is small and only covers the decks in view.
+  useEffect(() => {
+    if (!user || wantedDeckIds.length === 0) return;
+    let cancelled = false;
+    getTodayRevlog(user.uid, wantedDeckIds, startOfStudyDay())
+      .then((log) => {
+        if (!cancelled) setRevlog(log);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [user, wantedDeckIds]);
 
   const deckById = useMemo(
     () => new Map((decks ?? []).map((d) => [d.id, d])),
@@ -203,7 +310,6 @@ export function BrowsePage() {
   );
 
   const allRows = useMemo<Row[]>(() => {
-    if (!data) return [];
     const out: Row[] = [];
     const sortedCards = [...data.cards].sort((a, b) => a.createdAt - b.createdAt);
     for (const card of sortedCards) {
@@ -227,7 +333,7 @@ export function BrowsePage() {
           deck: deckById.get(card.deckId),
           kind: "basic",
           typeLabel: "Basic",
-          preview: plain(card.data.front),
+          previewHtml: card.data.front,
           srs,
           state: stateOf(srs),
           createdAt: card.createdAt,
@@ -259,7 +365,7 @@ export function BrowsePage() {
             deck: deckById.get(card.deckId),
             kind: "cloze",
             typeLabel: `Cloze ${n}`,
-            preview: plain(card.data.text),
+            previewHtml: card.data.text,
             srs,
             state: stateOf(srs),
             createdAt: card.createdAt,
@@ -299,7 +405,7 @@ export function BrowsePage() {
               deck: deckById.get(sheet.deckId),
               kind: "occlusion",
               typeLabel: `Mask ${unitIndex}`,
-              preview: shape.label?.trim() || sheet.title,
+              previewHtml: shape.label?.trim() || sheet.title,
               srs,
               state: stateOf(srs),
               createdAt: sheet.createdAt,
@@ -361,7 +467,7 @@ export function BrowsePage() {
       if (tagFilter && !row.tags.some((t) => tagMatches(t, tagFilter))) return false;
       if (
         q &&
-        !row.preview.toLowerCase().includes(q) &&
+        !previewOf(row).toLowerCase().includes(q) &&
         !row.tags.some((t) => t.toLowerCase().includes(q))
       ) {
         return false;
@@ -376,7 +482,7 @@ export function BrowsePage() {
     rows.sort((a, b) => {
       switch (sort.col) {
         case "preview":
-          return dir * a.preview.localeCompare(b.preview);
+          return dir * previewOf(a).localeCompare(previewOf(b));
         case "type":
           return dir * a.typeLabel.localeCompare(b.typeLabel, undefined, { numeric: true });
         case "state":
@@ -438,6 +544,11 @@ export function BrowsePage() {
       prev.col === col ? { col, dir: prev.dir === 1 ? -1 : 1 } : { col, dir: 1 }
     );
   }
+
+  // A new filter means a new first screenful.
+  useEffect(() => {
+    setRowLimit(200);
+  }, [search, stateFilter, deckFilter, kindFilter, flagFilter, tagFilter, todayFilter, viewMode]);
 
   const stateCounts = useMemo(() => {
     const counts = { new: 0, learning: 0, review: 0, suspended: 0, buried: 0 };
@@ -634,10 +745,10 @@ export function BrowsePage() {
     }
   }
 
-  if (!user || decks === null || data === null) {
+  if (!user || decks === null) {
     return (
       <Layout>
-        <div className="py-24 text-center text-slate-400">Loading your collection…</div>
+        <div className="py-24 text-center text-slate-400">Loading your decks…</div>
       </Layout>
     );
   }
@@ -702,9 +813,18 @@ export function BrowsePage() {
             </option>
           ))}
         </select>
+        {loadingDecks > 0 && (
+          <span className="flex items-center gap-1 text-xs text-slate-400">
+            <Loader2 size={12} className="animate-spin" /> loading
+          </span>
+        )}
         <select
           value={deckFilter?.length === 1 ? deckFilter[0] : ""}
-          onChange={(e) => setDeckFilter(e.target.value ? [e.target.value] : null)}
+          onChange={(e) => {
+            setDeckFilter(e.target.value ? [e.target.value] : null);
+            // Choosing "All decks" is an explicit request for the lot.
+            if (!e.target.value) setBrowseAll(true);
+          }}
           className="min-w-0 shrink rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs outline-none"
         >
           <option value="">All decks</option>
@@ -997,12 +1117,34 @@ export function BrowsePage() {
               </HeaderCell>
             </div>
             <div className="max-h-[58vh] overflow-y-auto">
-              {filtered.length === 0 ? (
+              {wantedDeckIds.length === 0 ? (
+                <div className="px-4 py-12 text-center">
+                  <p className="text-sm font-semibold text-slate-700">
+                    Pick a deck to browse
+                  </p>
+                  <p className="mx-auto mt-1 max-w-md text-xs leading-relaxed text-slate-500">
+                    Choosing one loads that deck and its subdecks, and nothing
+                    else — which is what keeps this instant on a large
+                    collection. Decks you've opened stay loaded.
+                  </p>
+                  <button
+                    onClick={() => setBrowseAll(true)}
+                    className="mt-4 rounded-lg border border-slate-300 bg-white px-3.5 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50"
+                  >
+                    Load all {decks.length} decks anyway
+                  </button>
+                </div>
+              ) : loadingDecks > 0 && filtered.length === 0 ? (
+                <p className="flex items-center justify-center gap-2 px-4 py-10 text-center text-sm text-slate-400">
+                  <Loader2 size={15} className="animate-spin" />
+                  Loading {loadingDecks} deck{loadingDecks === 1 ? "" : "s"}…
+                </p>
+              ) : filtered.length === 0 ? (
                 <p className="px-4 py-10 text-center text-sm text-slate-400">
                   Nothing matches these filters.
                 </p>
               ) : (
-                displayRows.slice(0, 1000).map(({ row, siblings }) => (
+                displayRows.slice(0, rowLimit).map(({ row, siblings }) => (
                   <div
                     key={row.key}
                     onClick={(e) =>
@@ -1035,7 +1177,7 @@ export function BrowsePage() {
                       {row.srs?.marked && (
                         <Star size={11} className="shrink-0" fill="#f59e0b" color="#f59e0b" />
                       )}
-                      <span className="truncate text-slate-800">{row.preview || "(empty)"}</span>
+                      <span className="truncate text-slate-800">{previewOf(row) || "(empty)"}</span>
                       {row.tags.slice(0, 3).map((tag) => (
                         <span
                           key={tag}
@@ -1079,10 +1221,13 @@ export function BrowsePage() {
                   </div>
                 ))
               )}
-              {displayRows.length > 1000 && (
-                <p className="px-4 py-2 text-center text-xs text-slate-400">
-                  Showing the first 1,000 rows — narrow the filters to see the rest.
-                </p>
+              {displayRows.length > rowLimit && (
+                <button
+                  onClick={() => setRowLimit((n) => n + 500)}
+                  className="w-full px-4 py-2.5 text-center text-xs font-semibold text-indigo-600 hover:bg-indigo-50"
+                >
+                  Show 500 more — {displayRows.length - rowLimit} left
+                </button>
               )}
             </div>
             </div>
