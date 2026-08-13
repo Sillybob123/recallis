@@ -41,6 +41,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         import("../lib/settings")
           .then(({ initSettingsSync }) => initSettingsSync(u.uid))
           .catch(() => {});
+        // A line in the register: who is here, and when. Throttled inside,
+        // and failure is ignored — it must never stand between someone and
+        // their cards.
+        import("../lib/firestore")
+          .then(({ touchPresence }) => touchPresence(u))
+          .catch(() => {});
       }
       setUser(u);
       setLoading(false);

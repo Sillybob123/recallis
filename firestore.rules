@@ -29,6 +29,13 @@ service cloud.firestore {
       return fromSchool() || grandfathered();
     }
 
+    // The one account that can see how the site is doing. An id, not an
+    // address — this file is public.
+    function isAdmin() {
+      return request.auth != null
+        && request.auth.uid == 'kM4QC3YCrWfhg9SbMEN29X4Wlgu1';
+    }
+
     // Every user's data lives under users/{uid}/... and only that user
     // (once signed in) may read or write it. Nobody else — including other
     // signed-in users — can see it.
@@ -46,6 +53,20 @@ service cloud.firestore {
       allow read, write: if request.auth != null
         && request.auth.uid == uid
         && allowed();
+    }
+
+    // One small record per account: who they are, when they joined, when
+    // they were last here. It exists so the site's owner can tell whether
+    // anybody is using it, and it is the only collection any account other
+    // than its own can read — by exactly one id.
+    match /signups/{uid} {
+      allow read: if request.auth != null
+        && (request.auth.uid == uid || isAdmin());
+      allow create, update: if request.auth != null
+        && request.auth.uid == uid
+        && allowed()
+        && request.resource.data.uid == uid;
+      allow delete: if false;
     }
 
     // Feedback is write-only from the app: you can post yours, and nobody —

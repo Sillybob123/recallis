@@ -12,6 +12,7 @@ import { QuizletHome } from "./pages/QuizletHome";
 import { NotesPage } from "./pages/NotesPage";
 import { PlannerPage } from "./pages/PlannerPage";
 import { AccountPage } from "./pages/AccountPage";
+import { CreatorStats } from "./pages/CreatorStats";
 import { NoteEditorPage } from "./pages/NoteEditorPage";
 import { DeckPage } from "./pages/DeckPage";
 import { StudyBasic } from "./pages/StudyBasic";
@@ -29,6 +30,7 @@ export default function App() {
           <Route path="/study-group" element={<ProtectedRoute><StudyBasic /></ProtectedRoute>} />
           <Route path="/planner" element={<ProtectedRoute><PlannerPage /></ProtectedRoute>} />
         <Route path="/account" element={<ProtectedRoute><AccountPage /></ProtectedRoute>} />
+        <Route path="/creator" element={<ProtectedRoute><CreatorStats /></ProtectedRoute>} />
           <Route path="/notes" element={<ProtectedRoute><NotesPage /></ProtectedRoute>} />
           <Route path="/notes/:noteId" element={<ProtectedRoute><NoteEditorPage /></ProtectedRoute>} />
           <Route

@@ -4,6 +4,7 @@ import { Link, useLocation, useNavigate } from "react-router-dom";
 import {
   CalendarCheck,
   Layers,
+  LineChart,
   LogOut,
   MessageSquare,
   UserRound,
@@ -13,6 +14,7 @@ import {
 } from "lucide-react";
 import { useAuth } from "../contexts/AuthContext";
 import { FeedbackModal } from "./FeedbackModal";
+import { isAdmin } from "../lib/admin";
 import { useStudyMode } from "../contexts/StudyModeContext";
 
 export function Layout({
@@ -191,10 +193,12 @@ export function Layout({
               </div>
 
               <ProfileMenu
+                uid={user.uid}
                 name={user.displayName}
                 email={user.email}
                 onFeedback={() => setFeedbackOpen(true)}
                 onSettings={() => navigate("/account")}
+                onCreatorStats={() => navigate("/creator")}
                 onLogOut={async () => {
                   await logOut();
                   navigate("/login");
@@ -234,16 +238,20 @@ function initialsOf(name: string | null, email: string | null): string {
  * and none of them is pressed often.
  */
 function ProfileMenu({
+  uid,
   name,
   email,
   onFeedback,
   onSettings,
+  onCreatorStats,
   onLogOut,
 }: {
+  uid: string;
   name: string | null;
   email: string | null;
   onFeedback: () => void;
   onSettings: () => void;
+  onCreatorStats: () => void;
   onLogOut: () => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -340,6 +348,19 @@ function ProfileMenu({
               >
                 Send feedback
               </MenuItem>
+              {/* Hiding this is tidiness, not security: the collection it
+                  leads to is closed to every other account by rule. */}
+              {isAdmin(uid) && (
+                <MenuItem
+                  icon={<LineChart size={14} />}
+                  onClick={() => {
+                    setOpen(false);
+                    onCreatorStats();
+                  }}
+                >
+                  Creator stats
+                </MenuItem>
+              )}
               <div className="border-t border-slate-100">
                 <MenuItem
                   icon={<LogOut size={14} />}

@@ -15,6 +15,7 @@ import {
   getDoc,
   setDoc,
   getCountFromServer,
+  increment,
   limit,
 } from "firebase/firestore";
 import {
@@ -876,6 +877,85 @@ export async function setPlannerProgressBulk(
     { done: entries },
     { merge: true }
   );
+}
+
+// ---------- Sign-ups and presence ----------
+
+export interface SignupRecord {
+  uid: string;
+  name: string;
+  email: string;
+  /** epoch ms the account was created */
+  joinedAt: number;
+  lastActiveAt: number;
+  /** distinct days this account has opened the app */
+  activeDays: number;
+}
+
+const PRESENCE_KEY = "presenceMarked";
+const PRESENCE_EVERY_MS = 60 * 60 * 1000;
+
+/**
+ * Notes that this account exists and was here.
+ *
+ * One small document per user — name, address, when they joined, when they
+ * were last around — so the site's owner can tell whether anybody is
+ * actually using it. Deliberately nothing about what they study.
+ *
+ * Written at most once an hour per device, and the day counter only when
+ * the local date has changed, so this costs a write a session rather than
+ * one a page.
+ */
+export async function touchPresence(user: {
+  uid: string;
+  email: string | null;
+  displayName: string | null;
+  metadata: { creationTime?: string };
+}) {
+  const now = Date.now();
+  const today = new Date(now).toDateString();
+  let marked: { at: number; day: string } | null = null;
+  try {
+    marked = JSON.parse(localStorage.getItem(PRESENCE_KEY) ?? "null");
+  } catch {
+    marked = null;
+  }
+  const newDay = marked?.day !== today;
+  if (marked && !newDay && now - marked.at < PRESENCE_EVERY_MS) return;
+
+  const patch: Record<string, unknown> = {
+    uid: user.uid,
+    name: user.displayName ?? "",
+    email: user.email ?? "",
+    joinedAt: user.metadata.creationTime
+      ? Date.parse(user.metadata.creationTime)
+      : now,
+    lastActiveAt: now,
+  };
+  if (newDay) patch.activeDays = increment(1);
+
+  try {
+    await setDoc(doc(db, "signups", user.uid), patch, { merge: true });
+    localStorage.setItem(PRESENCE_KEY, JSON.stringify({ at: now, day: today }));
+  } catch {
+    // Not being able to say hello must never stop someone studying.
+  }
+}
+
+/** Every account, for the owner's stats page. Nobody else may read this. */
+export async function fetchSignups(): Promise<SignupRecord[]> {
+  const snap = await getDocs(collection(db, "signups"));
+  return snap.docs.map((d) => {
+    const data = d.data() as Partial<SignupRecord>;
+    return {
+      uid: d.id,
+      name: data.name ?? "",
+      email: data.email ?? "",
+      joinedAt: Number(data.joinedAt ?? 0),
+      lastActiveAt: Number(data.lastActiveAt ?? 0),
+      activeDays: Number(data.activeDays ?? 0),
+    };
+  });
 }
 
 // ---------- Feedback ----------
