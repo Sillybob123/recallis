@@ -49,13 +49,20 @@ check(
 );
 check(
   "lists are left-aligned even on a centred card",
-  /text-align:\s*left/.test(rule(".prose-card :where(ul, ol, li)")),
+  /text-align:\s*left/.test(rule(".prose-card ul,\n.prose-card ol,\n.prose-card li")),
   "otherwise every bullet's words centre in their own row"
 );
 check(
-  "and that rule out-specifies inheritance without !important",
-  !/text-align:\s*left\s*!important/.test(rule(".prose-card :where(ul, ol, li)")),
-  "no imported card sets alignment on the list itself"
+  "and the rule beats an inline style",
+  /text-align:\s*left\s*!important/.test(
+    rule(".prose-card ul,\n.prose-card ol,\n.prose-card li")
+  ),
+  // This test used to assert the opposite — that no !important was needed,
+  // because no imported card sets alignment on the list itself. Anki cards
+  // do: a front authored centred arrives as <ul style="text-align:center">,
+  // which beats any stylesheet rule on specificity. One side of a card came
+  // out centred and the other left, and the test agreed with the bug.
+  "an imported list can carry text-align:center inline"
 );
 
 // The checklist note type deliberately has no markers, and its rule comes
