@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import {
   ArrowRight,
   FileText,
+  FileUp,
   Layers,
   NotebookPen,
   Repeat,
@@ -169,28 +170,7 @@ export function HomePage() {
       {loading ? (
         <div className="py-24 text-center text-slate-400">Loading…</div>
       ) : empty ? (
-        <div className="rounded-2xl border border-dashed border-slate-300 bg-white py-16 text-center">
-          <Sparkles className="mx-auto mb-3 text-slate-300" size={38} />
-          <p className="mb-1 font-medium text-slate-700">Let's get you started</p>
-          <p className="mb-5 text-sm text-slate-500">
-            Make a deck of flashcards, or take notes on a lecture and turn them
-            into cards.
-          </p>
-          <div className="flex justify-center gap-3">
-            <Link
-              to="/decks"
-              className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700"
-            >
-              Create a deck
-            </Link>
-            <Link
-              to="/notes"
-              className="rounded-lg border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-white"
-            >
-              Take notes
-            </Link>
-          </div>
-        </div>
+        <WelcomeStart />
       ) : (
         <div className="space-y-5">
           {/* Today */}
@@ -381,6 +361,165 @@ export function HomePage() {
         </div>
       )}
     </Layout>
+  );
+}
+
+/**
+ * The first thing a new account sees.
+ *
+ * It used to offer two buttons — make a deck, take notes — and say nothing
+ * about what to do with either. Two things were wrong with that. Most people
+ * arriving here already study with Anki and have a .apkg they want to keep
+ * using, and the importer was buried in a "More" menu on another page, which is
+ * the last place anyone would look for it. And nobody had been told what the
+ * app expects of them: that cards are grouped under a class, that the schedule
+ * decides what to study rather than you, that a slide can be masked.
+ *
+ * So: importing comes first and is the emphasised option, and the steps below
+ * say what the app is for in the order you'd meet it. They are deliberately
+ * four, not ten — this is the screen where someone decides whether to bother.
+ */
+function WelcomeStart() {
+  return (
+    <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+      <div className="border-b border-slate-100 px-6 py-7 text-center sm:px-8">
+        <Sparkles className="mx-auto mb-3 text-indigo-400" size={34} />
+        <h2 className="text-lg font-bold text-slate-900">
+          Let's get you started
+        </h2>
+        <p className="mx-auto mt-1.5 max-w-md text-sm leading-relaxed text-slate-500">
+          Three ways in. If you already study with Anki, start there — your
+          decks, scheduling and images all come across, so you don't lose the
+          work you've already done.
+        </p>
+      </div>
+
+      <div className="grid gap-3 p-4 sm:grid-cols-3 sm:p-5">
+        <StartTile
+          to="/decks?import=anki"
+          icon={<FileUp size={18} />}
+          title="Import from Anki"
+          body="An .apkg or .colpkg export, or a plain text export. Keeps your due dates."
+          emphasis
+        />
+        <StartTile
+          to="/decks"
+          icon={<Layers size={18} />}
+          title="Create a deck"
+          body="Start a class like Anatomy, then add decks and cards inside it."
+        />
+        <StartTile
+          to="/notes"
+          icon={<NotebookPen size={18} />}
+          title="Take notes"
+          body="Write up a lecture beside its slides, then turn any line into a card."
+        />
+      </div>
+
+      <div className="border-t border-slate-100 bg-slate-50 px-6 py-6 sm:px-8">
+        <p className="mb-4 text-[11px] font-bold uppercase tracking-wide text-slate-400">
+          How Recallis works
+        </p>
+        <ol className="space-y-3.5">
+          <Step n={1} title="Get your cards in">
+            Import an Anki deck, or make a class and add decks under it. Classes
+            are just folders — “Anatomy” holding “Thorax”, “Abdomen”, and so on.
+          </Step>
+          <Step n={2} title="Study what's due, not everything">
+            The overview shows what's waiting each day and{" "}
+            <span className="font-medium text-slate-700">Study now</span> works
+            through it. Scheduling is FSRS, the same algorithm modern Anki uses,
+            so grading a card honestly is the whole job.
+          </Step>
+          <Step n={3} title="Mask a slide instead of retyping it">
+            Add an image occlusion sheet to any deck, cover the labels on a
+            lecture slide, and each mask becomes a card. This is what most people
+            come here for.
+          </Step>
+          <Step n={4} title="Drill freely before an exam">
+            <span className="font-medium text-slate-700">Repeat mode</span> lets
+            you go through a deck as many times as you like without touching your
+            real schedule. The{" "}
+            <Link to="/planner" className="font-medium text-indigo-600 hover:underline">
+              planner
+            </Link>{" "}
+            builds your term from your timetable and can email you a reminder
+            before each exam.
+          </Step>
+        </ol>
+      </div>
+    </div>
+  );
+}
+
+/** One of the three starting choices. */
+function StartTile({
+  to,
+  icon,
+  title,
+  body,
+  emphasis = false,
+}: {
+  to: string;
+  icon: ReactNode;
+  title: string;
+  body: string;
+  emphasis?: boolean;
+}) {
+  return (
+    <Link
+      to={to}
+      className={`group flex flex-col rounded-xl border p-4 transition ${
+        emphasis
+          ? "border-indigo-200 bg-indigo-50/60 hover:border-indigo-300 hover:bg-indigo-50"
+          : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50"
+      }`}
+    >
+      <span
+        className={`mb-2.5 flex h-9 w-9 items-center justify-center rounded-lg ${
+          emphasis ? "bg-indigo-600 text-white" : "bg-slate-100 text-slate-500"
+        }`}
+      >
+        {icon}
+      </span>
+      <span className="flex items-center gap-1 text-sm font-semibold text-slate-900">
+        {title}
+        <ArrowRight
+          size={13}
+          className="text-slate-400 transition group-hover:translate-x-0.5"
+        />
+      </span>
+      <span className="mt-1 text-[12.5px] leading-relaxed text-slate-500">
+        {body}
+      </span>
+    </Link>
+  );
+}
+
+/** One numbered instruction in the "How Recallis works" list. */
+function Step({
+  n,
+  title,
+  children,
+}: {
+  n: number;
+  title: string;
+  children: ReactNode;
+}) {
+  return (
+    <li className="flex gap-3">
+      <span className="mt-0.5 flex h-5 w-5 flex-none items-center justify-center rounded-full bg-slate-200 text-[11px] font-bold text-slate-600">
+        {n}
+      </span>
+      <span className="min-w-0">
+        <span className="block text-[13px] font-semibold text-slate-800">
+          {title}
+        </span>
+        <span className="mt-0.5 block text-[12.5px] leading-relaxed text-slate-500">
+          {children}
+        </span>
+      </span>
+    </li>
   );
 }
 

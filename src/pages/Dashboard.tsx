@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useSearchParams } from "react-router-dom";
 import {
   ArchiveRestore,
   BookOpen,
@@ -69,6 +70,19 @@ export function Dashboard() {
     }
   });
   const restoreInputRef = useRef<HTMLInputElement>(null);
+
+  // ?import=anki opens the importer straight away, so the welcome screen — and
+  // anything else that wants to — can link to it rather than describing where
+  // the menu item is. The parameter is cleared on open so closing the modal
+  // doesn't immediately reopen it, and so Back doesn't either.
+  const [searchParams, setSearchParams] = useSearchParams();
+  useEffect(() => {
+    if (searchParams.get("import") !== "anki") return;
+    setShowImport(true);
+    const next = new URLSearchParams(searchParams);
+    next.delete("import");
+    setSearchParams(next, { replace: true });
+  }, [searchParams, setSearchParams]);
 
   useEffect(() => {
     if (!user) return;
@@ -183,7 +197,7 @@ export function Dashboard() {
                   onClick={() => setMoreOpen(false)}
                 >
                   <MenuItem icon={<FileUp size={14} />} onClick={() => setShowImport(true)}>
-                    Import Anki file
+                    Import from Anki
                   </MenuItem>
                   <MenuItem
                     icon={<DatabaseBackup size={14} />}
@@ -224,14 +238,25 @@ export function Dashboard() {
           <BookOpen className="mx-auto mb-3 text-slate-300" size={40} />
           <p className="mb-1 font-medium text-slate-700">No decks yet</p>
           <p className="mb-4 text-sm text-slate-500">
-            Start with a class like “Anatomy”, then add decks inside it.
+            Start with a class like “Anatomy”, then add decks inside it — or
+            bring a deck you already have.
           </p>
-          <button
-            onClick={() => setNewDeck({ parent: "", isClass: true })}
-            className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700"
-          >
-            Create a class
-          </button>
+          <div className="flex flex-wrap justify-center gap-2.5">
+            <button
+              onClick={() => setNewDeck({ parent: "", isClass: true })}
+              className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700"
+            >
+              Create a class
+            </button>
+            {/* The importer was only in the More menu, which is the last place
+                someone arriving with an .apkg thinks to look. */}
+            <button
+              onClick={() => setShowImport(true)}
+              className="flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+            >
+              <FileUp size={15} /> Import from Anki
+            </button>
+          </div>
         </div>
       ) : (
         <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white shadow-sm">
