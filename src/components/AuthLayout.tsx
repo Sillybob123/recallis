@@ -20,32 +20,32 @@ const HIGHLIGHTS = [
   {
     icon: Layers,
     title: "Flashcards and cloze",
-    body: "Plain cards and {{c1::deletions}} in the same deck. Import an .apkg and your Anki schedule comes with it.",
+    body: "Plain cards and {{c1::deletions}} in one deck.",
   },
   {
     icon: ScanEye,
     title: "Image occlusion",
-    body: "Mask any slide — rectangles, ellipses, polygons. Group masks, black out a spoiler, and add an explanation that appears with the answer.",
+    body: "Mask a slide. Group them, hide spoilers, explain the answer.",
   },
   {
     icon: Repeat,
     title: "Spaced repetition",
-    body: "FSRS scheduling, the same one modern Anki uses, so a card comes back the day before you'd forget it.",
+    body: "FSRS — the scheduler modern Anki uses.",
   },
   {
     icon: Sparkles,
     title: "Repeat mode",
-    body: "Drill a deck as hard as you like the night before an exam. Your schedule doesn't move.",
+    body: "Drill as hard as you like. Your schedule doesn't move.",
   },
   {
     icon: NotebookPen,
     title: "Lecture notes",
-    body: "Write beside the slide, turn any line into a card, and keep the whole lecture as one running record.",
+    body: "Write beside the slide; turn a line into a card.",
   },
   {
     icon: CalendarCheck,
     title: "Academic planner",
-    body: "Import your timetable and tick off your routine per session. It knows when your exams are and emails you before them.",
+    body: "Your timetable, your routine, a nudge before each exam.",
   },
 ];
 
@@ -65,7 +65,7 @@ export function AuthLayout({
     <div className="flex min-h-screen flex-col lg:flex-row">
       {/* Brand panel */}
       <div
-        className="relative flex flex-col justify-between overflow-hidden px-7 py-9 text-white lg:w-[47%] lg:px-14 lg:py-14"
+        className="relative flex flex-col justify-center overflow-hidden px-7 py-10 text-white lg:w-[46%] lg:px-12 lg:py-14 xl:px-16"
         style={{
           background: `linear-gradient(150deg, ${BRAND_NAVY} 0%, #0b3f9e 55%, #1256c9 100%)`,
         }}
@@ -82,7 +82,7 @@ export function AuthLayout({
           style={{ background: "radial-gradient(circle, #4f9bff 0%, transparent 70%)" }}
         />
 
-        <div className="relative flex items-center" style={{ gap: "11px" }}>
+        <div className="relative mb-9 flex items-center" style={{ gap: "11px" }}>
           <span className="flex h-11 w-11 items-center justify-center rounded-xl bg-white/95 shadow-sm">
             <img src="/logo.png" alt="" className="h-8 w-8 object-contain" />
           </span>
@@ -99,7 +99,7 @@ export function AuthLayout({
           </span>
         </div>
 
-        <div className="relative my-8 max-w-lg lg:my-0">
+        <div className="relative max-w-xl">
           <h2
             className="mb-3 text-[30px] leading-[1.15] lg:text-[40px]"
             style={{
@@ -112,44 +112,51 @@ export function AuthLayout({
             <br />
             in one place.
           </h2>
-          <p className="text-[15px] leading-relaxed text-blue-100/85">
-            Built for medical school. Your notes, your cards and your timetable
-            in one app, so the lecture you sat through this morning becomes the
-            cards you review tonight — without retyping any of it.
+          <p className="max-w-md text-[15px] leading-relaxed text-blue-100/80">
+            Built for medical school. The lecture you sat through this morning
+            becomes the cards you review tonight — without retyping any of it.
           </p>
 
-          {/* On a phone this list sits under the form instead, so the thing
-              you came to do isn't below a page of features. */}
-          <ul className="mt-9 hidden space-y-4 lg:block">
+          {/* Two columns rather than one long stack: six features down a
+              single column is a wall of text, and the last of them ends up
+              pressed against the footer. On a phone this list sits under the
+              form instead, so the thing you came to do isn't below a page of
+              features. */}
+          <ul className="mt-10 hidden gap-x-8 gap-y-6 lg:grid lg:grid-cols-2">
             {HIGHLIGHTS.map(({ icon: Icon, title: t, body }) => (
               <li key={t} className="flex gap-3">
                 <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white/12 ring-1 ring-white/15">
                   <Icon size={15} />
                 </span>
-                <div>
-                  <p className="text-sm font-semibold">{t}</p>
-                  <p className="text-[13px] leading-snug text-blue-100/75">{body}</p>
+                <div className="min-w-0">
+                  <p className="text-[13.5px] font-semibold leading-tight">{t}</p>
+                  <p className="mt-0.5 text-[13px] leading-snug text-blue-100/70">
+                    {body}
+                  </p>
                 </div>
               </li>
             ))}
           </ul>
+
+          <div className="mt-10 border-t border-white/15 pt-5">
+            <p className="text-[13px] leading-relaxed text-blue-100/70">
+              Imports and exports Anki decks · works with a Bluetooth study
+              remote · explains the Latin and Greek behind anatomy terms
+            </p>
+            <p className="mt-2 text-xs text-blue-100/50">
+              Your decks, notes and images are private to your account.
+            </p>
+          </div>
         </div>
 
-        <div className="relative space-y-1.5">
-          <p className="text-[13px] text-blue-100/75">
-            Also: exports back to Anki, works with a Bluetooth study remote,
-            and explains the Latin and Greek behind anatomy terms as you read
-            them.
-          </p>
-          <p className="text-xs text-blue-100/55">
-            Your decks, notes and images are private to your account.
-          </p>
-        </div>
       </div>
 
       {/* Form panel */}
-      <div className="flex flex-1 flex-col items-center bg-slate-50 px-6 py-10 lg:justify-center lg:py-12">
-        <div className="w-full max-w-sm">
+      <div className="flex flex-1 flex-col items-center justify-center bg-slate-50 px-6 py-10 lg:py-12">
+        {/* The form sat unadorned in the middle of a large empty field. A
+            card gives it an edge to sit against, which is the difference
+            between centred and adrift. */}
+        <div className="w-full max-w-[25rem] rounded-2xl border border-slate-200 bg-white p-7 shadow-sm sm:p-8">
           <div className="mb-7 flex items-center gap-2.5 lg:hidden">
             <img src="/logo.png" alt="" className="h-9 w-9 object-contain" />
             <span
@@ -180,12 +187,14 @@ export function AuthLayout({
 
           {children}
 
-          <div className="mt-7 text-center text-sm text-slate-500">{footer}</div>
+          <div className="mt-7 border-t border-slate-100 pt-5 text-center text-sm text-slate-500">
+            {footer}
+          </div>
         </div>
 
         {/* The same six, for the screen where the panel above is a header
             rather than a column. */}
-        <div className="mt-12 w-full max-w-sm lg:hidden">
+        <div className="mt-10 w-full max-w-[25rem] lg:hidden">
           <p className="mb-4 text-[11px] font-bold uppercase tracking-wide text-slate-400">
             What you get
           </p>
