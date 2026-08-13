@@ -1,0 +1,16 @@
+# Security headers for hosts that read this file — Cloudflare Pages and
+# Netlify. GitHub Pages, which serves the site today, ignores it and cannot
+# set headers at all; the enforceable part there is the CSP meta tag injected
+# into the build by vite.config.ts.
+#
+# Kept alongside firebase.json's headers block so that whichever host the site
+# moves to, the policy arrives with it. frame-ancestors and HSTS are the two
+# that only work as real headers, which is the reason to bother.
+/*
+  Strict-Transport-Security: max-age=31536000; includeSubDomains
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(), usb=()
+  X-Frame-Options: DENY
+  Cross-Origin-Opener-Policy: same-origin-allow-popups
+  Content-Security-Policy: default-src 'self'; base-uri 'self'; object-src 'none'; form-action 'self'; frame-src 'self'; frame-ancestors 'none'; manifest-src 'self'; script-src 'self' 'wasm-unsafe-eval'; worker-src 'self' blob:; child-src 'self' blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https://*.googleapis.com https://*.firebasestorage.app; media-src 'self' data: blob:; connect-src 'self' https://*.googleapis.com https://*.firebasestorage.app https://*.firebaseio.com wss://*.firebaseio.com; upgrade-insecure-requests

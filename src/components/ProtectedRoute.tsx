@@ -2,9 +2,11 @@ import type { ReactNode } from "react";
 import { Navigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import { isFirebaseConfigured } from "../firebase";
+import { needsEmailVerification } from "../lib/access";
+import { VerifyEmailGate } from "./VerifyEmailGate";
 
 export function ProtectedRoute({ children }: { children: ReactNode }) {
-  const { user, loading } = useAuth();
+  const { user, emailVerified, loading } = useAuth();
 
   if (!isFirebaseConfigured) {
     return <FirebaseNotConfigured />;
@@ -20,6 +22,16 @@ export function ProtectedRoute({ children }: { children: ReactNode }) {
 
   if (!user) {
     return <Navigate to="/login" replace />;
+  }
+
+  // Signed in but the address isn't confirmed, so the rules will refuse every
+  // read behind this point. Showing the reason beats letting the app load and
+  // fail one empty panel at a time.
+  //
+  // One gate here rather than a check per page: a route added later is covered
+  // by being protected, which is the property worth having.
+  if (needsEmailVerification({ uid: user.uid, emailVerified })) {
+    return <VerifyEmailGate />;
   }
 
   return <>{children}</>;

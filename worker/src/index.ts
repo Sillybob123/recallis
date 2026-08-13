@@ -26,7 +26,11 @@ import {
   type EmailJob,
   type EmailSettings,
 } from "../../src/lib/emailReminders";
-import { renderEmailHtml, renderEmailText } from "../../src/lib/emailTemplate";
+import {
+  headerSafe,
+  renderEmailHtml,
+  renderEmailText,
+} from "../../src/lib/emailTemplate";
 import type { PlannerPlan, PlannerProgress } from "../../src/lib/planner";
 import { connect, type Firestore } from "./firestore";
 
@@ -62,6 +66,19 @@ interface Env {
  */
 const MAX_REQUESTS = 40;
 const CURSOR_DOC = "plannerMeta/mailer";
+
+/**
+ * The most emails one account can be sent in a single run.
+ *
+ * An account's reminder settings are written by that account, and the custom
+ * reminder list has no length limit worth trusting — the rules bound the
+ * document, not the number of entries in it. Without a cap here, one account
+ * with a few hundred reminders coming due at once would spend the whole run's
+ * subrequest budget and every other account would be starved, which is
+ * exactly the property the run is supposed to guarantee. Anything over the cap
+ * is not lost; it comes due again on the next tick.
+ */
+const MAX_EMAILS_PER_ACCOUNT = 5;
 
 // ---------- reading a user ----------
 
@@ -123,6 +140,11 @@ async function planFor(
 async function send(env: Env, job: EmailJob, to: string): Promise<void> {
   const html = renderEmailHtml(job);
   const text = renderEmailText(job);
+  // Subjects are built from things people typed — a deck name, a feedback
+  // form's name field. A header is newline-delimited, so this is done once
+  // here, at the only place a subject leaves the Worker, rather than at each
+  // of the callers that might forget.
+  const subject = headerSafe(job.subject);
   // Every mailbox provider looks for this, and someone who wants out should
   // never have to hunt for the setting.
   const headers = { "List-Unsubscribe": "<https://recallis.org/planner>" };
@@ -138,7 +160,7 @@ async function send(env: Env, job: EmailJob, to: string): Promise<void> {
       body: JSON.stringify({
         from: `${name} <${env.MAIL_FROM}>`,
         to: [to],
-        subject: job.subject,
+        subject,
         html,
         text,
         headers,
@@ -160,7 +182,7 @@ async function send(env: Env, job: EmailJob, to: string): Promise<void> {
   await env.EMAIL.send({
     to,
     from: { email: env.MAIL_FROM, name },
-    subject: job.subject,
+    subject,
     html,
     text,
     headers,
@@ -225,6 +247,8 @@ async function deliverFeedback(
   for (const doc of docs) {
     if (doc.fields.sent === true) continue;
     if (db.requests >= MAX_REQUESTS) break;
+    // The send is a subrequest too, and only the patch below counts itself.
+    db.requests++;
     const f = doc.fields as {
       name?: string;
       email?: string;
@@ -239,7 +263,9 @@ async function deliverFeedback(
         {
           kind: "custom",
           key: `feedback-${doc.id}`,
-          subject: `Recallis feedback from ${f.name || "someone"}`,
+          // headerSafe() in send() flattens this, but bounding it here keeps
+          // the inbox list readable rather than merely safe.
+          subject: `Recallis feedback from ${headerSafe(f.name || "someone", 60)}`,
           heading: f.name ? `${f.name} wrote in` : "New feedback",
           intro: f.message ?? "",
           sections: [
@@ -315,7 +341,12 @@ export async function run(env: Env, now = Date.now()): Promise<RunReport> {
 
       report.served++;
       const nextSent = { ...settings.sent };
-      for (const job of jobs) {
+      for (const job of jobs.slice(0, MAX_EMAILS_PER_ACCOUNT)) {
+        // Checked inside the loop, not just around it: every send is a
+        // subrequest, so an account with several due at once can exhaust the
+        // budget on its own and leave nothing for the accounts after it.
+        if (db.requests >= MAX_REQUESTS) break;
+        db.requests++;
         await send(env, job, settings.email);
         nextSent[job.key] = now;
         report.sent++;

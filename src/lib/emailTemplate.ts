@@ -28,7 +28,31 @@ function esc(s: string): string {
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
+    .replace(/"/g, "&quot;")
+    // Every attribute below is double-quoted, so this is belt and braces —
+    // but the cost is nothing and the day someone writes a single-quoted one
+    // it is already handled.
+    .replace(/'/g, "&#39;");
+}
+
+/**
+ * Makes a string safe to put in a mail header.
+ *
+ * Headers are newline-delimited, so a value containing CR or LF is a way to
+ * append headers of one's own — a Bcc, a different Reply-To. The feedback
+ * sender builds a Subject out of a name typed into a form, and the rules
+ * bound that field's length but cannot bound what's in it, so the stripping
+ * happens here. Control characters go too, and the result is clipped: a
+ * subject line of hundreds of characters is folded or truncated by the
+ * transport anyway, usually less tidily than this.
+ */
+export function headerSafe(s: string, max = 200): string {
+  const flat = s
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\x00-\x1f\x7f]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
 }
 
 function toneColors(tone: EmailSection["tone"]): { ink: string; bg: string } {

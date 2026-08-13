@@ -3,9 +3,12 @@
 // most of what's tested here.
 import {
   ALLOWED_EMAIL_DOMAIN,
+  GRANDFATHERED_UIDS,
   isAllowedEmail,
+  needsEmailVerification,
   signupDomainError,
 } from "../src/lib/access";
+import { headerSafe } from "../src/lib/emailTemplate";
 import { readFileSync } from "node:fs";
 
 let failures = 0;
@@ -85,6 +88,126 @@ console.log("\nthe rules enforce the same thing:");
     !rules.includes("@gmail.com"),
     "it lives only in a Worker secret"
   );
+}
+
+// The hole this closes: Firebase's signup endpoint is public and the web API
+// key ships in the bundle, so anyone can register an address they don't own
+// and the token comes back carrying it. Without email_verified, "from the
+// school" only means "typed something that ends in the school's domain".
+console.log("\nthe address has to be proved, not just claimed:");
+{
+  const rules = readFileSync("firestore.rules", "utf8");
+  const storage = readFileSync("storage.rules", "utf8");
+
+  check(
+    "firestore requires a confirmed address",
+    rules.includes("email_verified == true"),
+    "otherwise the domain check is decoration"
+  );
+  check(
+    "storage requires one too",
+    storage.includes("email_verified == true"),
+    "or the bucket is 20MB-at-a-time hosting for anyone"
+  );
+  check(
+    "the domain pattern is anchored at both ends",
+    rules.includes("^[^@]+@som[.]umaryland[.]edu$"),
+    "an unanchored match is how a suffix check gets fooled"
+  );
+  check(
+    "no @ is allowed inside the local part",
+    rules.includes("[^@]+@"),
+    "so a@som.umaryland.edu@evil.com can't match"
+  );
+  check(
+    "storage and firestore agree on the pattern",
+    storage.includes("^[^@]+@som[.]umaryland[.]edu$"),
+    "two files, one rule — they drift or they hold together"
+  );
+
+  // The grandfathered ids are exempt on purpose, and the reason is worth
+  // pinning: the check exists to stop someone claiming an address, and a uid
+  // cannot be claimed.
+  for (const uid of GRANDFATHERED_UIDS) {
+    check(
+      `the rules still name ${uid.slice(0, 8)}…`,
+      rules.includes(uid) && storage.includes(uid),
+      "an owner locked out of their own project is a real outage"
+    );
+  }
+  check(
+    "a grandfathered account skips the confirmation screen",
+    !needsEmailVerification({ uid: GRANDFATHERED_UIDS[0], emailVerified: false })
+  );
+  check(
+    "everyone else does not",
+    needsEmailVerification({ uid: "someone-else", emailVerified: false })
+  );
+  check(
+    "and stops seeing it once confirmed",
+    !needsEmailVerification({ uid: "someone-else", emailVerified: true })
+  );
+}
+
+// Field bounds. The client slices these before writing, which is worth
+// nothing: the REST API takes whatever it's given, and the sender turns some
+// of these straight into an email to the owner.
+console.log("\nwhat a document is allowed to contain:");
+{
+  const rules = readFileSync("firestore.rules", "utf8");
+  check(
+    "feedback is pinned to a known set of fields",
+    rules.includes("hasOnly(") && rules.includes("hasAll("),
+    "otherwise it's a megabyte of anything under your uid"
+  );
+  check("the feedback name is bounded", rules.includes("name.size() <= 120"));
+  check("the page is bounded", rules.includes("page.size() <= 300"));
+  check(
+    "a new feedback note can't arrive pre-marked as sent",
+    rules.includes("sent == false"),
+    "or it would never be delivered"
+  );
+  check(
+    "the signups email is the one the token vouches for",
+    rules.includes("request.resource.data.email == request.auth.token.email"),
+    "so the stats page isn't showing a self-reported address"
+  );
+  check(
+    "the reminder list is bounded",
+    rules.includes("custom.size() <= 100"),
+    "every entry that comes due is an email the sender has to post"
+  );
+}
+
+// A subject is a mail header, and headers are newline-delimited.
+console.log("\nnothing user-typed can forge a mail header:");
+{
+  check(
+    "a newline can't start a header of its own",
+    !headerSafe("Real Name\r\nBcc: someone@example.com").includes("\n")
+  );
+  check(
+    "nor a bare line feed",
+    !headerSafe("a\nBcc: x@y.com").includes("\n")
+  );
+  check(
+    "the injected text is flattened, not silently kept",
+    headerSafe("Real Name\r\nBcc: x@y.com") === "Real Name Bcc: x@y.com"
+  );
+  check("a tab goes too", headerSafe("a\tb") === "a b");
+  check(
+    "an ordinary hyphenated name survives intact",
+    headerSafe("Yair Ben-Dor") === "Yair Ben-Dor",
+    "the stripping must not reach normal punctuation"
+  );
+  check(
+    "an accented name survives too",
+    headerSafe("Zoë Šimek") === "Zoë Šimek"
+  );
+  check("runs of space collapse", headerSafe("a     b") === "a b");
+  check("and it is clipped", headerSafe("x".repeat(500)).length <= 200);
+  check("with an ellipsis to show it was", headerSafe("x".repeat(500)).endsWith("…"));
+  check("an empty string stays empty", headerSafe("") === "");
 }
 
 console.log(failures === 0 ? "\nAll cases passed." : `\n${failures} failing.`);

@@ -9,15 +9,38 @@ service cloud.firestore {
     // account outside the domain is refused every document, which makes the
     // app useless to it.
     //
-    // The two ids below predate the restriction. They are opaque account
-    // ids, not addresses, and exist so the accounts that built this don't
-    // lock themselves out.
+    // Two things have to be true, and the second is the one that's easy to
+    // forget. The address has to be at the school, *and* it has to have been
+    // proved. Anyone can hand Firebase's public signup endpoint an address
+    // they don't own — the web API key is in the JavaScript bundle, so that
+    // endpoint is reachable by the whole internet — and the token that comes
+    // back carries the address they claimed. Without email_verified, "from
+    // the school" means "typed something ending in the school's domain", and
+    // a stranger could sit on a real student's address before they register.
+    function verified() {
+      return request.auth.token.email_verified == true;
+    }
+
+    // Anchored at both ends, and no @ allowed inside the local part. matches()
+    // is a whole-string match, but spelling that out costs nothing and means
+    // the rule can't be misread — a suffix check is how "som.umaryland.edu"
+    // turns into "som.umaryland.edu.attacker.com". Keeps [.] rather than \.
+    // so there is no question about how the escape survives the string.
     function fromSchool() {
       return request.auth != null
         && request.auth.token.email != null
-        && request.auth.token.email.matches('(?i).*@som[.]umaryland[.]edu');
+        && verified()
+        && request.auth.token.email.matches('(?i)^[^@]+@som[.]umaryland[.]edu$');
     }
 
+    // The two ids below predate the restriction. They are opaque account
+    // ids, not addresses, and exist so the accounts that built this don't
+    // lock themselves out.
+    //
+    // Deliberately not behind verified(): the weakness that check exists to
+    // close is claiming an address you don't own, and a uid cannot be
+    // claimed — Firebase assigns it. Requiring verification here would only
+    // lock out the owner's own account.
     function grandfathered() {
       return request.auth != null && request.auth.uid in [
         '9JDZJEF9YhNuxIBN3Vwtbu2oqut2',
@@ -38,7 +61,7 @@ service cloud.firestore {
 
     // Every user's data lives under users/{uid}/... and only that user
     // (once signed in) may read or write it. Nobody else — including other
-    // signed-in users — can see it.
+    // signed-in users, and including the admin — can see it.
     match /users/{uid}/{document=**} {
       allow read, write: if request.auth != null
         && request.auth.uid == uid
@@ -49,37 +72,92 @@ service cloud.firestore {
     // can list everyone with reminders due. It reads with a service account,
     // which bypasses these rules; signed-in users still only reach their own
     // document, and nobody can list the collection from a browser.
+    //
+    // The destination address is deliberately free-form — people want their
+    // reminders at the address they actually read — but the list lengths are
+    // bounded. Every entry that comes due is an email the sender has to post,
+    // and its per-invocation budget is shared with everyone else's reminders,
+    // so an account with thousands of them would be a way to starve the rest.
+    // The Worker caps this too; neither side should be the only guard.
     match /emailReminders/{uid} {
-      allow read, write: if request.auth != null
+      allow read: if request.auth != null
         && request.auth.uid == uid
         && allowed();
+      allow write: if request.auth != null
+        && request.auth.uid == uid
+        && allowed()
+        && (!('email' in request.resource.data)
+            || (request.resource.data.email is string
+                && request.resource.data.email.size() <= 254))
+        && (!('custom' in request.resource.data)
+            || request.resource.data.custom.size() <= 100)
+        && (!('taskIds' in request.resource.data)
+            || request.resource.data.taskIds.size() <= 5000);
     }
 
     // One small record per account: who they are, when they joined, when
     // they were last here. It exists so the site's owner can tell whether
     // anybody is using it, and it is the only collection any account other
     // than its own can read — by exactly one id.
+    //
+    // The shape is pinned. Without that, "you may write your own document"
+    // also means "you may store a megabyte of anything under your uid", and
+    // the address shown on the stats page would be whatever the client felt
+    // like sending. Tying email to the token makes that column mean
+    // something: it is the address Firebase itself vouches for, not one the
+    // account typed.
     match /signups/{uid} {
       allow read: if request.auth != null
         && (request.auth.uid == uid || isAdmin());
       allow create, update: if request.auth != null
         && request.auth.uid == uid
         && allowed()
-        && request.resource.data.uid == uid;
+        && request.resource.data.uid == uid
+        && request.resource.data.keys().hasOnly(
+             ['uid', 'name', 'email', 'joinedAt', 'lastActiveAt', 'activeDays'])
+        && request.resource.data.name is string
+        && request.resource.data.name.size() <= 200
+        && request.resource.data.email == request.auth.token.email
+        && request.resource.data.joinedAt is number
+        && request.resource.data.lastActiveAt is number;
       allow delete: if false;
     }
 
     // Feedback is write-only from the app: you can post yours, and nobody —
     // including you — can read anyone's back. Only the scheduled sender,
     // which authenticates as a service account, ever reads this collection.
+    //
+    // Every field is bounded, not just the message. The sender turns these
+    // into an email to the owner, so an unbounded field here is an unbounded
+    // field in somebody's inbox — and the client-side .slice() that used to
+    // be the only limit is not a limit at all to anyone calling the REST API
+    // directly.
     match /feedback/{id} {
       allow create: if request.auth != null
         && allowed()
+        && request.resource.data.keys().hasOnly(
+             ['uid', 'name', 'email', 'message', 'page', 'createdAt', 'sent'])
+        && request.resource.data.keys().hasAll(
+             ['uid', 'name', 'email', 'message', 'page', 'createdAt', 'sent'])
         && request.resource.data.uid == request.auth.uid
         && request.resource.data.message is string
         && request.resource.data.message.size() > 0
-        && request.resource.data.message.size() <= 5000;
+        && request.resource.data.message.size() <= 5000
+        && request.resource.data.name is string
+        && request.resource.data.name.size() <= 120
+        && request.resource.data.email is string
+        && request.resource.data.email.size() <= 200
+        && request.resource.data.page is string
+        && request.resource.data.page.size() <= 300
+        && request.resource.data.createdAt is number
+        && request.resource.data.sent == false;
       allow read, update, delete: if false;
+    }
+
+    // Anything not named above is denied. Firestore defaults to that, but a
+    // collection added later shouldn't inherit access by being forgotten.
+    match /{document=**} {
+      allow read, write: if false;
     }
   }
 }
