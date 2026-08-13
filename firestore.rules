@@ -9,18 +9,26 @@ service cloud.firestore {
     // account outside the domain is refused every document, which makes the
     // app useless to it.
     //
-    // Two things have to be true, and the second is the one that's easy to
-    // forget. The address has to be at the school, *and* it has to have been
-    // proved. Anyone can hand Firebase's public signup endpoint an address
-    // they don't own — the web API key is in the JavaScript bundle, so that
-    // endpoint is reachable by the whole internet — and the token that comes
-    // back carries the address they claimed. Without email_verified, "from
-    // the school" means "typed something ending in the school's domain", and
-    // a stranger could sit on a real student's address before they register.
-    function verified() {
-      return request.auth.token.email_verified == true;
-    }
-
+    // Deliberately NOT checking email_verified, and it is worth writing down
+    // why, because it looks like an oversight and it is not.
+    //
+    // Confirmation mail to som.umaryland.edu is unreliable — it is filtered or
+    // silently dropped often enough that requiring it locked real students out
+    // of an app they had every right to use. So the trade was made knowingly:
+    // this gate proves the address was *typed*, not that it is owned. Firebase's
+    // signup endpoint is public and the web API key ships in the bundle, so
+    // anyone can register an @som.umaryland.edu address that isn't theirs, and
+    // sit on a real student's address before they get round to it.
+    //
+    // What that does NOT get them is anybody else's data. Every path below is
+    // keyed to request.auth.uid, a new account gets a new uid, and no rule here
+    // lets one account read another's documents. The exposure is unauthorised
+    // *use* of the app, not disclosure.
+    //
+    // If this needs closing properly later: App Check raises the cost of
+    // scripted signups, and a blocking function on account creation is the real
+    // fix — that needs the paid Identity Platform tier.
+    //
     // Anchored at both ends, and no @ allowed inside the local part. matches()
     // is a whole-string match, but spelling that out costs nothing and means
     // the rule can't be misread — a suffix check is how "som.umaryland.edu"
@@ -29,18 +37,13 @@ service cloud.firestore {
     function fromSchool() {
       return request.auth != null
         && request.auth.token.email != null
-        && verified()
         && request.auth.token.email.matches('(?i)^[^@]+@som[.]umaryland[.]edu$');
     }
 
     // The two ids below predate the restriction. They are opaque account
     // ids, not addresses, and exist so the accounts that built this don't
-    // lock themselves out.
-    //
-    // Deliberately not behind verified(): the weakness that check exists to
-    // close is claiming an address you don't own, and a uid cannot be
-    // claimed — Firebase assigns it. Requiring verification here would only
-    // lock out the owner's own account.
+    // lock themselves out — neither is at the school, so the check above
+    // would refuse them.
     function grandfathered() {
       return request.auth != null && request.auth.uid in [
         '9JDZJEF9YhNuxIBN3Vwtbu2oqut2',

@@ -5,7 +5,6 @@ import {
   ALLOWED_EMAIL_DOMAIN,
   GRANDFATHERED_UIDS,
   isAllowedEmail,
-  needsEmailVerification,
   signupDomainError,
 } from "../src/lib/access";
 import { headerSafe } from "../src/lib/emailTemplate";
@@ -90,25 +89,48 @@ console.log("\nthe rules enforce the same thing:");
   );
 }
 
-// The hole this closes: Firebase's signup endpoint is public and the web API
-// key ships in the bundle, so anyone can register an address they don't own
-// and the token comes back carrying it. Without email_verified, "from the
-// school" only means "typed something that ends in the school's domain".
-console.log("\nthe address has to be proved, not just claimed:");
+// Confirmation mail to the school's domain is filtered or dropped often
+// enough that requiring it locked out real students, so it was removed on
+// purpose. These cases pin that decision in place: someone re-adding the
+// check — or the send that goes with it — should have to change a test that
+// says why, rather than quietly breaking signups again.
+console.log("\nno address confirmation, deliberately:");
 {
   const rules = readFileSync("firestore.rules", "utf8");
   const storage = readFileSync("storage.rules", "utf8");
+  const authCtx = readFileSync("src/contexts/AuthContext.tsx", "utf8");
+
+  // Both files discuss email_verified at length in comments, explaining why it
+  // is not there — so the check has to read the rules, not the prose.
+  const code = (src: string) =>
+    src
+      .split("\n")
+      .map((l) => l.replace(/\/\/.*$/, ""))
+      .join("\n");
 
   check(
-    "firestore requires a confirmed address",
-    rules.includes("email_verified == true"),
-    "otherwise the domain check is decoration"
+    "firestore does not require a confirmed address",
+    !code(rules).includes("email_verified"),
+    "school mail blocks it, and the lockout was worse than the risk"
+  );
+  check("storage does not either", !code(storage).includes("email_verified"));
+  check(
+    "though both still explain the omission",
+    rules.includes("email_verified") && storage.includes("email_verified"),
+    "an absent check with no reason beside it reads as a mistake"
   );
   check(
-    "storage requires one too",
-    storage.includes("email_verified == true"),
-    "or the bucket is 20MB-at-a-time hosting for anyone"
+    "and signing up sends no confirmation email",
+    !authCtx.includes("sendEmailVerification"),
+    "an email nobody receives is a dead end, not a gate"
   );
+  check(
+    "the trade-off is written down where the rule is",
+    rules.includes("App Check") && rules.includes("blocking function"),
+    "so the next person reads why before undoing it"
+  );
+  // The domain gate is now the whole of the restriction, so it had better be
+  // exactly right.
   check(
     "the domain pattern is anchored at both ends",
     rules.includes("^[^@]+@som[.]umaryland[.]edu$"),
@@ -125,9 +147,8 @@ console.log("\nthe address has to be proved, not just claimed:");
     "two files, one rule — they drift or they hold together"
   );
 
-  // The grandfathered ids are exempt on purpose, and the reason is worth
-  // pinning: the check exists to stop someone claiming an address, and a uid
-  // cannot be claimed.
+  // Neither grandfathered account is at the school, so the domain check would
+  // refuse them and they'd be locked out of their own project.
   for (const uid of GRANDFATHERED_UIDS) {
     check(
       `the rules still name ${uid.slice(0, 8)}…`,
@@ -135,18 +156,6 @@ console.log("\nthe address has to be proved, not just claimed:");
       "an owner locked out of their own project is a real outage"
     );
   }
-  check(
-    "a grandfathered account skips the confirmation screen",
-    !needsEmailVerification({ uid: GRANDFATHERED_UIDS[0], emailVerified: false })
-  );
-  check(
-    "everyone else does not",
-    needsEmailVerification({ uid: "someone-else", emailVerified: false })
-  );
-  check(
-    "and stops seeing it once confirmed",
-    !needsEmailVerification({ uid: "someone-else", emailVerified: true })
-  );
 }
 
 // Field bounds. The client slices these before writing, which is worth
@@ -208,6 +217,24 @@ console.log("\nnothing user-typed can forge a mail header:");
   check("and it is clipped", headerSafe("x".repeat(500)).length <= 200);
   check("with an ellipsis to show it was", headerSafe("x".repeat(500)).endsWith("…"));
   check("an empty string stays empty", headerSafe("") === "");
+}
+
+// School mail is slow and filters hard. Since there is no confirmation email
+// any more, the reset link is the only mail the app sends to a student — so
+// the one place it's mentioned had better set the right expectation.
+console.log("\nwhat the reset message tells you:");
+{
+  const login = readFileSync("src/pages/Login.tsx", "utf8");
+  check(
+    "it warns the mail may be slow",
+    /couple of minutes/i.test(login),
+    "otherwise people click it four times and give up"
+  );
+  check("it names the spam folder", /spam/i.test(login));
+  check(
+    "and it still says the mail was sent",
+    /reset email sent/i.test(login)
+  );
 }
 
 console.log(failures === 0 ? "\nAll cases passed." : `\n${failures} failing.`);

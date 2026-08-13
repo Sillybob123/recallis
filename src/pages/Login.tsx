@@ -46,7 +46,12 @@ export function Login() {
     setError("");
     try {
       await resetPassword(email);
-      setInfo("Password reset email sent — check your inbox.");
+      // School mail is slow and filters hard, so the two things people would
+      // otherwise waste ten minutes discovering are said up front.
+      setInfo(
+        "Password reset email sent. It can take a couple of minutes to arrive — " +
+          "if it isn't there, check your spam or junk folder."
+      );
     } catch (err) {
       setError(friendlyAuthError(err));
     }

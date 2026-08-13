@@ -18,30 +18,17 @@ export const ALLOWED_EMAIL_DOMAIN = "som.umaryland.edu";
  * firestore.rules and storage.rules.
  *
  * Opaque account ids, not addresses — a uid means nothing outside the project.
- * They are exempt from the confirmation check on purpose: what that check
- * exists to stop is someone claiming an address they don't own, and a uid
- * can't be claimed. Firebase assigns it.
+ * Neither account is at the school, so the domain check would refuse them.
  */
 export const GRANDFATHERED_UIDS = [
   "9JDZJEF9YhNuxIBN3Vwtbu2oqut2",
   "kM4QC3YCrWfhg9SbMEN29X4Wlgu1",
 ];
 
-/**
- * Whether this account still has to confirm its address before the rules will
- * hand it any data.
- *
- * The screen this drives is a courtesy, exactly like the domain check: it
- * turns a wall of failed reads into one instruction. firestore.rules is the
- * enforcement, and it asks the same question of the token.
- */
-export function needsEmailVerification(user: {
-  uid: string;
-  emailVerified: boolean;
-}): boolean {
-  if (GRANDFATHERED_UIDS.includes(user.uid)) return false;
-  return !user.emailVerified;
-}
+// There is deliberately no email-confirmation check here or in the rules.
+// Mail to som.umaryland.edu is filtered or dropped often enough that requiring
+// it locked out real students, so the domain gate proves the address was typed
+// rather than owned. firestore.rules records the trade-off in full.
 
 /** The address form used in messages, so the rule reads the same everywhere. */
 export const ALLOWED_EMAIL_EXAMPLE = `you@${ALLOWED_EMAIL_DOMAIN}`;
