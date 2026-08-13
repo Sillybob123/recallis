@@ -1,12 +1,4 @@
 import type { ReactNode } from "react";
-import {
-  CalendarCheck,
-  Layers,
-  NotebookPen,
-  Repeat,
-  ScanEye,
-  Sparkles,
-} from "lucide-react";
 
 const BRAND_NAVY = "#002871";
 
@@ -15,35 +7,33 @@ const BRAND_NAVY = "#002871";
  * cards, mask a slide, let the schedule decide, drill freely, write the
  * lecture up, plan the term. Six is the most a panel can say before it
  * stops being read.
+ *
+ * Set as a plain list — a name, then a line about it. An icon beside each
+ * would say nothing the words don't, and a grid of little glyphs in rounded
+ * squares is the house style of software nobody chose.
  */
 const HIGHLIGHTS = [
   {
-    icon: Layers,
     title: "Flashcards and cloze",
     body: "Plain cards and {{c1::deletions}} in one deck.",
   },
   {
-    icon: ScanEye,
     title: "Image occlusion",
     body: "Mask a slide. Group them, hide spoilers, explain the answer.",
   },
   {
-    icon: Repeat,
     title: "Spaced repetition",
     body: "FSRS — the scheduler modern Anki uses.",
   },
   {
-    icon: Sparkles,
     title: "Repeat mode",
     body: "Drill as hard as you like. Your schedule doesn't move.",
   },
   {
-    icon: NotebookPen,
     title: "Lecture notes",
     body: "Write beside the slide; turn a line into a card.",
   },
   {
-    icon: CalendarCheck,
     title: "Academic planner",
     body: "Your timetable, your routine, a nudge before each exam.",
   },
@@ -122,23 +112,18 @@ export function AuthLayout({
               pressed against the footer. On a phone this list sits under the
               form instead, so the thing you came to do isn't below a page of
               features. */}
-          <ul className="mt-10 hidden gap-x-8 gap-y-6 lg:grid lg:grid-cols-2">
-            {HIGHLIGHTS.map(({ icon: Icon, title: t, body }) => (
-              <li key={t} className="flex gap-3">
-                <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-white/12 ring-1 ring-white/15">
-                  <Icon size={15} />
-                </span>
-                <div className="min-w-0">
-                  <p className="text-[13.5px] font-semibold leading-tight">{t}</p>
-                  <p className="mt-0.5 text-[13px] leading-snug text-blue-100/70">
-                    {body}
-                  </p>
-                </div>
-              </li>
+          <dl className="mt-10 hidden gap-x-10 gap-y-0 lg:grid lg:grid-cols-2">
+            {HIGHLIGHTS.map(({ title: t, body }) => (
+              <div key={t} className="border-t border-white/15 py-4">
+                <dt className="text-[13.5px] font-semibold leading-tight">{t}</dt>
+                <dd className="mt-1 text-[13px] leading-snug text-blue-100/70">
+                  {body}
+                </dd>
+              </div>
             ))}
-          </ul>
+          </dl>
 
-          <div className="mt-10 border-t border-white/15 pt-5">
+          <div className="mt-8 border-t border-white/15 pt-5">
             <p className="text-[13px] leading-relaxed text-blue-100/70">
               Imports and exports Anki decks · works with a Bluetooth study
               remote · explains the Latin and Greek behind anatomy terms
@@ -198,22 +183,16 @@ export function AuthLayout({
           <p className="mb-4 text-[11px] font-bold uppercase tracking-wide text-slate-400">
             What you get
           </p>
-          <ul className="space-y-3.5">
-            {HIGHLIGHTS.map(({ icon: Icon, title: t, body }) => (
-              <li key={t} className="flex gap-3">
-                <span
-                  className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-white"
-                  style={{ backgroundColor: BRAND_NAVY }}
-                >
-                  <Icon size={14} />
-                </span>
-                <div className="min-w-0">
-                  <p className="text-sm font-semibold text-slate-800">{t}</p>
-                  <p className="text-[13px] leading-snug text-slate-500">{body}</p>
-                </div>
-              </li>
+          <dl>
+            {HIGHLIGHTS.map(({ title: t, body }) => (
+              <div key={t} className="border-t border-slate-200 py-3">
+                <dt className="text-sm font-semibold text-slate-800">{t}</dt>
+                <dd className="mt-0.5 text-[13px] leading-snug text-slate-500">
+                  {body}
+                </dd>
+              </div>
             ))}
-          </ul>
+          </dl>
         </div>
       </div>
     </div>
