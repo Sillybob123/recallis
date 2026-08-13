@@ -47,6 +47,7 @@ import {
   type PlannerTask,
   type SessionKind,
 } from "../lib/planner";
+import { usePageTitle } from "../lib/pageTitle";
 import {
   loadReminderSettings,
   markReminded,
@@ -99,6 +100,7 @@ function whenLabel(s: PlannerSession): string {
 }
 
 export function PlannerPage() {
+  usePageTitle("Planner");
   const { user } = useAuth();
   const [plan, setPlan] = useState<PlannerPlan | null>(null);
   const [progress, setProgress] = useState<PlannerProgress>({});

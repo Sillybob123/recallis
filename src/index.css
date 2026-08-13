@@ -110,6 +110,15 @@ body {
   padding: 0.25em 0.5em;
 }
 
+/*
+ * An image the author sized by hand keeps that size. The height cap below
+ * exists to stop a full-resolution screenshot filling the card, which is not
+ * a problem once somebody has said how big they want it — and leaving the cap
+ * on would silently ignore half of what they chose.
+ */
+.prose-card img[style*="width"] {
+  max-height: none;
+}
 .prose-card :where(img) {
   max-width: 100%;
   max-height: 16rem;
@@ -136,12 +145,21 @@ body {
 /*
  * Study cards centre their text, and an imported list inherits that — so each
  * bullet's words centre inside their own row and the markers come out ragged.
- * A list only reads as a list when its items share a left edge. Inheritance
- * loses to any declared value, and no imported card sets alignment on the list
- * itself, so this needs no !important to win.
+ * A list only reads as a list when its items share a left edge.
+ *
+ * The !important is doing real work. Anki cards carry their own inline
+ * styles, and a front that was authored centred arrives as
+ * `<ul style="text-align:center">` — which beats any stylesheet rule on
+ * specificity alone. That is why one side of a card could come out centred
+ * while the other, written without the inline style, came out left.
+ *
+ * A deliberately centred bullet list is not a thing anyone wants, so
+ * overriding the author here costs nothing and fixes both sides at once.
  */
-.prose-card :where(ul, ol, li) {
-  text-align: left;
+.prose-card ul,
+.prose-card ol,
+.prose-card li {
+  text-align: left !important;
 }
 .prose-card :where(ul) {
   /* longhand: the shorthand minifies to "list-style: outside", which is

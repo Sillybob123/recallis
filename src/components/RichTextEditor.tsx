@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   caretOffset,
   EditorHistory,
@@ -366,6 +367,94 @@ export function RichTextEditor({
       setUploading(false);
       if (fileRef.current) fileRef.current.value = "";
     }
+  }
+
+  /* ---------- resizing a pasted image ---------- */
+  /*
+    A screenshot of a slide arrives at whatever size it was captured at,
+    which is usually far too big for the back of a card. Clicking it gives a
+    row of widths and a corner to drag, both of which write a plain
+    percentage width onto the image — so it stays right whatever the card is
+    displayed at later, on a phone as much as here.
+  */
+  const [picked, setPicked] = useState<HTMLImageElement | null>(null);
+  const [pickedRect, setPickedRect] = useState<DOMRect | null>(null);
+
+  const followPicked = useCallback(() => {
+    setPicked((el) => {
+      if (el && el.isConnected) setPickedRect(el.getBoundingClientRect());
+      else setPickedRect(null);
+      return el && el.isConnected ? el : null;
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!picked) return;
+    window.addEventListener("scroll", followPicked, true);
+    window.addEventListener("resize", followPicked);
+    return () => {
+      window.removeEventListener("scroll", followPicked, true);
+      window.removeEventListener("resize", followPicked);
+    };
+  }, [picked, followPicked]);
+
+  function handleEditorClick(e: React.MouseEvent) {
+    const target = e.target as HTMLElement;
+    if (target.tagName === "IMG") {
+      const img = target as HTMLImageElement;
+      setPicked(img);
+      setPickedRect(img.getBoundingClientRect());
+    } else if (picked) {
+      setPicked(null);
+      setPickedRect(null);
+    }
+  }
+
+  /** Percentage of the editor's width, or null to put it back as it came. */
+  function resizePicked(percent: number | null) {
+    if (!picked) return;
+    commitHistory();
+    if (percent === null) {
+      picked.style.removeProperty("width");
+      picked.style.removeProperty("height");
+      picked.removeAttribute("width");
+      picked.removeAttribute("height");
+    } else {
+      picked.style.width = `${percent}%`;
+      // Height follows, or the aspect ratio goes.
+      picked.style.height = "auto";
+      picked.removeAttribute("height");
+    }
+    emit();
+    requestAnimationFrame(followPicked);
+  }
+
+  function startImageDrag(e: React.PointerEvent) {
+    if (!picked || !ref.current) return;
+    e.preventDefault();
+    commitHistory();
+    const editorWidth = ref.current.clientWidth || 1;
+    const startX = e.clientX;
+    const startWidth = picked.getBoundingClientRect().width;
+    const img = picked;
+
+    const onMove = (ev: PointerEvent) => {
+      const next = startWidth + (ev.clientX - startX);
+      // Never smaller than a thumbnail, never wider than the card.
+      const percent = Math.round(
+        Math.min(100, Math.max(10, (next / editorWidth) * 100))
+      );
+      img.style.width = `${percent}%`;
+      img.style.height = "auto";
+      followPicked();
+    };
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      emit();
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
   }
 
   // Paste an image straight from the clipboard (screenshot of a slide, etc.).
@@ -797,12 +886,62 @@ export function RichTextEditor({
             scheduleHistory();
           }}
           onPaste={handlePaste}
+          onClick={handleEditorClick}
           onBlur={() => setColorOpen(null)}
           data-placeholder={placeholder}
           className={`prose-card ${
             fill ? "min-h-0 flex-1" : `${minHeightClass} ${maxHeightClass}`
           } ${contentClass} overflow-y-auto outline-none empty:before:text-slate-400 empty:before:content-[attr(data-placeholder)]`}
         />
+
+        {/* Rendered into the body so an editor that scrolls can't clip it. */}
+        {picked &&
+          pickedRect &&
+          createPortal(
+            <>
+              <div
+                // Kept off mousedown so the click never takes focus out of
+                // the editor, which would drop the selection.
+                onMouseDown={(e) => e.preventDefault()}
+                style={{
+                  top: Math.max(pickedRect.top - 34, 8),
+                  left: pickedRect.left,
+                }}
+                className="fixed z-[70] flex items-center gap-0.5 rounded-lg border border-slate-200 bg-white p-1 shadow-lg"
+              >
+                <span className="px-1.5 text-[11px] font-semibold text-slate-400">
+                  Size
+                </span>
+                {[25, 50, 75, 100].map((p) => (
+                  <button
+                    key={p}
+                    onClick={() => resizePicked(p)}
+                    className="rounded px-1.5 py-1 text-[11px] font-semibold text-slate-600 hover:bg-slate-100"
+                  >
+                    {p}%
+                  </button>
+                ))}
+                <button
+                  onClick={() => resizePicked(null)}
+                  title="Back to the size it came in at"
+                  className="rounded px-1.5 py-1 text-[11px] font-medium text-slate-500 hover:bg-slate-100"
+                >
+                  Reset
+                </button>
+              </div>
+              <div
+                onPointerDown={startImageDrag}
+                onMouseDown={(e) => e.preventDefault()}
+                title="Drag to resize"
+                style={{
+                  top: pickedRect.bottom - 7,
+                  left: pickedRect.right - 7,
+                }}
+                className="fixed z-[70] h-3.5 w-3.5 cursor-nwse-resize rounded-sm border-2 border-white bg-indigo-600 shadow"
+              />
+            </>,
+            document.body
+          )}
       </div>
 
       {wordCount && (

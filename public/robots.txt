@@ -1,0 +1,17 @@
+# Everything past the sign-in is private to each account and needs a login,
+# so there is nothing there to crawl. The pages that describe what this is
+# are open.
+User-agent: *
+Allow: /$
+Allow: /login
+Allow: /signup
+Disallow: /deck/
+Disallow: /decks
+Disallow: /browse
+Disallow: /notes
+Disallow: /planner
+Disallow: /account
+Disallow: /creator
+Disallow: /study-group
+
+Sitemap: https://recallis.org/sitemap.xml

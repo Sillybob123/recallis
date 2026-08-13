@@ -17,6 +17,7 @@ import { Layout } from "../components/Layout";
 import { createNote, deleteNote, updateNote, watchNotes } from "../lib/firestore";
 import type { Note } from "../types";
 import { stripHtmlInline } from "../lib/text";
+import { usePageTitle } from "../lib/pageTitle";
 
 const UNFILED = "__unfiled__";
 
@@ -36,6 +37,7 @@ function relativeDay(ms: number): string {
 }
 
 export function NotesPage() {
+  usePageTitle("Lecture notes");
   const { user } = useAuth();
   const navigate = useNavigate();
   const [notes, setNotes] = useState<Note[] | null>(null);

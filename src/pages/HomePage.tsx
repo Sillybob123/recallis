@@ -18,6 +18,7 @@ import { getTodayAnkiStats } from "../lib/settings";
 import type { Deck, Note } from "../types";
 import { stripHtmlInline } from "../lib/text";
 import { DeckLabel } from "../components/DeckLabel";
+import { usePageTitle } from "../lib/pageTitle";
 
 function greeting(): string {
   const h = new Date().getHours();
@@ -31,6 +32,7 @@ function plainText(html: string): string {
 }
 
 export function HomePage() {
+  usePageTitle("Overview");
   const { user } = useAuth();
   const [decks, setDecks] = useState<Deck[] | null>(null);
   const [notes, setNotes] = useState<Note[] | null>(null);

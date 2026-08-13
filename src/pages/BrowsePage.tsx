@@ -54,6 +54,7 @@ import {
 import { startOfStudyDay } from "../lib/settings";
 import type { Deck } from "../types";
 import { stripHtmlInline } from "../lib/text";
+import { usePageTitle } from "../lib/pageTitle";
 
 type CardState = "new" | "learning" | "review" | "suspended" | "buried";
 type TodayFilter =
@@ -171,6 +172,7 @@ function plain(key: string, html: string): string {
 }
 
 export function BrowsePage() {
+  usePageTitle("Browse");
   const { user } = useAuth();
   const [searchParams] = useSearchParams();
 

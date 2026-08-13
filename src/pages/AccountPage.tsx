@@ -36,10 +36,12 @@ import {
 } from "../lib/emailReminders";
 import type { PlannerPlan, PlannerProgress } from "../lib/planner";
 import type { Deck } from "../types";
+import { usePageTitle } from "../lib/pageTitle";
 
 const WINDOW_DAYS = 84; // twelve weeks, which is a semester's shape
 
 export function AccountPage() {
+  usePageTitle("Your account");
   const { user } = useAuth();
   const [decks, setDecks] = useState<Deck[] | null>(null);
   const [counts, setCounts] = useState<Map<string, DeckCounts>>(new Map());

@@ -41,10 +41,12 @@ import {
 import { DeckRows, MenuItem } from "../components/DeckTree";
 import type { Deck } from "../types";
 import { DeckLabel } from "../components/DeckLabel";
+import { usePageTitle } from "../lib/pageTitle";
 
 const COLORS = ["#6366f1", "#0ea5e9", "#10b981", "#f59e0b", "#ef4444", "#a855f7", "#ec4899"];
 
 export function Dashboard() {
+  usePageTitle("Your classes");
   const { user } = useAuth();
   const { studyMode } = useStudyMode();
   const [decks, setDecks] = useState<Deck[]>([]);

@@ -3,6 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext";
 import { FirebaseNotConfigured } from "../components/ProtectedRoute";
 import { isFirebaseConfigured } from "../firebase";
+import { usePageTitle } from "../lib/pageTitle";
 import {
   AuthLayout,
   AuthField,
@@ -11,6 +12,7 @@ import {
 } from "../components/AuthLayout";
 
 export function Login() {
+  usePageTitle("Log in");
   const { logIn, resetPassword } = useAuth();
   const navigate = useNavigate();
   const [email, setEmail] = useState("");

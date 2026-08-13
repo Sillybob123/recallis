@@ -9,6 +9,7 @@ import {
   ALLOWED_EMAIL_EXAMPLE,
   signupDomainError,
 } from "../lib/access";
+import { usePageTitle } from "../lib/pageTitle";
 import {
   AuthLayout,
   AuthField,
@@ -17,6 +18,7 @@ import {
 } from "../components/AuthLayout";
 
 export function Signup() {
+  usePageTitle("Create your account");
   const { signUp } = useAuth();
   const navigate = useNavigate();
   const [name, setName] = useState("");

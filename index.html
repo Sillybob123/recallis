@@ -43,6 +43,43 @@
       content="Spaced repetition, cloze deletion and image occlusion, lecture notes, and a planner built from your own timetable."
     />
     <meta name="twitter:image" content="https://recallis.org/og-card.png?v=1" />
+    <meta property="og:locale" content="en_US" />
+
+    <!-- Crawlers. The app itself is behind a sign-in, so what's indexable is
+         this page: what Recallis is and who it's for. -->
+    <meta name="robots" content="index, follow, max-image-preview:large" />
+    <meta name="author" content="Recallis" />
+    <meta name="application-name" content="Recallis" />
+    <meta name="apple-mobile-web-app-title" content="Recallis" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="format-detection" content="telephone=no" />
+    <meta name="color-scheme" content="light" />
+
+    <!-- Structured data, so a search result can show what this is rather
+         than guessing from the page text. -->
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "WebApplication",
+        "name": "Recallis",
+        "url": "https://recallis.org/",
+        "applicationCategory": "EducationalApplication",
+        "operatingSystem": "Any modern browser",
+        "description": "Spaced repetition, cloze deletion and image occlusion, lecture notes, and a planner built from your own timetable. Made for medical school.",
+        "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+        "featureList": [
+          "Flashcards and cloze deletion",
+          "Image occlusion on lecture slides",
+          "FSRS spaced repetition",
+          "Repeat mode for exam week",
+          "Lecture notes that become cards",
+          "Academic planner from an .ics timetable",
+          "Anki .apkg import and export"
+        ]
+      }
+    </script>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link

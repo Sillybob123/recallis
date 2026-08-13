@@ -25,6 +25,7 @@ import {
 } from "../lib/deckPath";
 import type { Deck } from "../types";
 import { DeckLabel } from "../components/DeckLabel";
+import { usePageTitle } from "../lib/pageTitle";
 
 /**
  * One deck row and its subdecks. A row studies everything beneath it, so the
@@ -141,6 +142,7 @@ const FORMATS = [
 ] as const;
 
 export function QuizletHome() {
+  usePageTitle("Quizlet");
   const { user } = useAuth();
   const { studyMode, setStudyMode } = useStudyMode();
   const [decks, setDecks] = useState<Deck[] | null>(null);

@@ -83,5 +83,38 @@ console.log("\nuser text can always break:");
   );
 }
 
+// ---------- metadata ----------
+// What a crawler and a shared link see. Wrong here is invisible until
+// somebody pastes the address into a chat and it looks like nothing.
+console.log("\nmetadata:");
+{
+  const html = readFileSync("index.html", "utf8");
+  const robots = readFileSync("public/robots.txt", "utf8");
+  const sitemap = readFileSync("public/sitemap.xml", "utf8");
+
+  for (const tag of ["og:title", "og:description", "og:image", "og:url", "twitter:card"]) {
+    check(`${tag} is set`, html.includes(tag));
+  }
+  check("the preview image is an absolute URL", /og:image" content="https:\/\//.test(html));
+  check("there is a canonical address", html.includes('rel="canonical"'));
+  check("crawlers are told what to do", /name="robots"/.test(html));
+  check("the app describes itself in structured data", html.includes('"@type": "WebApplication"'));
+
+  check("robots.txt points at the sitemap", robots.includes("Sitemap: https://recallis.org/sitemap.xml"));
+  check(
+    "and keeps crawlers out of the signed-in pages",
+    ["/deck/", "/notes", "/planner", "/account", "/creator"].every((p) =>
+      robots.includes(`Disallow: ${p}`)
+    ),
+    "there is nothing there without a login anyway"
+  );
+  check(
+    "the sitemap uses the namespace that makes it a sitemap",
+    sitemap.includes("http://www.sitemaps.org/schemas/sitemap/0.9"),
+    "sitemaps.org, plural — the singular is a different, nonexistent thing"
+  );
+  check("and lists the public pages", sitemap.includes("https://recallis.org/signup"));
+}
+
 console.log(failures === 0 ? "\nAll cases passed." : `\n${failures} failing.`);
 process.exit(failures === 0 ? 0 : 1);

@@ -19,8 +19,10 @@ import {
 } from "../lib/settings";
 import { buildDeckTree, type DeckNode } from "../lib/deckPath";
 import type { Deck } from "../types";
+import { usePageTitle } from "../lib/pageTitle";
 
 export function AnkiHome() {
+  usePageTitle("Anki");
   const { user } = useAuth();
   const { studyMode, setStudyMode } = useStudyMode();
   const [decks, setDecks] = useState<Deck[] | null>(null);

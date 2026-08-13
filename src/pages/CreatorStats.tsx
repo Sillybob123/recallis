@@ -5,6 +5,7 @@ import { useAuth } from "../contexts/AuthContext";
 import { Layout } from "../components/Layout";
 import { fetchSignups, type SignupRecord } from "../lib/firestore";
 import { isAdmin } from "../lib/admin";
+import { usePageTitle } from "../lib/pageTitle";
 
 const DAY = 86400000;
 
@@ -31,6 +32,7 @@ function when(at: number): string {
  * it private.
  */
 export function CreatorStats() {
+  usePageTitle("Creator stats");
   const { user } = useAuth();
   const [rows, setRows] = useState<SignupRecord[] | null>(null);
   const [error, setError] = useState<string | null>(null);
